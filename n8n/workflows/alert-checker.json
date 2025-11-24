@@ -1,0 +1,110 @@
+{
+  "name": "SerpoAI Alert Checker",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 2
+            }
+          ]
+        }
+      },
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "operation": "select",
+        "table": "alerts",
+        "where": "is_active = 1 AND is_triggered = 0",
+        "additionalFields": {}
+      },
+      "name": "Get Active Alerts",
+      "type": "n8n-nodes-base.mysql",
+      "typeVersion": 2,
+      "position": [450, 300],
+      "credentials": {
+        "mysql": {
+          "id": "1",
+          "name": "MySQL SerpoAI"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "={{$env.DEXSCREENER_API_URL}}/dex/tokens/={{$env.SERPO_CONTRACT_ADDRESS}}",
+        "options": {}
+      },
+      "name": "Get Current Price",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [650, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Check if any alerts should trigger\nconst alerts = $input.all()[0].json;\nconst priceData = $input.all()[1].json;\nconst currentPrice = parseFloat(priceData.pairs[0].priceUsd);\n\nconst triggered = [];\n\nfor (const alert of alerts) {\n  const targetPrice = parseFloat(alert.target_value);\n  let shouldTrigger = false;\n  \n  switch(alert.condition) {\n    case 'above':\n      shouldTrigger = currentPrice >= targetPrice;\n      break;\n    case 'below':\n      shouldTrigger = currentPrice <= targetPrice;\n      break;\n  }\n  \n  if (shouldTrigger) {\n    triggered.push({\n      alert_id: alert.id,\n      user_id: alert.user_id,\n      telegram_id: alert.telegram_id,\n      message: `🔔 Alert triggered!\\n\\nSERPO ${alert.condition} $${targetPrice}\\nCurrent: $${currentPrice}`\n    });\n  }\n}\n\nreturn triggered;"
+      },
+      "name": "Check Alert Conditions",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [850, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.telegram.org/bot{{$env.TELEGRAM_BOT_TOKEN}}/sendMessage",
+        "jsonParameters": true,
+        "options": {},
+        "bodyParametersJson": "={\n  \"chat_id\": {{$json.telegram_id}},\n  \"text\": \"{{$json.message}}\",\n  \"parse_mode\": \"Markdown\"\n}"
+      },
+      "name": "Send Telegram Alert",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [1050, 300]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "table": "alerts",
+        "updateKey": "id",
+        "columns": "is_triggered,triggered_at",
+        "additionalFields": {
+          "is_triggered": 1,
+          "triggered_at": "=NOW()"
+        }
+      },
+      "name": "Mark Alert as Triggered",
+      "type": "n8n-nodes-base.mysql",
+      "typeVersion": 2,
+      "position": [1250, 300],
+      "credentials": {
+        "mysql": {
+          "id": "1",
+          "name": "MySQL SerpoAI"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Schedule Trigger": {
+      "main": [[{ "node": "Get Active Alerts", "type": "main", "index": 0 }]]
+    },
+    "Get Active Alerts": {
+      "main": [[{ "node": "Get Current Price", "type": "main", "index": 0 }]]
+    },
+    "Get Current Price": {
+      "main": [[{ "node": "Check Alert Conditions", "type": "main", "index": 0 }]]
+    },
+    "Check Alert Conditions": {
+      "main": [[{ "node": "Send Telegram Alert", "type": "main", "index": 0 }]]
+    },
+    "Send Telegram Alert": {
+      "main": [[{ "node": "Mark Alert as Triggered", "type": "main", "index": 0 }]]
+    }
+  }
+}
