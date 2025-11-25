@@ -10,11 +10,19 @@ class CommandHandler
 {
     private TelegramBotService $telegram;
     private MarketDataService $marketData;
+    private OpenAIService $openai;
+    private SentimentAnalysisService $sentiment;
 
-    public function __construct(TelegramBotService $telegram, MarketDataService $marketData)
-    {
+    public function __construct(
+        TelegramBotService $telegram,
+        MarketDataService $marketData,
+        OpenAIService $openai,
+        SentimentAnalysisService $sentiment
+    ) {
         $this->telegram = $telegram;
         $this->marketData = $marketData;
+        $this->openai = $openai;
+        $this->sentiment = $sentiment;
     }
 
     /**
@@ -33,6 +41,9 @@ class CommandHandler
             '/price' => $this->handlePrice($chatId, $params),
             '/chart' => $this->handleChart($chatId, $params),
             '/signals' => $this->handleSignals($chatId),
+            '/sentiment' => $this->handleSentiment($chatId),
+            '/explain' => $this->handleExplain($chatId, $params),
+            '/ask' => $this->handleAsk($chatId, $params),
             '/alerts' => $this->handleAlerts($chatId, $user),
             '/setalert' => $this->handleSetAlert($chatId, $params, $user),
             '/myalerts' => $this->handleMyAlerts($chatId, $user),
@@ -68,7 +79,11 @@ class CommandHandler
         $message .= "*Market Data:*\n";
         $message .= "/price - Get current SERPO price\n";
         $message .= "/chart - View price chart\n";
-        $message .= "/signals - Get trading signals\n\n";
+        $message .= "/signals - Get trading signals\n";
+        $message .= "/sentiment - Market sentiment analysis\n\n";
+        $message .= "*AI Features:*\n";
+        $message .= "/explain [term] - Explain trading concepts\n";
+        $message .= "/ask [question] - Ask me anything\n\n";
         $message .= "*Alerts:*\n";
         $message .= "/setalert [price] - Set price alert\n";
         $message .= "/myalerts - View your active alerts\n";
@@ -76,7 +91,7 @@ class CommandHandler
         $message .= "*Other:*\n";
         $message .= "/settings - Bot settings\n";
         $message .= "/about - About SerpoAI\n\n";
-        $message .= "💡 *Tip:* You can also ask me questions in natural language!";
+        $message .= "💡 *Tip:* Try `/explain RSI` or `/ask What is MACD?`";
 
         $this->telegram->sendMessage($chatId, $message);
     }
@@ -383,6 +398,87 @@ class CommandHandler
             Log::error('Error generating chart', ['message' => $e->getMessage()]);
             return null;
         }
+    }
+
+    /**
+     * Handle /sentiment command
+     */
+    private function handleSentiment(int $chatId)
+    {
+        $this->telegram->sendMessage($chatId, "🔍 Analyzing market sentiment...");
+
+        $sentiment = $this->sentiment->getCryptoSentiment('bitcoin');
+
+        $message = "📊 *Market Sentiment Analysis*\n\n";
+        $message .= $sentiment['emoji'] . " *" . $sentiment['label'] . "*\n";
+        $message .= "Sentiment Score: " . $sentiment['score'] . "/100\n\n";
+
+        if (!empty($sentiment['positive_mentions']) || !empty($sentiment['negative_mentions'])) {
+            $message .= "Positive Mentions: " . ($sentiment['positive_mentions'] ?? 0) . "\n";
+            $message .= "Negative Mentions: " . ($sentiment['negative_mentions'] ?? 0) . "\n\n";
+        }
+
+        if (!empty($sentiment['sources'])) {
+            $message .= "*Recent News:*\n";
+            foreach ($sentiment['sources'] as $source) {
+                $title = strlen($source['title']) > 60 ? substr($source['title'], 0, 60) . '...' : $source['title'];
+                $message .= "• " . $title . "\n";
+            }
+        }
+
+        if (isset($sentiment['note'])) {
+            $message .= "\n_" . $sentiment['note'] . "_";
+        }
+
+        $this->telegram->sendMessage($chatId, $message);
+    }
+
+    /**
+     * Handle /explain command
+     */
+    private function handleExplain(int $chatId, array $params)
+    {
+        if (empty($params)) {
+            $this->telegram->sendMessage($chatId, "Usage: `/explain [concept]`\n\nExamples:\n• `/explain RSI`\n• `/explain MACD`\n• `/explain moving average`");
+            return;
+        }
+
+        $concept = implode(' ', $params);
+        $this->telegram->sendMessage($chatId, "🤖 Let me explain that...");
+
+        $explanation = $this->openai->explainConcept($concept);
+
+        $message = "💡 *" . ucwords($concept) . "*\n\n";
+        $message .= $explanation;
+
+        $this->telegram->sendMessage($chatId, $message);
+    }
+
+    /**
+     * Handle /ask command
+     */
+    private function handleAsk(int $chatId, array $params)
+    {
+        if (empty($params)) {
+            $this->telegram->sendMessage($chatId, "Usage: `/ask [your question]`\n\nExamples:\n• `/ask What is a good RSI value?`\n• `/ask Should I buy now?`\n• `/ask What is DCA?`");
+            return;
+        }
+
+        $question = implode(' ', $params);
+        $this->telegram->sendMessage($chatId, "🤖 Thinking...");
+
+        // Get current market context
+        $marketData = $this->marketData->getSerpoPriceFromDex();
+        $context = [];
+
+        if ($marketData) {
+            $context['SERPO Price'] = '$' . number_format($marketData['price'], 8);
+            $context['24h Change'] = $marketData['price_change_24h'] . '%';
+        }
+
+        $answer = $this->openai->answerQuestion($question, $context);
+
+        $this->telegram->sendMessage($chatId, "🤖 *SerpoAI:*\n\n" . $answer . "\n\n_Remember: This is not financial advice. Always DYOR!_");
     }
 
     /**
