@@ -33,6 +33,10 @@ class CommandHandler
         // Extract command and parameters
         $parts = explode(' ', trim($command));
         $cmd = strtolower($parts[0]);
+
+        // Remove @botname from command for group chats
+        $cmd = preg_replace('/@\w+$/i', '', $cmd);
+
         $params = array_slice($parts, 1);
 
         match ($cmd) {
@@ -313,7 +317,7 @@ class CommandHandler
      */
     private function handleAbout(int $chatId)
     {
-        $message = "🐍 *About SerpoAI*\n\n";
+        $message = "*About SerpoAI*\n\n";
         $message .= "SerpoAI is an AI-powered trading assistant built for the Serpocoin ecosystem.\n\n";
         $message .= "*Features:*\n";
         $message .= "• Real-time price tracking\n";
@@ -321,7 +325,7 @@ class CommandHandler
         $message .= "• Custom alerts\n";
         $message .= "• AI-powered insights\n\n";
         $message .= "🌐 [Website](https://serpocoin.io)\n";
-        $message .= "📱 [Community](https://t.me/serpocoin)\n\n";
+        $message .= "📱 [Community](https://t.me/serpocoinchannel)\n\n";
         $message .= "_Version 1.0.0 - Beta_";
 
         $this->telegram->sendMessage($chatId, $message);
