@@ -8,6 +8,7 @@ use App\Services\TelegramBotService;
 use App\Services\CommandHandler;
 use App\Models\User;
 use App\Models\BotLog;
+use App\Jobs\ProcessTelegramCommand;
 
 class TelegramWebhookController extends Controller
 {
@@ -74,13 +75,15 @@ class TelegramWebhookController extends Controller
             'status' => 'pending',
         ]);
 
-        // Handle command
-        if (str_starts_with($text, '/')) {
-            $this->commandHandler->handle($chatId, $text, $user);
-        } else {
-            // Handle regular text (AI conversation)
-            $this->commandHandler->handleAIQuery($chatId, $text, $user);
-        }
+        // Dispatch command processing to queue for async handling
+        // This ensures webhook returns immediately to Telegram
+        ProcessTelegramCommand::dispatch($chatId, $text, $user->id);
+        
+        Log::info('Telegram command dispatched to queue', [
+            'chat_id' => $chatId,
+            'text' => $text,
+            'user_id' => $user->id,
+        ]);
     }
 
     /**
