@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -29,11 +30,11 @@
             width: 100%;
             height: 100%;
             background:
-                radial-gradient(2px 2px at 20px 30px, rgba(0,255,255,0.3), transparent),
-                radial-gradient(2px 2px at 60px 70px, rgba(0,255,255,0.3), transparent),
-                radial-gradient(1px 1px at 50px 50px, rgba(0,255,0,0.3), transparent),
-                radial-gradient(1px 1px at 130px 80px, rgba(0,255,255,0.3), transparent),
-                radial-gradient(2px 2px at 90px 10px, rgba(0,255,0,0.3), transparent);
+                radial-gradient(2px 2px at 20px 30px, rgba(0, 255, 255, 0.3), transparent),
+                radial-gradient(2px 2px at 60px 70px, rgba(0, 255, 255, 0.3), transparent),
+                radial-gradient(1px 1px at 50px 50px, rgba(0, 255, 0, 0.3), transparent),
+                radial-gradient(1px 1px at 130px 80px, rgba(0, 255, 255, 0.3), transparent),
+                radial-gradient(2px 2px at 90px 10px, rgba(0, 255, 0, 0.3), transparent);
             background-size: 200px 200px;
             background-position: 0 0, 40px 60px, 130px 270px, 70px 100px, 150px 50px;
             pointer-events: none;
@@ -42,8 +43,15 @@
         }
 
         @keyframes twinkle {
-            0%, 100% { opacity: 0.3; }
-            50% { opacity: 0.6; }
+
+            0%,
+            100% {
+                opacity: 0.3;
+            }
+
+            50% {
+                opacity: 0.6;
+            }
         }
 
         /* Background gradient overlay */
@@ -54,7 +62,7 @@
             left: 0;
             width: 100%;
             height: 100%;
-            background: radial-gradient(ellipse at center, rgba(0,255,255,0.08) 0%, transparent 70%);
+            background: radial-gradient(ellipse at center, rgba(0, 255, 255, 0.08) 0%, transparent 70%);
             pointer-events: none;
             z-index: 0;
         }
@@ -70,7 +78,7 @@
         /* Header */
         header {
             padding: 20px 0;
-            border-bottom: 1px solid rgba(0,255,255,0.2);
+            border-bottom: 1px solid rgba(0, 255, 255, 0.2);
         }
 
         .header-content {
@@ -101,13 +109,13 @@
 
         /* Beta Banner */
         .beta-banner {
-            background: rgba(0,255,255,0.1);
-            border: 1px solid rgba(0,255,255,0.3);
+            background: rgba(0, 255, 255, 0.1);
+            border: 1px solid rgba(0, 255, 255, 0.3);
             border-radius: 8px;
             padding: 15px 20px;
             margin: 30px 0;
             text-align: center;
-            box-shadow: 0 0 20px rgba(0,255,255,0.2);
+            box-shadow: 0 0 20px rgba(0, 255, 255, 0.2);
         }
 
         .beta-banner h3 {
@@ -120,7 +128,7 @@
         }
 
         .beta-banner p {
-            color: rgba(255,255,255,0.8);
+            color: rgba(255, 255, 255, 0.8);
             font-size: 14px;
         }
 
@@ -142,7 +150,7 @@
 
         .hero p {
             font-size: 20px;
-            color: rgba(255,255,255,0.8);
+            color: rgba(255, 255, 255, 0.8);
             margin-bottom: 40px;
             max-width: 600px;
             margin-left: auto;
@@ -173,19 +181,19 @@
         }
 
         .btn-primary:hover {
-            box-shadow: 0 0 30px rgba(0,255,255,0.5);
+            box-shadow: 0 0 30px rgba(0, 255, 255, 0.5);
             transform: translateY(-2px);
         }
 
         .btn-secondary {
-            background: rgba(10,14,39,0.8);
+            background: rgba(10, 14, 39, 0.8);
             color: #00ffff;
             border: 1px solid #00ffff;
         }
 
         .btn-secondary:hover {
-            background: rgba(0,255,255,0.1);
-            box-shadow: 0 0 20px rgba(0,255,255,0.3);
+            background: rgba(0, 255, 255, 0.1);
+            box-shadow: 0 0 20px rgba(0, 255, 255, 0.3);
         }
 
         /* Features Section */
@@ -211,16 +219,16 @@
         }
 
         .feature-card {
-            background: rgba(10,14,39,0.8);
-            border: 1px solid rgba(0,255,255,0.2);
+            background: rgba(10, 14, 39, 0.8);
+            border: 1px solid rgba(0, 255, 255, 0.2);
             border-radius: 12px;
             padding: 30px;
             transition: all 0.3s ease;
         }
 
         .feature-card:hover {
-            border-color: rgba(0,255,255,0.5);
-            box-shadow: 0 0 30px rgba(0,255,255,0.2);
+            border-color: rgba(0, 255, 255, 0.5);
+            box-shadow: 0 0 30px rgba(0, 255, 255, 0.2);
             transform: translateY(-5px);
         }
 
@@ -239,7 +247,7 @@
         }
 
         .feature-card p {
-            color: rgba(255,255,255,0.7);
+            color: rgba(255, 255, 255, 0.7);
             font-size: 15px;
         }
 
@@ -273,7 +281,7 @@
         }
 
         .command-content p {
-            color: rgba(255,255,255,0.7);
+            color: rgba(255, 255, 255, 0.7);
             font-size: 14px;
             margin-top: 8px;
         }
@@ -302,20 +310,20 @@
         }
 
         .stat-item p {
-            color: rgba(255,255,255,0.7);
+            color: rgba(255, 255, 255, 0.7);
             font-size: 16px;
         }
 
         /* Footer */
         footer {
             padding: 40px 0;
-            border-top: 1px solid rgba(0,255,255,0.2);
+            border-top: 1px solid rgba(0, 255, 255, 0.2);
             text-align: center;
             margin-top: 60px;
         }
 
         footer p {
-            color: rgba(255,255,255,0.6);
+            color: rgba(255, 255, 255, 0.6);
             margin-bottom: 10px;
         }
 
@@ -354,6 +362,7 @@
         }
     </style>
 </head>
+
 <body>
     <header>
         <div class="container">
@@ -510,4 +519,5 @@
         </div>
     </footer>
 </body>
+
 </html>
