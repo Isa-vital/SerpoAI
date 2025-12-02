@@ -60,6 +60,8 @@ class MarketDataService
                     'price_change_24h' => (float) ($pair['priceChange']['h24'] ?? 0),
                     'volume_24h' => (float) ($pair['volume']['h24'] ?? 0),
                     'liquidity' => (float) ($pair['liquidity']['usd'] ?? 0),
+                    'market_cap' => (float) ($pair['marketCap'] ?? 0),
+                    'fdv' => (float) ($pair['fdv'] ?? 0),
                     'pair_address' => $pair['pairAddress'],
                     'dex' => $pair['dexId'],
                     'updated_at' => now(),

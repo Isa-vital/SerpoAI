@@ -46,6 +46,21 @@ class TelegramBotService
     }
 
     /**
+     * Send an animation/GIF to a user
+     */
+    public function sendAnimation(int $chatId, string $animation, string $caption = ''): array
+    {
+        $payload = [
+            'chat_id' => $chatId,
+            'animation' => $animation,
+            'caption' => $caption,
+            'parse_mode' => 'Markdown',
+        ];
+
+        return $this->makeRequest('sendAnimation', $payload);
+    }
+
+    /**
      * Set webhook URL
      */
     public function setWebhook(string $url): array

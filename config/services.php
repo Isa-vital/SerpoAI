@@ -35,4 +35,28 @@ return [
         ],
     ],
 
+    'telegram' => [
+        'bot_token' => env('TELEGRAM_BOT_TOKEN'),
+        'bot_username' => env('TELEGRAM_BOT_USERNAME'),
+        'webhook_url' => env('TELEGRAM_WEBHOOK_URL'),
+        'community_channel_id' => env('COMMUNITY_CHANNEL_ID'),
+        'buy_alert_gif' => env('BUY_ALERT_GIF_URL'),
+    ],
+
+    'serpo' => [
+        'contract_address' => env('SERPO_CONTRACT_ADDRESS'),
+        'chain' => env('SERPO_CHAIN', 'ton'),
+        'dex_pair_address' => env('SERPO_DEX_PAIR_ADDRESS'),
+    ],
+
+    'ton' => [
+        'api_key' => env('API_KEY_TON'),
+        'api_url' => env('TON_API_URL', 'https://tonapi.io/v2'),
+    ],
+
+    'dexscreener' => [
+        'api_key' => env('API_KEY_DEXSCREENER'),
+        'api_url' => env('DEXSCREENER_API_URL', 'https://api.dexscreener.com/latest'),
+    ],
+
 ];

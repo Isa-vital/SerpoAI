@@ -38,4 +38,9 @@ class User extends Model
     {
         return $this->hasMany(BotLog::class);
     }
+
+    public function wallets()
+    {
+        return $this->hasMany(UserWallet::class);
+    }
 }

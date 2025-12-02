@@ -1,0 +1,17 @@
+[Unit]
+Description=SERPO Token Event Monitor
+After=network.target mysql.service
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=/var/www/SerpoAI
+ExecStart=/usr/bin/php /var/www/SerpoAI/artisan serpo:monitor --interval=60
+Restart=always
+RestartSec=10
+StandardOutput=append:/var/www/SerpoAI/storage/logs/monitor.log
+StandardError=append:/var/www/SerpoAI/storage/logs/monitor-error.log
+
+[Install]
+WantedBy=multi-user.target

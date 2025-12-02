@@ -45,7 +45,7 @@ class ProcessTelegramCommand implements ShouldQueue
             ]);
 
             $user = User::find($this->userId);
-            
+
             if (!$user) {
                 Log::error('User not found for async command processing', ['user_id' => $this->userId]);
                 return;
