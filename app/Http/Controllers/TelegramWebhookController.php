@@ -75,17 +75,14 @@ class TelegramWebhookController extends Controller
             'status' => 'pending',
         ]);
 
-        // Dispatch command processing to queue for async handling
-        // This ensures webhook returns immediately to Telegram
-        ProcessTelegramCommand::dispatch($chatId, $text, $user->id);
-        
-        Log::info('Telegram command dispatched to queue', [
-            'chat_id' => $chatId,
-            'text' => $text,
-            'user_id' => $user->id,
-        ]);
+        // Handle command synchronously for local testing
+        // TODO: Use async (ProcessTelegramCommand::dispatch) in production
+        if (str_starts_with($text, '/')) {
+            $this->commandHandler->handle($chatId, $text, $user);
+        } else {
+            $this->commandHandler->handleAIQuery($chatId, $text, $user);
+        }
     }
-
     /**
      * Handle callback query from inline keyboard
      */
