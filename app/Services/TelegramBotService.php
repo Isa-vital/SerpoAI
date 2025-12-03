@@ -19,7 +19,7 @@ class TelegramBotService
     /**
      * Send a text message to a user
      */
-    public function sendMessage(int $chatId, string $text, array $options = []): array
+    public function sendMessage(int $chatId, string $text, array $replyMarkup = [], array $options = []): array
     {
         $payload = array_merge([
             'chat_id' => $chatId,
@@ -27,13 +27,18 @@ class TelegramBotService
             'parse_mode' => 'Markdown',
         ], $options);
 
+        // Add reply markup (inline keyboard) if provided
+        if (!empty($replyMarkup)) {
+            $payload['reply_markup'] = json_encode($replyMarkup);
+        }
+
         return $this->makeRequest('sendMessage', $payload);
     }
 
     /**
      * Send a photo to a user
      */
-    public function sendPhoto(int $chatId, string $photo, string $caption = ''): array
+    public function sendPhoto(int $chatId, string $photo, string $caption = '', array $replyMarkup = []): array
     {
         $payload = [
             'chat_id' => $chatId,
@@ -41,6 +46,11 @@ class TelegramBotService
             'caption' => $caption,
             'parse_mode' => 'Markdown',
         ];
+
+        // Add reply markup (inline keyboard) if provided
+        if (!empty($replyMarkup)) {
+            $payload['reply_markup'] = json_encode($replyMarkup);
+        }
 
         return $this->makeRequest('sendPhoto', $payload);
     }
@@ -96,6 +106,15 @@ class TelegramBotService
     }
 
     /**
+     * Get chat info
+     */
+    public function getChat(int $chatId): array
+    {
+        $result = $this->makeRequest('getChat', ['chat_id' => $chatId]);
+        return $result['result'] ?? [];
+    }
+
+    /**
      * Send inline keyboard
      */
     public function sendInlineKeyboard(int $chatId, string $text, array $buttons): array
@@ -131,6 +150,20 @@ class TelegramBotService
             'callback_query_id' => $callbackQueryId,
             'text' => $text,
             'show_alert' => $showAlert,
+        ]);
+    }
+
+    /**
+     * Send chat action (typing indicator)
+     * 
+     * @param int $chatId
+     * @param string $action typing, upload_photo, record_video, upload_video, record_voice, upload_voice, upload_document, find_location, record_video_note, upload_video_note
+     */
+    public function sendChatAction(int $chatId, string $action = 'typing'): array
+    {
+        return $this->makeRequest('sendChatAction', [
+            'chat_id' => $chatId,
+            'action' => $action,
         ]);
     }
 

@@ -1,0 +1,40 @@
+# SerpoAI Deployment Commands
+# Copy and paste these commands one by one into your SSH session
+
+# ========================================
+# STEP 1: Install Composer
+# ========================================
+sudo apt update && sudo apt install composer -y
+composer --version
+
+# ========================================
+# STEP 2: Install PHP Dependencies
+# ========================================
+cd ~/laravel_app
+composer install --no-dev --optimize-autoloader
+
+# ========================================
+# STEP 3: Create .env file
+# ========================================
+cp .env.example .env
+echo ".env file created! Now we need to edit it..."
+
+# ========================================
+# STEP 4: Generate Application Key
+# ========================================
+php artisan key:generate --force
+
+# ========================================
+# STEP 5: Set Permissions
+# ========================================
+chmod -R 775 storage bootstrap/cache
+
+# ========================================
+# STEP 6: Clear Caches
+# ========================================
+php artisan config:clear
+php artisan cache:clear
+php artisan route:clear
+php artisan view:clear
+
+echo "Basic setup complete! Next: configure .env file"

@@ -43,4 +43,24 @@ class User extends Model
     {
         return $this->hasMany(UserWallet::class);
     }
+
+    public function profile()
+    {
+        return $this->hasOne(UserProfile::class);
+    }
+
+    public function userAlerts()
+    {
+        return $this->hasMany(UserAlert::class);
+    }
+
+    public function scanHistory()
+    {
+        return $this->hasMany(ScanHistory::class);
+    }
+
+    public function premiumSubscription()
+    {
+        return $this->hasOne(PremiumSubscription::class);
+    }
 }

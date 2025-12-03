@@ -40,6 +40,7 @@ return [
         'bot_username' => env('TELEGRAM_BOT_USERNAME'),
         'webhook_url' => env('TELEGRAM_WEBHOOK_URL'),
         'community_channel_id' => env('COMMUNITY_CHANNEL_ID'),
+        'official_channel_id' => env('OFFICIAL_CHANNEL_ID'),
         'buy_alert_gif' => env('BUY_ALERT_GIF_URL'),
     ],
 
@@ -57,6 +58,21 @@ return [
     'dexscreener' => [
         'api_key' => env('API_KEY_DEXSCREENER'),
         'api_url' => env('DEXSCREENER_API_URL', 'https://api.dexscreener.com/latest'),
+    ],
+
+    'binance' => [
+        'api_key' => env('BINANCE_API_KEY'),
+        'api_secret' => env('BINANCE_API_SECRET'),
+    ],
+
+    'coingecko' => [
+        'api_key' => env('COINGECKO_API_KEY'),
+        'api_url' => env('COINGECKO_API_URL', 'https://api.coingecko.com/api/v3'),
+    ],
+
+    'openai' => [
+        'api_key' => env('OPENAI_API_KEY'),
+        'model' => env('OPENAI_MODEL', 'gpt-4o-mini'),
     ],
 
 ];

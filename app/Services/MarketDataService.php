@@ -161,6 +161,51 @@ class MarketDataService
     }
 
     /**
+     * Get real-time TON price from CoinGecko API
+     */
+    public function getTonPrice(): float
+    {
+        $cacheKey = 'ton_price_usd';
+
+        // Cache for 5 minutes
+        return Cache::remember($cacheKey, 300, function () {
+            try {
+                $url = "{$this->coinGeckoUrl}/simple/price?ids=the-open-network&vs_currencies=usd";
+
+                $headers = [];
+                if ($this->coinGeckoApiKey) {
+                    $headers['x-cg-demo-api-key'] = $this->coinGeckoApiKey;
+                }
+
+                $response = Http::timeout(10)
+                    ->withHeaders($headers)
+                    ->get($url);
+
+                if (!$response->successful()) {
+                    Log::warning('CoinGecko API error, using fallback price', [
+                        'status' => $response->status()
+                    ]);
+                    return 5.5; // Fallback price
+                }
+
+                $data = $response->json();
+                $tonPrice = $data['the-open-network']['usd'] ?? 5.5;
+
+                Log::info('TON price fetched from CoinGecko', [
+                    'price' => $tonPrice
+                ]);
+
+                return (float) $tonPrice;
+            } catch (\Exception $e) {
+                Log::error('Error fetching TON price from CoinGecko', [
+                    'message' => $e->getMessage(),
+                ]);
+                return 5.5; // Fallback price
+            }
+        });
+    }
+
+    /**
      * Calculate EMA (Exponential Moving Average)
      */
     public function calculateEMA(string $symbol, int $period = 12): ?float
