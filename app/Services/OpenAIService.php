@@ -198,4 +198,195 @@ class OpenAIService
             return null;
         }
     }
+
+    /**
+     * Analyze sentiment of text batch
+     */
+    public function analyzeSentimentBatch(array $texts): array
+    {
+        if (!$this->isConfigured() || empty($texts)) {
+            return [
+                'average_score' => 0,
+                'positive_count' => 0,
+                'negative_count' => 0,
+                'neutral_count' => 0,
+                'trending_keywords' => [],
+            ];
+        }
+
+        try {
+            $textSample = implode("\n", array_slice($texts, 0, 20)); // Limit to 20 samples
+
+            $response = $this->client->chat()->create([
+                'model' => $this->model,
+                'messages' => [
+                    [
+                        'role' => 'system',
+                        'content' => 'You are a sentiment analysis expert. Analyze the overall sentiment of crypto-related social media posts. Rate from -100 (very bearish) to +100 (very bullish). Also extract trending keywords. Respond in JSON format: {"score": number, "positive": number, "negative": number, "neutral": number, "keywords": [array]}'
+                    ],
+                    [
+                        'role' => 'user',
+                        'content' => "Analyze sentiment of these posts:\n\n{$textSample}\n\nTotal posts: " . count($texts)
+                    ],
+                ],
+                'max_tokens' => 200,
+                'temperature' => 0.3,
+            ]);
+
+            $result = json_decode($response->choices[0]->message->content, true);
+
+            return [
+                'average_score' => $result['score'] ?? 0,
+                'positive_count' => $result['positive'] ?? 0,
+                'negative_count' => $result['negative'] ?? 0,
+                'neutral_count' => $result['neutral'] ?? 0,
+                'trending_keywords' => $result['keywords'] ?? [],
+            ];
+        } catch (\Exception $e) {
+            Log::error('OpenAI sentiment batch analysis error', ['message' => $e->getMessage()]);
+            return [
+                'average_score' => 0,
+                'positive_count' => 0,
+                'negative_count' => 0,
+                'neutral_count' => 0,
+                'trending_keywords' => [],
+            ];
+        }
+    }
+
+    /**
+     * Generate AI market prediction
+     */
+    public function generateMarketPrediction(array $marketData, array $sentimentData = [], array $technicalIndicators = []): array
+    {
+        if (!$this->isConfigured()) {
+            return ['error' => 'AI not configured'];
+        }
+
+        try {
+            $prompt = "Generate a market prediction for SERPO token based on:\n\n";
+            $prompt .= "Current Price: $" . $marketData['price'] . "\n";
+            $prompt .= "24h Change: " . $marketData['price_change_24h'] . "%\n";
+            $prompt .= "Volume: $" . number_format($marketData['volume_24h'] ?? 0) . "\n";
+
+            if (!empty($sentimentData)) {
+                $prompt .= "\nSentiment Analysis:\n";
+                $prompt .= "Overall Score: " . ($sentimentData['overall_score'] ?? 'N/A') . "\n";
+                $prompt .= "Social Mentions: " . ($sentimentData['total_mentions'] ?? 0) . "\n";
+            }
+
+            if (!empty($technicalIndicators)) {
+                $prompt .= "\nTechnical Indicators:\n";
+                foreach ($technicalIndicators as $key => $value) {
+                    $prompt .= "{$key}: {$value}\n";
+                }
+            }
+
+            $prompt .= "\nProvide prediction in JSON: {\"timeframe\": \"24h\", \"predicted_price\": number, \"trend\": \"bullish/bearish/neutral\", \"confidence\": 0-100, \"reasoning\": \"brief explanation\", \"factors\": [\"factor1\", \"factor2\"]}";
+
+            $response = $this->client->chat()->create([
+                'model' => $this->model,
+                'messages' => [
+                    [
+                        'role' => 'system',
+                        'content' => 'You are an AI trading analyst. Generate data-driven price predictions based on technical and sentiment analysis. Be conservative with confidence scores. Provide clear reasoning.'
+                    ],
+                    [
+                        'role' => 'user',
+                        'content' => $prompt
+                    ],
+                ],
+                'max_tokens' => 300,
+                'temperature' => 0.5,
+            ]);
+
+            return json_decode($response->choices[0]->message->content, true) ?? ['error' => 'Failed to parse prediction'];
+        } catch (\Exception $e) {
+            Log::error('OpenAI prediction generation error', ['message' => $e->getMessage()]);
+            return ['error' => $e->getMessage()];
+        }
+    }
+
+    /**
+     * Generate personalized trading recommendation
+     */
+    public function generatePersonalizedRecommendation(array $userProfile, array $marketData, array $sentimentData): string
+    {
+        if (!$this->isConfigured()) {
+            return "AI recommendations require OpenAI configuration.";
+        }
+
+        try {
+            $prompt = "Generate a personalized trading recommendation for:\n\n";
+            $prompt .= "User Profile:\n";
+            $prompt .= "Risk Level: " . ($userProfile['risk_level'] ?? 'moderate') . "\n";
+            $prompt .= "Trading Style: " . ($userProfile['trading_style'] ?? 'day_trading') . "\n";
+
+            $prompt .= "\nMarket Data:\n";
+            $prompt .= "Current Price: $" . $marketData['price'] . "\n";
+            $prompt .= "24h Change: " . $marketData['price_change_24h'] . "%\n";
+            $prompt .= "Sentiment: " . ($sentimentData['overall_sentiment'] ?? 'Neutral') . "\n";
+
+            $prompt .= "\nProvide a brief, personalized recommendation (3-4 sentences).";
+
+            $response = $this->client->chat()->create([
+                'model' => $this->model,
+                'messages' => [
+                    [
+                        'role' => 'system',
+                        'content' => 'You are a personalized trading advisor. Tailor recommendations to the user\'s risk tolerance and trading style. Always remind users to DYOR and that this is not financial advice.'
+                    ],
+                    [
+                        'role' => 'user',
+                        'content' => $prompt
+                    ],
+                ],
+                'max_tokens' => 200,
+                'temperature' => 0.7,
+            ]);
+
+            return $response->choices[0]->message->content ?? "Unable to generate recommendation.";
+        } catch (\Exception $e) {
+            Log::error('OpenAI personalized recommendation error', ['message' => $e->getMessage()]);
+            return "Unable to generate personalized recommendation at this time.";
+        }
+    }
+
+    /**
+     * Natural language query processing
+     */
+    public function processNaturalQuery(string $query, array $availableData = []): string
+    {
+        if (!$this->isConfigured()) {
+            return "AI query processing requires OpenAI configuration.";
+        }
+
+        try {
+            $contextPrompt = "You have access to the following real-time data:\n";
+            foreach ($availableData as $key => $value) {
+                $contextPrompt .= "{$key}: {$value}\n";
+            }
+
+            $response = $this->client->chat()->create([
+                'model' => $this->model,
+                'messages' => [
+                    [
+                        'role' => 'system',
+                        'content' => 'You are SerpoAI assistant. Answer user questions using the provided real-time data. Be conversational, helpful, and concise. If you don\'t have specific data, say so honestly. ' . $contextPrompt
+                    ],
+                    [
+                        'role' => 'user',
+                        'content' => $query
+                    ],
+                ],
+                'max_tokens' => 250,
+                'temperature' => 0.8,
+            ]);
+
+            return $response->choices[0]->message->content ?? "I couldn't process that query. Please try rephrasing.";
+        } catch (\Exception $e) {
+            Log::error('OpenAI natural query error', ['message' => $e->getMessage()]);
+            return "Sorry, I couldn't process that query right now. Please try again.";
+        }
+    }
 }

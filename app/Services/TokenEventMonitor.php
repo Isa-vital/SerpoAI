@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\TokenEvent;
+use App\Models\AlertSubscription;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Cache;
@@ -11,7 +12,17 @@ use Illuminate\Support\Facades\Cache;
  * Token Event Monitor Service
  * 
  * Monitors SERPO token for buys, sells, liquidity changes, price movements
- * and sends alerts to the community channel
+ * and sends alerts to the community channel.
+ * 
+ * WHALE ALERT MECHANISM:
+ * - Currently uses DexScreener aggregated data for general buy activity
+ * - Individual whale transactions (20+ TON = $100+ USD) are detected if:
+ *   1. TON API key is configured AND
+ *   2. SERPO_DEX_PAIR_ADDRESS is set in .env (DeDust/StonFi pool address)
+ * - Without DEX pool address, whale detection relies on TonAPI jetton transfers
+ *   which may miss actual DEX swaps
+ * 
+ * RECOMMENDATION: Set SERPO_DEX_PAIR_ADDRESS for accurate whale tracking
  */
 class TokenEventMonitor
 {
@@ -19,9 +30,10 @@ class TokenEventMonitor
     private MarketDataService $marketData;
     private string $contractAddress;
     private string $channelId;
+    private ?string $officialChannelId;
 
     // Thresholds for alerts
-    private const LARGE_TRADE_TON = 0.4; // 0.4+ TON trades
+    private const LARGE_TRADE_TON = 20.0; // 20+ TON trades = Whale Alert ($100+ USD)
     private const LARGE_TRANSFER_AMOUNT = 10000; // 10k+ SERPO
     private const PRICE_CHANGE_ALERT = 5; // 5% price change
     private const LIQUIDITY_CHANGE_ALERT = 10; // 10% liquidity change
@@ -34,6 +46,7 @@ class TokenEventMonitor
         $this->marketData = $marketData;
         $this->contractAddress = config('services.serpo.contract_address');
         $this->channelId = config('services.telegram.community_channel_id');
+        $this->officialChannelId = config('services.telegram.official_channel_id');
     }
 
     /**
@@ -115,10 +128,143 @@ class TokenEventMonitor
                 $this->processSells($transactions, $mainPair);
             }
 
-            // Alternative: Use TON API for more detailed transaction data
-            $this->checkTonTransactions($lastTxHash);
+            // OPTIONAL: Use TON API for detailed individual transaction tracking
+            // Note: This requires monitoring the DEX pool contract, not jetton master
+            if (config('services.serpo.dex_pair_address')) {
+                $this->checkDexPoolTransactions();
+            }
         } catch (\Exception $e) {
             Log::error('❌ Error checking transactions', ['error' => $e->getMessage(), 'trace' => $e->getTraceAsString()]);
+        }
+    }
+
+    /**
+     * Check DEX pool for individual swap transactions (OPTIONAL - more accurate)
+     */
+    private function checkDexPoolTransactions(): void
+    {
+        try {
+            $apiKey = config('services.ton.api_key');
+            $dexPoolAddress = config('services.serpo.dex_pair_address');
+
+            if (!$apiKey || !$dexPoolAddress) {
+                return;
+            }
+
+            Log::info('Fetching DEX pool transactions from TonAPI...');
+
+            // Query the DEX POOL contract, not the jetton master
+            $response = Http::withHeaders([
+                'Authorization' => "Bearer {$apiKey}",
+            ])->timeout(15)->get("https://tonapi.io/v2/accounts/{$dexPoolAddress}/events", [
+                'limit' => 20,
+                'subject_only' => false,
+            ]);
+
+            if (!$response->successful()) {
+                Log::error('TonAPI DEX pool request failed', ['status' => $response->status()]);
+                return;
+            }
+
+            $events = $response->json('events', []);
+            Log::info('Found DEX pool events', ['count' => count($events)]);
+
+            foreach ($events as $event) {
+                $this->processDexSwapEvent($event);
+            }
+        } catch (\Exception $e) {
+            Log::error('Error checking DEX pool transactions', ['error' => $e->getMessage()]);
+        }
+    }
+
+    /**
+     * Process a DEX swap event to detect whales
+     */
+    private function processDexSwapEvent(array $event): void
+    {
+        try {
+            // Look for swap actions in the event
+            $actions = $event['actions'] ?? [];
+
+            foreach ($actions as $action) {
+                if ($action['type'] === 'JettonSwap') {
+                    $swap = $action['JettonSwap'];
+
+                    // Extract swap details
+                    $jettonMasterIn = $swap['jetton_master_in']['address'] ?? null;
+                    $jettonMasterOut = $swap['jetton_master_out']['address'] ?? null;
+
+                    // Convert from nano units (1e9) to regular units
+                    $amountIn = (isset($swap['amount_in']) && is_numeric($swap['amount_in']) && $swap['amount_in'] !== '')
+                        ? ($swap['amount_in'] / 1e9)
+                        : 0;
+                    $amountOut = (isset($swap['amount_out']) && is_numeric($swap['amount_out']) && $swap['amount_out'] !== '')
+                        ? ($swap['amount_out'] / 1e9)
+                        : 0;
+                    $tonIn = (isset($swap['ton_in']) && is_numeric($swap['ton_in']) && $swap['ton_in'] !== '')
+                        ? ($swap['ton_in'] / 1e9)
+                        : 0;
+                    $tonOut = (isset($swap['ton_out']) && is_numeric($swap['ton_out']) && $swap['ton_out'] !== '')
+                        ? ($swap['ton_out'] / 1e9)
+                        : 0;
+                    $user = $swap['user_wallet']['address'] ?? null;
+
+                    // Determine if buy or sell based on which jetton is SERPO
+                    // Buy: User sends TON, receives SERPO (jetton_master_out = SERPO)
+                    // Sell: User sends SERPO, receives TON (jetton_master_in = SERPO)
+                    $isBuy = $jettonMasterOut === $this->contractAddress;
+
+                    // SERPO amount: 
+                    // - For buys: amount_out contains SERPO
+                    // - For sells: amount_in contains SERPO
+                    $serpoAmount = $isBuy ? $amountOut : $amountIn;
+
+                    // Use actual TON value from API (buys have ton_in, sells have ton_out)
+                    $tonValue = $tonIn > 0 ? $tonIn : $tonOut;
+
+                    // Get real-time TON price from CoinGecko
+                    $tonPrice = $this->marketData->getTonPrice();
+                    $usdValue = $tonValue * $tonPrice;
+
+                    // DEACTIVATED: Skip sell alerts
+                    if (!$isBuy) {
+                        Log::info('⏭️ Sell alert deactivated - skipping', [
+                            'serpo_amount' => $serpoAmount,
+                            'ton_value' => $tonValue,
+                        ]);
+                        continue;
+                    }
+
+                    // Determine if whale (20+ TON)
+                    $isWhale = $tonValue >= self::LARGE_TRADE_TON;
+
+                    // Log buy transactions
+                    Log::info($isWhale ? '🐋 Whale buy detected!' : '💎 Individual buy detected', [
+                        'serpo_amount' => $serpoAmount,
+                        'ton_value' => $tonValue,
+                        'usd_value' => $usdValue,
+                        'is_whale' => $isWhale,
+                    ]);
+
+                    // Create event record for buy transactions only
+                    $tokenEvent = TokenEvent::create([
+                        'event_type' => $isWhale ? 'whale_buy' : 'buy',
+                        'tx_hash' => $event['event_id'] ?? uniqid('swap_'),
+                        'from_address' => $user,
+                        'to_address' => config('services.serpo.dex_pair_address') ?? 'DEX',
+                        'amount' => $serpoAmount,
+                        'usd_value' => $usdValue,
+                        'details' => $event,
+                        'event_timestamp' => now(),
+                        'notified' => false,
+                    ]);
+
+                    // Send alert for buy transactions
+                    $this->sendIndividualTransactionAlert($tokenEvent, $tonValue);
+                }
+            }
+        } catch (\Exception $e) {
+            Log::error('Error processing DEX swap event', ['error' => $e->getMessage()]);
         }
     }
 
@@ -244,23 +390,28 @@ class TokenEventMonitor
             // Determine if it's a buy or sell
             $eventType = $this->determineEventType($sender, $recipient);
 
-            // Get current price
+            // Get current SERPO price
             $priceData = $this->marketData->getSerpoPriceFromDex();
             $priceInUsd = $priceData['price'] ?? 0;
 
-            // Calculate TON value (assuming TON = $5.5)
-            $tonPrice = 5.5;
-            $serpoInTon = ($priceInUsd / $tonPrice) * $amount;
-            $usdValue = $amount * $priceInUsd;
+            // Get real-time TON price
+            $tonPrice = $this->marketData->getTonPrice();
 
-            // Only alert for significant transfers
-            if ($serpoInTon < self::LARGE_TRADE_TON && $amount < self::LARGE_TRANSFER_AMOUNT) {
+            // Calculate values
+            $usdValue = $amount * $priceInUsd;
+            $serpoInTon = $usdValue / $tonPrice;
+
+            // Check if this is a whale transaction (20+ TON = $100+ USD)
+            $isWhale = $serpoInTon >= self::LARGE_TRADE_TON;
+
+            // Only alert for significant transfers (whales or large SERPO amounts)
+            if (!$isWhale && $amount < self::LARGE_TRANSFER_AMOUNT) {
                 return;
             }
 
             // Create event record
             $event = TokenEvent::create([
-                'event_type' => $eventType,
+                'event_type' => $isWhale ? 'whale_' . $eventType : $eventType,
                 'tx_hash' => $txHash,
                 'from_address' => $sender,
                 'to_address' => $recipient,
@@ -297,25 +448,28 @@ class TokenEventMonitor
             // Determine if it's a buy or sell based on DEX contracts
             $eventType = $this->determineEventType($sender, $recipient);
 
-            // Get price data to calculate TON value
+            // Get price data
             $priceData = $this->marketData->getSerpoPriceFromDex();
             $priceInUsd = $priceData['price'] ?? 0;
 
-            // Assuming TON price ~$5-6, calculate SERPO value in TON
-            // You can fetch actual TON price or use a fixed estimate
-            $tonPrice = 5.5; // Approximate TON/USD price
-            $serpoInTon = ($priceInUsd / $tonPrice) * $amount;
-            $usdValue = $amount * $priceInUsd;
+            // Get real-time TON price
+            $tonPrice = $this->marketData->getTonPrice();
 
-            // Only alert for large transfers (>0.4 TON OR >10k SERPO)
-            // Skip if BOTH conditions are below threshold
-            if ($serpoInTon < self::LARGE_TRADE_TON && $amount < self::LARGE_TRANSFER_AMOUNT) {
+            // Calculate values
+            $usdValue = $amount * $priceInUsd;
+            $serpoInTon = $usdValue / $tonPrice;
+
+            // Check if this is a whale transaction (20+ TON = $100+ USD)
+            $isWhale = $serpoInTon >= self::LARGE_TRADE_TON;
+
+            // Only alert for significant transfers (whales or large SERPO amounts)
+            if (!$isWhale && $amount < self::LARGE_TRANSFER_AMOUNT) {
                 return;
             }
 
             // Create event record
             $event = TokenEvent::create([
-                'event_type' => $eventType,
+                'event_type' => $isWhale ? 'whale_' . $eventType : $eventType,
                 'tx_hash' => $transfer['event_id'],
                 'from_address' => $sender,
                 'to_address' => $recipient,
@@ -492,7 +646,7 @@ class TokenEventMonitor
 
                     // Send with GIF animation
                     $gifFileId = config('services.telegram.buy_alert_gif');
-                    $this->sendAnimationToChannel($gifFileId, $message);
+                    $this->sendAnimationToChannel($gifFileId, $message, 'buy');
                 }
 
                 Cache::put('last_holder_count', $holderCount, now()->addHour());
@@ -513,8 +667,7 @@ class TokenEventMonitor
             if ($message) {
                 // Send with GIF animation
                 $gifFileId = config('services.telegram.buy_alert_gif');
-                $this->sendAnimationToChannel($gifFileId, $message);
-
+                $this->sendAnimationToChannel($gifFileId, $message, 'price_change');
                 $event->update(['notified' => true]);
 
                 Log::info('Event alert sent', [
@@ -539,13 +692,19 @@ class TokenEventMonitor
 
         switch ($event->event_type) {
             case 'buy':
-                return "{$emoji} *BUY ALERT*\n\n" .
+            case 'whale_buy':
+                $isWhale = str_starts_with($event->event_type, 'whale_');
+                $header = $isWhale ? "{$emoji} 🐋 *WHALE BUY ALERT*\n\n" : "{$emoji} *BUY ALERT*\n\n";
+                return $header .
                     "💰 Amount: `" . number_format($event->amount, 2) . " SERPO`\n" .
                     "💵 Value: `$" . number_format($event->usd_value, 2) . "`\n" .
                     "🔗 [View Transaction](https://tonscan.org/tx/{$event->tx_hash})";
 
             case 'sell':
-                return "{$emoji} *SELL ALERT*\n\n" .
+            case 'whale_sell':
+                $isWhale = str_starts_with($event->event_type, 'whale_');
+                $header = $isWhale ? "{$emoji} 🐋 *WHALE SELL ALERT*\n\n" : "{$emoji} *SELL ALERT*\n\n";
+                return $header .
                     "💰 Amount: `" . number_format($event->amount, 2) . " SERPO`\n" .
                     "💵 Value: `$" . number_format($event->usd_value, 2) . "`\n" .
                     "🔗 [View Transaction](https://tonscan.org/tx/{$event->tx_hash})";
@@ -569,8 +728,9 @@ class TokenEventMonitor
                     "⏰ " . $event->event_timestamp->format('H:i:s');
 
             case 'large_transfer':
-                return "{$emoji} *WHALE ALERT*\n\n" .
-                    "🐋 Transfer: `" . number_format($event->amount, 2) . " SERPO`\n" .
+            case 'whale_transfer':
+                return "{$emoji} 🐋 *WHALE TRANSFER*\n\n" .
+                    "💰 Transfer: `" . number_format($event->amount, 2) . " SERPO`\n" .
                     "💵 Value: `$" . number_format($event->usd_value, 2) . "`\n" .
                     "🔗 [View Transaction](https://tonscan.org/tx/{$event->tx_hash})";
 
@@ -582,7 +742,7 @@ class TokenEventMonitor
     /**
      * Send message to community channel (now always with GIF)
      */
-    private function sendMessageToChannel(string $message): void
+    private function sendMessageToChannel(string $message, string $alertType = 'buy'): void
     {
         if (!$this->channelId) {
             Log::warning('Community channel ID not configured');
@@ -591,20 +751,83 @@ class TokenEventMonitor
 
         // Always send with GIF now
         $gifFileId = config('services.telegram.buy_alert_gif');
-        $this->sendAnimationToChannel($gifFileId, $message);
+        $this->sendAnimationToChannel($gifFileId, $message, $alertType);
     }
 
     /**
-     * Send animation/GIF with caption to community channel
+     * Send animation/GIF with caption to community channel and all subscribers
      */
-    private function sendAnimationToChannel(string $animationUrl, string $caption): void
+    private function sendAnimationToChannel(string $animationUrl, string $caption, string $alertType = 'buy'): void
     {
-        if (!$this->channelId) {
-            Log::warning('Community channel ID not configured');
-            return;
+        // Always send to main community channel if configured
+        if ($this->channelId) {
+            try {
+                $this->telegram->sendAnimation($this->channelId, $animationUrl, $caption);
+                Log::info('Alert sent to main channel', ['channel_id' => $this->channelId]);
+            } catch (\Exception $e) {
+                Log::error('Failed to send to main channel', [
+                    'error' => $e->getMessage(),
+                    'channel_id' => $this->channelId,
+                ]);
+            }
         }
 
-        $this->telegram->sendAnimation($this->channelId, $animationUrl, $caption);
+        // Always send to official channel if configured (separate from subscriptions)
+        if ($this->officialChannelId) {
+            try {
+                $this->telegram->sendAnimation($this->officialChannelId, $animationUrl, $caption);
+                Log::info('Alert sent to official channel', ['channel_id' => $this->officialChannelId]);
+            } catch (\Exception $e) {
+                Log::error('Failed to send to official channel', [
+                    'error' => $e->getMessage(),
+                    'channel_id' => $this->officialChannelId,
+                ]);
+            }
+        }
+
+        // Get all active subscriptions for this alert type
+        $subscriptions = AlertSubscription::getActiveForAlertType($alertType);
+
+        Log::info('Broadcasting alert to subscribers', [
+            'alert_type' => $alertType,
+            'subscriber_count' => $subscriptions->count(),
+        ]);
+
+        // Send to each subscriber
+        foreach ($subscriptions as $subscription) {
+            try {
+                // Skip if it's the main channel or official channel (already sent)
+                if (
+                    $subscription->chat_id === $this->channelId ||
+                    $subscription->chat_id === $this->officialChannelId
+                ) {
+                    continue;
+                }
+
+                $this->telegram->sendAnimation((int)$subscription->chat_id, $animationUrl, $caption);
+                $subscription->markAlertSent();
+
+                Log::info('Alert sent to subscriber', [
+                    'chat_id' => $subscription->chat_id,
+                    'chat_type' => $subscription->chat_type,
+                ]);
+            } catch (\Exception $e) {
+                Log::error('Failed to send alert to subscriber', [
+                    'chat_id' => $subscription->chat_id,
+                    'error' => $e->getMessage(),
+                ]);
+
+                // If bot was blocked or kicked, disable subscription
+                if (
+                    str_contains($e->getMessage(), 'bot was blocked') ||
+                    str_contains($e->getMessage(), 'chat not found') ||
+                    str_contains($e->getMessage(), 'kicked')
+                ) {
+                    $subscription->disableAll();
+                    Log::info('Subscription disabled due to error', ['chat_id' => $subscription->chat_id]);
+                }
+            }
+        }
     }
 
     /**
@@ -618,33 +841,9 @@ class TokenEventMonitor
 
         Log::info('💚 Processing buys', ['count' => $buyCount, 'volume' => $volume]);
 
-        // Check for whale activity (large individual buy)
-        if ($buyCount > 0 && $volume > 0) {
-            $avgBuyUsd = $volume / $buyCount;
-            $tonPriceUsd = 5.15; // Approximate TON price
-            $avgBuyTon = $avgBuyUsd / $tonPriceUsd;
-
-            // If average buy is >= 2 TON ($10+ USD), it's likely a whale
-            if ($avgBuyTon >= 2.0) {
-                $lastWhaleAlert = Cache::get('last_whale_alert_time', 0);
-                $now = time();
-
-                // Whale alerts have 15 min cooldown (half of regular buy alerts)
-                if ($now - $lastWhaleAlert > 900) {
-                    Log::info('🐋 Whale detected! Sending whale alert!');
-                    $this->sendWhaleAlert([
-                        'buy_count' => $buyCount,
-                        'volume' => $volume,
-                        'price' => $price,
-                        'avg_buy_ton' => $avgBuyTon,
-                        'avg_buy_usd' => $avgBuyUsd,
-                    ]);
-
-                    Cache::put('last_whale_alert_time', $now, now()->addHours(2));
-                    return; // Don't send regular buy alert if whale alert sent
-                }
-            }
-        }
+        // Note: Individual whale transactions (20+ TON) are detected and alerted
+        // by processJettonTransfer() via TON blockchain monitoring
+        // This section only handles general buy activity alerts
 
         if ($buyCount > 0 && $volume > 100) { // At least $100 volume
             $lastBuyAlert = Cache::get('last_buy_alert_time', 0);
@@ -723,12 +922,16 @@ class TokenEventMonitor
         $fromAddr = $event->from_address;
         $shortFrom = substr($fromAddr, 0, 4) . '...' . substr($fromAddr, -4);
 
+        // Determine if this is a whale transaction (20+ TON)
+        $isWhale = str_starts_with($event->event_type, 'whale_');
+
         // Determine emoji based on event type
-        $emoji = $event->event_type === 'buy' ? '🟢' : ($event->event_type === 'sell' ? '🔴' : '💫');
-        $action = $event->event_type === 'buy' ? 'BUY' : ($event->event_type === 'sell' ? 'SELL' : 'TRANSFER');
+        $baseType = str_replace('whale_', '', $event->event_type);
+        $emoji = $baseType === 'buy' ? '🟢' : ($baseType === 'sell' ? '🔴' : '💫');
+        $action = strtoupper($baseType);
 
         // Build the alert message
-        $caption = "{$emoji} *SERPO {$action}!*\n\n";
+        $caption = $isWhale ? "🐋 *WHALE ALERT!*\n\n" : "{$emoji} *SERPO {$action}!*\n\n";
         $caption .= "💎 *SERPO Token*\n";
         $caption .= "📝 Contract: `{$this->contractAddress}`\n\n";
 
@@ -759,7 +962,7 @@ class TokenEventMonitor
 
         try {
             // Send animation with caption
-            $this->sendAnimationToChannel($gifFileId, $caption);
+            $this->sendAnimationToChannel($gifFileId, $caption, $event->event_type);
 
             // Mark as notified
             $event->update(['notified' => true]);
@@ -824,7 +1027,7 @@ class TokenEventMonitor
 
         try {
             // Send animation with caption
-            $this->sendAnimationToChannel($gifFileId, $caption);
+            $this->sendAnimationToChannel($gifFileId, $caption, 'whale');
 
             Log::info('🐋 Whale alert sent successfully', [
                 'avg_ton' => $avgBuyTon,
@@ -855,8 +1058,8 @@ class TokenEventMonitor
         $liquidity = $priceData['liquidity'] ?? 0;
         $marketCap = $priceData['market_cap'] ?? 0;
 
-        // Get TON price in USD (approximately $5.15)
-        $tonPriceUsd = 5.15; // You can fetch this from an API
+        // Get real-time TON price
+        $tonPriceUsd = $this->marketData->getTonPrice(); // You can fetch this from an API
 
         // Estimate average buy size
         $avgBuyUsd = $buyCount > 0 ? ($volume24h / $buyCount) : 0;
@@ -894,7 +1097,7 @@ class TokenEventMonitor
 
         // Send with GIF if URL/file_id is configured, otherwise send text only
         if ($gifUrl && !empty(trim($gifUrl))) {
-            $this->sendAnimationToChannel($gifUrl, $caption);
+            $this->sendAnimationToChannel($gifUrl, $caption, 'buy');
         } else {
             $this->sendMessageToChannel($caption);
         }

@@ -58,8 +58,15 @@ class TelegramWebhookController extends Controller
     private function handleMessage(array $message)
     {
         $chatId = $message['chat']['id'];
+        $chatType = $message['chat']['type'] ?? 'private';
         $text = $message['text'] ?? '';
         $from = $message['from'];
+        $entities = $message['entities'] ?? [];
+
+        // Skip if message is from a channel (auto-forwarded)
+        if (isset($message['sender_chat']) && $message['sender_chat']['type'] === 'channel') {
+            return;
+        }
 
         // Get or create user
         $user = $this->getOrCreateUser($from);
@@ -75,13 +82,54 @@ class TelegramWebhookController extends Controller
             'status' => 'pending',
         ]);
 
-        // Handle command synchronously for local testing
-        // TODO: Use async (ProcessTelegramCommand::dispatch) in production
-        if (str_starts_with($text, '/')) {
-            $this->commandHandler->handle($chatId, $text, $user);
-        } else {
-            $this->commandHandler->handleAIQuery($chatId, $text, $user);
+        // Extract command from text (remove @botname if present)
+        $commandText = $text;
+        if (preg_match('/^@\w+\s+(.+)/', $text, $matches)) {
+            // "@SerpoAI_Bot /help" -> "/help"
+            $commandText = $matches[1];
         }
+
+        // Always handle commands (in any chat type)
+        if (str_starts_with($commandText, '/')) {
+            $this->commandHandler->handle($chatId, $commandText, $user);
+            return;
+        }
+
+        // For groups/supergroups, only respond if bot is mentioned
+        if (in_array($chatType, ['group', 'supergroup'])) {
+            $botUsername = config('services.telegram.bot_username');
+            $isMentioned = false;
+
+            // Check if bot is mentioned in entities
+            foreach ($entities as $entity) {
+                if ($entity['type'] === 'mention') {
+                    $mention = substr($text, $entity['offset'], $entity['length']);
+                    if (strtolower($mention) === '@' . strtolower($botUsername)) {
+                        $isMentioned = true;
+                        break;
+                    }
+                }
+            }
+
+            // Also check for text_mention type (when user clicks on bot name)
+            foreach ($entities as $entity) {
+                if ($entity['type'] === 'text_mention' && isset($entity['user'])) {
+                    $botInfo = $this->telegram->getMe();
+                    if ($entity['user']['id'] === $botInfo['result']['id']) {
+                        $isMentioned = true;
+                        break;
+                    }
+                }
+            }
+
+            // Only respond in groups if mentioned
+            if (!$isMentioned) {
+                return;
+            }
+        }
+
+        // Handle AI query (private chat or mentioned in group)
+        $this->commandHandler->handleAIQuery($chatId, $text, $user, $chatType);
     }
     /**
      * Handle callback query from inline keyboard
