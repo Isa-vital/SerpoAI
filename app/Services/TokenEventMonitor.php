@@ -33,7 +33,7 @@ class TokenEventMonitor
     private ?string $officialChannelId;
 
     // Thresholds for alerts
-    private const LARGE_TRADE_TON = 20.0; // 20+ TON trades = Whale Alert ($100+ USD)
+    private const LARGE_TRADE_TON = 50.0; // 50+ TON trades = Whale Alert ($250+ USD)
     private const LARGE_TRANSFER_AMOUNT = 10000; // 10k+ SERPO
     private const PRICE_CHANGE_ALERT = 5; // 5% price change
     private const LIQUIDITY_CHANGE_ALERT = 10; // 10% liquidity change
@@ -154,11 +154,10 @@ class TokenEventMonitor
             Log::info('Fetching DEX pool transactions from TonAPI...');
 
             // Query the DEX POOL contract, not the jetton master
-            $response = Http::withHeaders([
-                'Authorization' => "Bearer {$apiKey}",
-            ])->timeout(15)->get("https://tonapi.io/v2/accounts/{$dexPoolAddress}/events", [
+            $response = Http::timeout(15)->get("https://tonapi.io/v2/accounts/{$dexPoolAddress}/events", [
                 'limit' => 20,
                 'subject_only' => false,
+                'token' => $apiKey,
             ]);
 
             if (!$response->successful()) {
@@ -209,10 +208,12 @@ class TokenEventMonitor
                         : 0;
                     $user = $swap['user_wallet']['address'] ?? null;
 
-                    // Determine if buy or sell based on which jetton is SERPO
-                    // Buy: User sends TON, receives SERPO (jetton_master_out = SERPO)
-                    // Sell: User sends SERPO, receives TON (jetton_master_in = SERPO)
-                    $isBuy = $jettonMasterOut === $this->contractAddress;
+                    // Determine if buy or sell based on which side TON is on
+                    // BUY: TON in, SERPO out (jetton_master_in is null because TON isn't a jetton)
+                    // SELL: SERPO in, TON out (jetton_master_out is null)
+                    // When someone BUYS SERPO, they send TON (ton_in > 0, jetton_master_in = null)
+                    // When someone SELLS SERPO, they receive TON (ton_out > 0, jetton_master_out = null)
+                    $isBuy = $jettonMasterIn === null && $jettonMasterOut !== null;
 
                     // SERPO amount: 
                     // - For buys: amount_out contains SERPO
@@ -908,7 +909,7 @@ class TokenEventMonitor
     /**
      * Send individual transaction alert to channel
      */
-    private function sendIndividualTransactionAlert(TokenEvent $event, float $tonAmount): void
+    public function sendIndividualTransactionAlert(TokenEvent $event, float $tonAmount): void
     {
         // Get market data
         $priceData = $this->marketData->getSerpoPriceFromDex();

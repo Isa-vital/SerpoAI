@@ -102,7 +102,7 @@ foreach ($events as $index => $event) {
             // Use TON value - buys have ton_in, sells would have ton_out
             $tonValue = $tonIn > 0 ? $tonIn : $tonOut;
             $usdValue = $tonValue * $tonPrice;            // Check if whale
-            $isWhale = $tonValue >= 20.0;
+            $isWhale = $tonValue >= 50.0;
 
             if ($isBuy) $buyCount++;
             else $sellCount++;

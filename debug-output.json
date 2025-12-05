@@ -1,0 +1,102 @@
+≡ƒöì Fetching DEX pool events...
+
+Found 3 events
+
+[
+    {
+        "event_id": "cb5541ee457404f454ef208bd19dd45ad7056eda2c1f99f3465d4773d082f874",
+        "account": {
+            "address": "0:0a491aed23a48db06790d0de1dec342db7b18f7cc1fbd904382b548b0a8ac6d0",
+            "is_scam": false,
+            "is_wallet": false
+        },
+        "timestamp": 1764871475,
+        "actions": [
+            {
+                "type": "Unknown",
+                "status": "ok",
+                "simple_preview": {
+                    "name": "Unknown",
+                    "description": "Something happened but we don't understand what.",
+                    "accounts": [
+                        {
+                            "address": "0:0a491aed23a48db06790d0de1dec342db7b18f7cc1fbd904382b548b0a8ac6d0",
+                            "is_scam": false,
+                            "is_wallet": false
+                        }
+                    ]
+                },
+                "base_transactions": []
+            }
+        ],
+        "is_scam": false,
+        "lt": 64303368000001,
+        "in_progress": false,
+        "extra": 0,
+        "progress": 1
+    },
+    {
+        "event_id": "fadc5f4b500a5c926eecc2a00ec714c9c808c7a608c017b80c9bb1166a047846",
+        "account": {
+            "address": "0:0a491aed23a48db06790d0de1dec342db7b18f7cc1fbd904382b548b0a8ac6d0",
+            "is_scam": false,
+            "is_wallet": false
+        },
+        "timestamp": 1764869269,
+        "actions": [
+            {
+                "type": "Unknown",
+                "status": "ok",
+                "simple_preview": {
+                    "name": "Unknown",
+                    "description": "Something happened but we don't understand what.",
+                    "accounts": [
+                        {
+                            "address": "0:0a491aed23a48db06790d0de1dec342db7b18f7cc1fbd904382b548b0a8ac6d0",
+                            "is_scam": false,
+                            "is_wallet": false
+                        }
+                    ]
+                },
+                "base_transactions": []
+            }
+        ],
+        "is_scam": false,
+        "lt": 64302495000001,
+        "in_progress": false,
+        "extra": 0,
+        "progress": 1
+    },
+    {
+        "event_id": "23fcdfb1ffb95c13c309dcfc27d588a583b1e10d4613b602328a85d383a99d2a",
+        "account": {
+            "address": "0:0a491aed23a48db06790d0de1dec342db7b18f7cc1fbd904382b548b0a8ac6d0",
+            "is_scam": false,
+            "is_wallet": false
+        },
+        "timestamp": 1764868236,
+        "actions": [
+            {
+                "type": "Unknown",
+                "status": "ok",
+                "simple_preview": {
+                    "name": "Unknown",
+                    "description": "Something happened but we don't understand what.",
+                    "accounts": [
+                        {
+                            "address": "0:0a491aed23a48db06790d0de1dec342db7b18f7cc1fbd904382b548b0a8ac6d0",
+                            "is_scam": false,
+                            "is_wallet": false
+                        }
+                    ]
+                },
+                "base_transactions": []
+            }
+        ],
+        "is_scam": false,
+        "lt": 64302088000001,
+        "in_progress": false,
+        "extra": 0,
+        "progress": 1
+    }
+]
