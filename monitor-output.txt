@@ -1,0 +1,11 @@
+≡ƒÜÇ Starting SERPO Token Event Monitor...
+≡ƒôè Check interval: 60 seconds
+≡ƒöù Contract: EQCPeUzKknneMlA1UbivELxd8lFUA_oaOX9m9PPc4d6lHQyw
+≡ƒôó Channel: -1003446449214
+
+≡ƒöä Continuous monitoring started. Press Ctrl+C to stop.
+
+[18:19:42] Check #1 starting...
+Γ£à Check completed in 43.2s
+
+ΓÅ│ Waiting 60 seconds until next check...
