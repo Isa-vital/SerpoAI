@@ -1,0 +1,23 @@
+[Unit]
+Description=SERPO Token Event Monitor
+After=network.target mysql.service
+
+[Service]
+Type=simple
+User=deploy
+Group=deploy
+WorkingDirectory=/var/www/serpoai
+ExecStart=/usr/bin/php /var/www/serpoai/artisan serpo:monitor
+Restart=always
+RestartSec=10
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=serpoai-monitor
+
+# Environment
+Environment="PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+[Install]
+WantedBy=multi-user.target
