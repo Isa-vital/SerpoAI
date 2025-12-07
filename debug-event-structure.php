@@ -1,11 +1,11 @@
 <?php
 
-require __DIR__.'/vendor/autoload.php';
+require __DIR__ . '/vendor/autoload.php';
 
 use Illuminate\Support\Facades\Http;
 
 // Initialize Laravel
-$app = require_once __DIR__.'/bootstrap/app.php';
+$app = require_once __DIR__ . '/bootstrap/app.php';
 $app->make('Illuminate\Contracts\Console\Kernel')->bootstrap();
 
 // Configuration
@@ -29,10 +29,9 @@ try {
         $events = $data['events'] ?? [];
 
         echo "Found " . count($events) . " events\n\n";
-        
+
         // Pretty print the raw JSON
         echo json_encode($events, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
-
     } else {
         echo "❌ API Error: " . $response->status() . "\n";
         echo $response->body() . "\n";
