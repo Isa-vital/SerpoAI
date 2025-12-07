@@ -153,6 +153,15 @@ class TokenEventMonitor
 
             Log::info('Fetching DEX pool transactions from TonAPI...');
 
+            // Check rate limiting (TonAPI allows 1 request per second)
+            $lastTonApiCall = Cache::get('last_tonapi_call', 0);
+            $now = microtime(true);
+            if ($now - $lastTonApiCall < 1.5) {
+                Log::info('⏳ Skipping TonAPI call - rate limit protection');
+                return;
+            }
+            Cache::put('last_tonapi_call', $now, 60);
+
             // Query the DEX POOL contract, not the jetton master
             $response = Http::timeout(15)->get("https://tonapi.io/v2/accounts/{$dexPoolAddress}/events", [
                 'limit' => 20,
@@ -162,6 +171,10 @@ class TokenEventMonitor
 
             if (!$response->successful()) {
                 Log::error('TonAPI DEX pool request failed', ['status' => $response->status()]);
+                // If rate limited, increase the cooldown
+                if ($response->status() === 429) {
+                    Cache::put('last_tonapi_call', microtime(true), 300); // 5 min cooldown
+                }
                 return;
             }
 
@@ -247,21 +260,26 @@ class TokenEventMonitor
                         'is_whale' => $isWhale,
                     ]);
 
-                    // Create event record for buy transactions only
-                    $tokenEvent = TokenEvent::create([
-                        'event_type' => $isWhale ? 'whale_buy' : 'buy',
-                        'tx_hash' => $event['event_id'] ?? uniqid('swap_'),
-                        'from_address' => $user,
-                        'to_address' => config('services.serpo.dex_pair_address') ?? 'DEX',
-                        'amount' => $serpoAmount,
-                        'usd_value' => $usdValue,
-                        'details' => $event,
-                        'event_timestamp' => now(),
-                        'notified' => false,
-                    ]);
+                    // Create event record for buy transactions only (use firstOrCreate to avoid duplicates)
+                    $txHash = $event['event_id'] ?? uniqid('swap_');
+                    $tokenEvent = TokenEvent::firstOrCreate(
+                        ['tx_hash' => $txHash],
+                        [
+                            'event_type' => $isWhale ? 'whale_buy' : 'buy',
+                            'from_address' => $user,
+                            'to_address' => config('services.serpo.dex_pair_address') ?? 'DEX',
+                            'amount' => $serpoAmount,
+                            'usd_value' => $usdValue,
+                            'details' => $event,
+                            'event_timestamp' => now(),
+                            'notified' => false,
+                        ]
+                    );
 
-                    // Send alert for buy transactions
-                    $this->sendIndividualTransactionAlert($tokenEvent, $tonValue);
+                    // Send alert for buy transactions (only if not already notified)
+                    if (!$tokenEvent->notified) {
+                        $this->sendIndividualTransactionAlert($tokenEvent, $tonValue);
+                    }
                 }
             }
         } catch (\Exception $e) {
@@ -888,19 +906,44 @@ class TokenEventMonitor
         try {
             $apiKey = config('services.ton.api_key');
             if (!$apiKey) {
+                Log::warning('TON API key not configured for holder count');
                 return 0;
             }
 
-            $response = Http::withHeaders([
-                'Authorization' => "Bearer {$apiKey}",
-            ])->timeout(10)->get("https://tonapi.io/v2/jettons/{$this->contractAddress}");
+            // Use token as query parameter (same format as checkDexPoolTransactions)
+            $response = Http::timeout(10)->get("https://tonapi.io/v2/jettons/{$this->contractAddress}", [
+                'token' => $apiKey,
+            ]);
 
             if ($response->successful()) {
                 $data = $response->json();
-                return (int) ($data['holders_count'] ?? 0);
+                $holderCount = (int) ($data['holders_count'] ?? 0);
+
+                if ($holderCount > 0) {
+                    Log::info('Fetched holder count', [
+                        'holders' => $holderCount,
+                        'contract' => $this->contractAddress
+                    ]);
+                    return $holderCount;
+                }
+
+                // If holders_count is 0, check if the response has metadata
+                Log::warning('Holder count is 0 or missing', [
+                    'response_keys' => array_keys($data),
+                    'metadata' => $data['metadata'] ?? null
+                ]);
+            } else {
+                Log::warning('Failed to fetch holder count from TonAPI', [
+                    'status' => $response->status(),
+                    'contract' => $this->contractAddress,
+                    'response' => $response->body()
+                ]);
             }
         } catch (\Exception $e) {
-            Log::error('Error fetching holder count', ['error' => $e->getMessage()]);
+            Log::error('Error fetching holder count', [
+                'error' => $e->getMessage(),
+                'contract' => $this->contractAddress
+            ]);
         }
 
         return 0;
