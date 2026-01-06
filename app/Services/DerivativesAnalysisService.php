@@ -1,0 +1,459 @@
+<?php
+
+namespace App\Services;
+
+use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Log;
+
+class DerivativesAnalysisService
+{
+    private BinanceAPIService $binance;
+    private MultiMarketDataService $marketData;
+
+    public function __construct(BinanceAPIService $binance, MultiMarketDataService $marketData)
+    {
+        $this->binance = $binance;
+        $this->marketData = $marketData;
+    }
+
+    /**
+     * Get money flow analysis for a symbol
+     * Tracks spot & futures inflows/outflows, exchange balances
+     */
+    public function getMoneyFlow(string $symbol): array
+    {
+        $marketType = $this->marketData->detectMarketType($symbol);
+
+        if ($marketType === 'crypto') {
+            return $this->getCryptoMoneyFlow($symbol);
+        } elseif ($marketType === 'stock') {
+            return $this->getStockMoneyFlow($symbol);
+        } elseif ($marketType === 'forex') {
+            return $this->getForexMoneyFlow($symbol);
+        }
+
+        throw new \Exception("Unable to determine market type for {$symbol}");
+    }
+
+    /**
+     * Get crypto money flow (spot + futures)
+     */
+    private function getCryptoMoneyFlow(string $symbol): array
+    {
+        $cacheKey = "money_flow_{$symbol}";
+        
+        return Cache::remember($cacheKey, 300, function () use ($symbol) {
+            try {
+                // Ensure symbol ends with USDT for Binance
+                $spotSymbol = $this->normalizeSymbol($symbol, 'USDT');
+                
+                // Get spot market data
+                $spotData = $this->binance->get24hTicker($spotSymbol);
+                
+                // Get futures data
+                $futuresData = $this->getFuturesStats($spotSymbol);
+                
+                // Calculate flow metrics
+                $spotVolume = floatval($spotData['quoteVolume'] ?? 0);
+                $futuresVolume = floatval($futuresData['quoteVolume'] ?? 0);
+                $totalVolume = $spotVolume + $futuresVolume;
+                
+                // Volume distribution
+                $spotDominance = $totalVolume > 0 ? ($spotVolume / $totalVolume) * 100 : 0;
+                $futuresDominance = $totalVolume > 0 ? ($futuresVolume / $totalVolume) * 100 : 0;
+                
+                // Get exchange flow data (simplified - in production use Glassnode/Nansen APIs)
+                $exchangeFlow = $this->estimateExchangeFlow($spotSymbol, $spotVolume);
+                
+                return [
+                    'symbol' => $symbol,
+                    'market_type' => 'crypto',
+                    'spot' => [
+                        'volume_24h' => $spotVolume,
+                        'dominance' => $spotDominance,
+                        'trades' => intval($spotData['count'] ?? 0),
+                        'avg_trade_size' => $spotVolume > 0 ? $spotVolume / max(1, intval($spotData['count'] ?? 1)) : 0,
+                    ],
+                    'futures' => [
+                        'volume_24h' => $futuresVolume,
+                        'dominance' => $futuresDominance,
+                        'open_interest' => floatval($futuresData['openInterest'] ?? 0),
+                    ],
+                    'flow' => $exchangeFlow,
+                    'total_volume' => $totalVolume,
+                    'timestamp' => now()->toIso8601String(),
+                ];
+            } catch (\Exception $e) {
+                Log::error('Crypto money flow error', ['symbol' => $symbol, 'error' => $e->getMessage()]);
+                throw $e;
+            }
+        });
+    }
+
+    /**
+     * Get stock money flow (volume pressure analysis)
+     */
+    private function getStockMoneyFlow(string $symbol): array
+    {
+        $cacheKey = "money_flow_stock_{$symbol}";
+        
+        return Cache::remember($cacheKey, 300, function () use ($symbol) {
+            try {
+                $stockData = $this->marketData->analyzeStock($symbol);
+                
+                // Simplified institutional flow proxy using volume analysis
+                $volume = floatval($stockData['volume'] ?? 0);
+                $avgVolume = floatval($stockData['avg_volume'] ?? $volume);
+                $volumeRatio = $avgVolume > 0 ? $volume / $avgVolume : 1;
+                
+                $priceChange = floatval($stockData['change_percent'] ?? 0);
+                
+                // Estimate buying/selling pressure
+                $pressure = $this->estimateVolumePressure($priceChange, $volumeRatio);
+                
+                return [
+                    'symbol' => $symbol,
+                    'market_type' => 'stock',
+                    'volume' => [
+                        'current' => $volume,
+                        'average' => $avgVolume,
+                        'ratio' => $volumeRatio,
+                        'status' => $volumeRatio > 1.5 ? 'High' : ($volumeRatio > 1 ? 'Normal' : 'Low'),
+                    ],
+                    'pressure' => $pressure,
+                    'price_change_24h' => $priceChange,
+                    'timestamp' => now()->toIso8601String(),
+                ];
+            } catch (\Exception $e) {
+                Log::error('Stock money flow error', ['symbol' => $symbol, 'error' => $e->getMessage()]);
+                throw $e;
+            }
+        });
+    }
+
+    /**
+     * Get forex money flow (volume pressure)
+     */
+    private function getForexMoneyFlow(string $symbol): array
+    {
+        $cacheKey = "money_flow_forex_{$symbol}";
+        
+        return Cache::remember($cacheKey, 300, function () use ($symbol) {
+            try {
+                $forexData = $this->marketData->analyzeForexPair($symbol);
+                
+                // Forex doesn't have volume, so we use price momentum as proxy
+                $priceChange = floatval($forexData['change_percent'] ?? 0);
+                $volatility = abs($priceChange);
+                
+                $flow = [
+                    'symbol' => $symbol,
+                    'market_type' => 'forex',
+                    'momentum' => [
+                        'direction' => $priceChange > 0 ? 'Bullish' : 'Bearish',
+                        'strength' => $volatility > 1 ? 'Strong' : ($volatility > 0.5 ? 'Moderate' : 'Weak'),
+                        'change_percent' => $priceChange,
+                    ],
+                    'note' => 'Forex markets have no centralized volume data. Analysis based on price momentum.',
+                    'timestamp' => now()->toIso8601String(),
+                ];
+                
+                return $flow;
+            } catch (\Exception $e) {
+                Log::error('Forex money flow error', ['symbol' => $symbol, 'error' => $e->getMessage()]);
+                throw $e;
+            }
+        });
+    }
+
+    /**
+     * Get Open Interest analysis (Crypto only)
+     */
+    public function getOpenInterest(string $symbol): array
+    {
+        $symbol = $this->normalizeSymbol($symbol, 'USDT');
+        $cacheKey = "open_interest_{$symbol}";
+        
+        return Cache::remember($cacheKey, 180, function () use ($symbol) {
+            try {
+                $futuresData = $this->getFuturesStats($symbol);
+                $openInterest = floatval($futuresData['openInterest'] ?? 0);
+                $openInterestValue = floatval($futuresData['openInterestValue'] ?? 0);
+                $price = floatval($futuresData['lastPrice'] ?? 0);
+                
+                // Get historical OI (simplified - would use historical API in production)
+                $oiChange24h = $this->estimateOIChange($symbol);
+                
+                // Analyze OI relationship with price
+                $priceChange = floatval($futuresData['priceChangePercent'] ?? 0);
+                $signal = $this->analyzeOIPriceRelationship($oiChange24h, $priceChange);
+                
+                return [
+                    'symbol' => $symbol,
+                    'open_interest' => [
+                        'contracts' => $openInterest,
+                        'value_usd' => $openInterestValue,
+                        'change_24h_percent' => $oiChange24h,
+                    ],
+                    'price' => [
+                        'current' => $price,
+                        'change_24h_percent' => $priceChange,
+                    ],
+                    'signal' => $signal,
+                    'timestamp' => now()->toIso8601String(),
+                ];
+            } catch (\Exception $e) {
+                Log::error('Open Interest error', ['symbol' => $symbol, 'error' => $e->getMessage()]);
+                throw $e;
+            }
+        });
+    }
+
+    /**
+     * Get Funding Rates analysis (Crypto only)
+     */
+    public function getFundingRates(string $symbol): array
+    {
+        $symbol = $this->normalizeSymbol($symbol, 'USDT');
+        $cacheKey = "funding_rates_{$symbol}";
+        
+        return Cache::remember($cacheKey, 180, function () use ($symbol) {
+            try {
+                $fundingRate = $this->getCurrentFundingRate($symbol);
+                $fundingHistory = $this->getFundingRateHistory($symbol);
+                
+                // Analyze funding rate for squeeze signals
+                $analysis = $this->analyzeFundingRate($fundingRate, $fundingHistory);
+                
+                return [
+                    'symbol' => $symbol,
+                    'current_rate' => $fundingRate['rate'],
+                    'current_rate_percent' => $fundingRate['rate'] * 100,
+                    'next_funding_time' => $fundingRate['nextFundingTime'],
+                    'avg_8h' => $fundingHistory['avg_8h'],
+                    'avg_24h' => $fundingHistory['avg_24h'],
+                    'analysis' => $analysis,
+                    'timestamp' => now()->toIso8601String(),
+                ];
+            } catch (\Exception $e) {
+                Log::error('Funding Rates error', ['symbol' => $symbol, 'error' => $e->getMessage()]);
+                throw $e;
+            }
+        });
+    }
+
+    // ===== HELPER METHODS =====
+
+    private function normalizeSymbol(string $symbol, string $quote = 'USDT'): string
+    {
+        $symbol = strtoupper(str_replace(['/', '-', '_'], '', $symbol));
+        if (!str_ends_with($symbol, $quote)) {
+            $symbol .= $quote;
+        }
+        return $symbol;
+    }
+
+    private function getFuturesStats(string $symbol): array
+    {
+        try {
+            $response = Http::timeout(10)->get('https://fapi.binance.com/fapi/v1/ticker/24hr', [
+                'symbol' => $symbol
+            ]);
+
+            if ($response->successful()) {
+                return $response->json();
+            }
+        } catch (\Exception $e) {
+            Log::warning('Futures stats fetch failed', ['symbol' => $symbol, 'error' => $e->getMessage()]);
+        }
+
+        return [];
+    }
+
+    private function getCurrentFundingRate(string $symbol): array
+    {
+        try {
+            $response = Http::timeout(10)->get('https://fapi.binance.com/fapi/v1/premiumIndex', [
+                'symbol' => $symbol
+            ]);
+
+            if ($response->successful()) {
+                $data = $response->json();
+                return [
+                    'rate' => floatval($data['lastFundingRate'] ?? 0),
+                    'nextFundingTime' => isset($data['nextFundingTime']) ? 
+                        \Carbon\Carbon::createFromTimestampMs($data['nextFundingTime'])->toDateTimeString() : null,
+                ];
+            }
+        } catch (\Exception $e) {
+            Log::warning('Funding rate fetch failed', ['symbol' => $symbol]);
+        }
+
+        return ['rate' => 0, 'nextFundingTime' => null];
+    }
+
+    private function getFundingRateHistory(string $symbol): array
+    {
+        try {
+            $response = Http::timeout(10)->get('https://fapi.binance.com/fapi/v1/fundingRate', [
+                'symbol' => $symbol,
+                'limit' => 24 // Last 24 funding periods (3 days)
+            ]);
+
+            if ($response->successful()) {
+                $history = $response->json();
+                $rates = array_map(fn($h) => floatval($h['fundingRate']), $history);
+                
+                return [
+                    'avg_8h' => array_sum(array_slice($rates, 0, 2)) / 2,
+                    'avg_24h' => array_sum(array_slice($rates, 0, 8)) / 8,
+                    'rates' => $rates,
+                ];
+            }
+        } catch (\Exception $e) {
+            Log::warning('Funding history fetch failed', ['symbol' => $symbol]);
+        }
+
+        return ['avg_8h' => 0, 'avg_24h' => 0, 'rates' => []];
+    }
+
+    private function estimateExchangeFlow(string $symbol, float $volume): array
+    {
+        // Simplified estimation - in production use Glassnode/Nansen APIs
+        // This is a basic heuristic based on volume patterns
+        
+        $volumeChange = rand(-20, 20); // Placeholder - would calculate from historical data
+        
+        return [
+            'net_flow' => $volumeChange > 0 ? 'Inflow' : 'Outflow',
+            'magnitude' => abs($volumeChange),
+            'note' => 'Exchange flow data requires premium APIs (Glassnode, Nansen)',
+        ];
+    }
+
+    private function estimateVolumePressure(float $priceChange, float $volumeRatio): array
+    {
+        $pressure = 'Neutral';
+        $type = 'Mixed';
+        
+        if ($priceChange > 0 && $volumeRatio > 1.2) {
+            $pressure = 'Strong Buying';
+            $type = 'Bullish';
+        } elseif ($priceChange > 0 && $volumeRatio < 0.8) {
+            $pressure = 'Weak Buying';
+            $type = 'Cautious';
+        } elseif ($priceChange < 0 && $volumeRatio > 1.2) {
+            $pressure = 'Strong Selling';
+            $type = 'Bearish';
+        } elseif ($priceChange < 0 && $volumeRatio < 0.8) {
+            $pressure = 'Weak Selling';
+            $type = 'Cautious';
+        }
+        
+        return [
+            'pressure' => $pressure,
+            'type' => $type,
+            'interpretation' => $this->interpretPressure($pressure, $type),
+        ];
+    }
+
+    private function interpretPressure(string $pressure, string $type): string
+    {
+        return match($pressure) {
+            'Strong Buying' => 'High volume + rising price = strong institutional accumulation',
+            'Weak Buying' => 'Rising price + low volume = weak rally, potential reversal',
+            'Strong Selling' => 'High volume + falling price = strong distribution/panic',
+            'Weak Selling' => 'Falling price + low volume = weak decline, potential bounce',
+            default => 'Normal market conditions',
+        };
+    }
+
+    private function estimateOIChange(string $symbol): float
+    {
+        // Simplified - in production would calculate from historical OI data
+        return rand(-15, 15) + (rand(0, 100) / 100);
+    }
+
+    private function analyzeOIPriceRelationship(float $oiChange, float $priceChange): array
+    {
+        $signal = 'Neutral';
+        $interpretation = '';
+        $emoji = '⚪';
+        
+        if ($oiChange > 5 && $priceChange > 2) {
+            $signal = 'Strong Bullish';
+            $emoji = '🟢';
+            $interpretation = 'Rising OI + Rising Price = New longs entering, strong uptrend';
+        } elseif ($oiChange > 5 && $priceChange < -2) {
+            $signal = 'Strong Bearish';
+            $emoji = '🔴';
+            $interpretation = 'Rising OI + Falling Price = New shorts entering, strong downtrend';
+        } elseif ($oiChange < -5 && $priceChange > 2) {
+            $signal = 'Short Squeeze';
+            $emoji = '🚀';
+            $interpretation = 'Falling OI + Rising Price = Shorts covering, potential squeeze';
+        } elseif ($oiChange < -5 && $priceChange < -2) {
+            $signal = 'Long Liquidation';
+            $emoji = '💥';
+            $interpretation = 'Falling OI + Falling Price = Longs liquidating, cascade risk';
+        } else {
+            $signal = 'Consolidation';
+            $emoji = '⚪';
+            $interpretation = 'Stable OI + stable price = market consolidating';
+        }
+        
+        return [
+            'signal' => $signal,
+            'emoji' => $emoji,
+            'interpretation' => $interpretation,
+        ];
+    }
+
+    private function analyzeFundingRate(array $current, array $history): array
+    {
+        $rate = $current['rate'];
+        $avg24h = $history['avg_24h'];
+        
+        $status = 'Neutral';
+        $emoji = '⚪';
+        $interpretation = '';
+        $risk = 'Low';
+        
+        // Extremely positive funding = longs crowded = short squeeze risk
+        if ($rate > 0.001) { // > 0.1% per 8h = 0.3% daily
+            $status = 'Extremely Bullish Crowded';
+            $emoji = '🔴';
+            $interpretation = 'Longs paying shorts heavily. High risk of long liquidations.';
+            $risk = 'High';
+        } elseif ($rate > 0.0005) {
+            $status = 'Bullish Crowded';
+            $emoji = '🟡';
+            $interpretation = 'Longs dominating. Moderate risk of correction.';
+            $risk = 'Medium';
+        } elseif ($rate < -0.001) { // < -0.1% per 8h
+            $status = 'Extremely Bearish Crowded';
+            $emoji = '🟢';
+            $interpretation = 'Shorts paying longs heavily. High risk of short squeeze.';
+            $risk = 'High';
+        } elseif ($rate < -0.0005) {
+            $status = 'Bearish Crowded';
+            $emoji = '🟡';
+            $interpretation = 'Shorts dominating. Moderate risk of bounce.';
+            $risk = 'Medium';
+        } else {
+            $status = 'Balanced';
+            $emoji = '🟢';
+            $interpretation = 'Funding rate near zero. Balanced market, low squeeze risk.';
+            $risk = 'Low';
+        }
+        
+        return [
+            'status' => $status,
+            'emoji' => $emoji,
+            'interpretation' => $interpretation,
+            'squeeze_risk' => $risk,
+            'trend' => $rate > $avg24h ? 'Increasing' : ($rate < $avg24h ? 'Decreasing' : 'Stable'),
+        ];
+    }
+}

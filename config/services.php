@@ -75,4 +75,12 @@ return [
         'model' => env('OPENAI_MODEL', 'gpt-4o-mini'),
     ],
 
+    'alpha_vantage' => [
+        'key' => env('ALPHA_VANTAGE_API_KEY'),
+    ],
+
+    'polygon' => [
+        'key' => env('POLYGON_API_KEY'),
+    ],
+
 ];

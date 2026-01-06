@@ -64,7 +64,7 @@ class BinanceAPIService
     public function getAllTickers(): array
     {
         try {
-            $response = Http::get("{$this->baseUrl}/api/v3/ticker/24hr");
+            $response = Http::timeout(10)->get("{$this->baseUrl}/api/v3/ticker/24hr");
 
             if ($response->successful()) {
                 return $response->json();
@@ -82,7 +82,7 @@ class BinanceAPIService
     public function getKlines(string $symbol, string $interval = '1h', int $limit = 100): array
     {
         try {
-            $response = Http::get("{$this->baseUrl}/api/v3/klines", [
+            $response = Http::timeout(10)->get("{$this->baseUrl}/api/v3/klines", [
                 'symbol' => strtoupper($symbol),
                 'interval' => $interval,
                 'limit' => $limit

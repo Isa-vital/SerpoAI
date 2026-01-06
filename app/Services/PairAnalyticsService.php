@@ -3,222 +3,174 @@
 namespace App\Services;
 
 use App\Models\MarketCache;
+use Illuminate\Support\Facades\Log;
 
 class PairAnalyticsService
 {
     private BinanceAPIService $binance;
+    private MultiMarketDataService $multiMarket;
 
-    public function __construct(BinanceAPIService $binance)
+    public function __construct(BinanceAPIService $binance, MultiMarketDataService $multiMarket)
     {
         $this->binance = $binance;
+        $this->multiMarket = $multiMarket;
     }
 
     /**
-     * Analyze a specific trading pair
+     * Analyze a specific trading pair (multi-market support)
      */
     public function analyzePair(string $pair): array
     {
-        $symbol = strtoupper(str_replace(['/', '-'], '', $pair));
+        // Detect market type
+        $marketType = $this->multiMarket->detectMarketType($pair);
 
-        return MarketCache::remember("pair_analysis_{$symbol}", 'analysis', 180, function () use ($symbol) {
-            // Get 24h ticker
-            $ticker = $this->binance->get24hTicker($symbol);
-            if (!$ticker) {
-                return ['error' => "Unable to fetch data for {$symbol}"];
+        Log::info('Analyzing pair', ['pair' => $pair, 'market_type' => $marketType]);
+
+        // Route to appropriate analyzer
+        return match ($marketType) {
+            'crypto' => $this->multiMarket->analyzeCryptoPair($pair),
+            'stock' => $this->multiMarket->analyzeStock($pair),
+            'forex' => $this->multiMarket->analyzeForexPair($pair),
+            default => $this->multiMarket->analyzeCryptoPair($pair),
+        };
+    }
+
+    /**
+     * Format analysis for Telegram (multi-market support)
+     */
+    public function formatAnalysis(array $analysis): string
+    {
+        if (isset($analysis['error'])) {
+            return "❌ " . $analysis['error'];
+        }
+
+        $market = strtoupper($analysis['market']);
+        $symbol = $analysis['symbol'] ?? $analysis['pair'] ?? 'Unknown';
+
+        $message = "📊 *{$market} ANALYTICS: {$symbol}*\n";
+        $message .= "━━━━━━━━━━━━━━━━━━━━\n\n";
+
+        // Price Information
+        $price = $analysis['price'];
+        $change = $analysis['change'] ?? $analysis['change_24h'] ?? 0;
+        $changePercent = $analysis['change_percent'] ?? 0;
+        $changeEmoji = $changePercent > 0 ? '🟢' : ($changePercent < 0 ? '🔴' : '⚪');
+
+        $message .= "💰 *Price Action*\n";
+        $message .= "Current: \${$price}\n";
+        $message .= "24h Change: {$changeEmoji} ";
+        
+        // Format the change properly
+        if ($changePercent != 0) {
+            $sign = $changePercent > 0 ? '+' : '';
+            $message .= "{$sign}{$changePercent}%";
+            
+            // Only show absolute change if it's not zero and makes sense
+            if ($market === 'CRYPTO' && $change != 0) {
+                $changeSign = $change > 0 ? '+' : '';
+                $message .= " (\${$changeSign}{$change})";
+            }
+        } else {
+            $message .= "0%";
+        }
+        $message .= "\n";
+
+        // Volume (mainly for crypto and stocks)
+        if (isset($analysis['volume']) && $analysis['volume'] > 0) {
+            $vol = is_array($analysis['volume']) ? $this->formatNumber($analysis['volume']) : $this->formatNumber((float)$analysis['volume']);
+            $message .= "24h Volume: \${$vol}\n";
+        }
+
+        $message .= "\n";
+
+        // Market-specific information
+        if ($market === 'STOCK') {
+            if (isset($analysis['market_cap']) && $analysis['market_cap'] !== 'N/A') {
+                $message .= "Market Cap: {$analysis['market_cap']}\n";
+            }
+            if (isset($analysis['pe_ratio']) && $analysis['pe_ratio'] !== 'N/A') {
+                $message .= "P/E Ratio: {$analysis['pe_ratio']}\n";
+            }
+            $message .= "\n";
+        }
+
+        if ($market === 'FOREX') {
+            if (isset($analysis['session'])) {
+                $message .= "📍 Session: {$analysis['session']}\n\n";
+            }
+        }
+
+        // Technical Indicators
+        if (isset($analysis['indicators'])) {
+            $indicators = $analysis['indicators'];
+            $message .= "📈 *Technical Analysis*\n";
+
+            if (isset($indicators['trend'])) {
+                $trendEmoji = match ($indicators['trend']) {
+                    'Bullish' => '🐂',
+                    'Bearish' => '🐻',
+                    default => '➡️'
+                };
+                $message .= "Trend: {$trendEmoji} {$indicators['trend']}\n";
             }
 
-            // Get kline data for different timeframes
-            $klines1h = $this->binance->getKlines($symbol, '1h', 100);
-            $klines4h = $this->binance->getKlines($symbol, '4h', 100);
-            $klines1d = $this->binance->getKlines($symbol, '1d', 100);
-
-            if (empty($klines1h) || empty($klines4h) || empty($klines1d)) {
-                return ['error' => "Unable to fetch chart data for {$symbol}"];
+            if (isset($indicators['rsi'])) {
+                $rsiData = $indicators['rsi'];
+                if (is_array($rsiData)) {
+                    $message .= "RSI: ";
+                    if (isset($rsiData['1h'])) $message .= "1H: {$rsiData['1h']} ";
+                    if (isset($rsiData['4h'])) $message .= "| 4H: {$rsiData['4h']}";
+                    $message .= "\n";
+                } else {
+                    $message .= "RSI: {$rsiData}\n";
+                }
             }
 
-            // Calculate indicators
-            $rsi1h = $this->binance->calculateRSI($klines1h);
-            $rsi4h = $this->binance->calculateRSI($klines4h);
-            $rsi1d = $this->binance->calculateRSI($klines1d);
+            if (isset($indicators['ma20']) && isset($indicators['ma50'])) {
+                $message .= "MA20: \${$indicators['ma20']}\n";
+                $message .= "MA50: \${$indicators['ma50']}\n";
+            }
 
-            $ma20_1h = $this->binance->calculateMA($klines1h, 20);
-            $ma50_1h = $this->binance->calculateMA($klines1h, 50);
-            $ema20_1h = $this->binance->calculateEMA($klines1h, 20);
+            // Special SERPO indicators
+            if (isset($indicators['liquidity_usd'])) {
+                $message .= "Liquidity: {$indicators['liquidity_usd']}\n";
+            }
+            if (isset($indicators['market_cap'])) {
+                $message .= "Market Cap: {$indicators['market_cap']}\n";
+            }
 
-            $sr = $this->binance->findSupportResistance($klines1d);
-
-            $currentPrice = floatval($ticker['lastPrice']);
-
-            return [
-                'symbol' => $symbol,
-                'timestamp' => now()->toIso8601String(),
-                'price_action' => [
-                    'current_price' => $currentPrice,
-                    'change_24h' => floatval($ticker['priceChange']),
-                    'change_percent' => floatval($ticker['priceChangePercent']),
-                    'high_24h' => floatval($ticker['highPrice']),
-                    'low_24h' => floatval($ticker['lowPrice']),
-                ],
-                'volume' => [
-                    'volume_24h' => $this->formatNumber(floatval($ticker['volume'])),
-                    'quote_volume_24h' => $this->formatNumber(floatval($ticker['quoteVolume'])),
-                    'volume_change' => $this->calculateVolumeChange($klines1d),
-                ],
-                'volatility' => [
-                    'atr_percent' => $this->calculateATR($klines1h),
-                    'price_range_percent' => $this->calculatePriceRange($ticker),
-                ],
-                'trend' => [
-                    'bias' => $this->determineTrendBias($currentPrice, $ma20_1h, $ma50_1h, $rsi1h),
-                    'strength' => $this->calculateTrendStrength($klines1h),
-                    'ma20' => $ma20_1h,
-                    'ma50' => $ma50_1h,
-                    'ema20' => $ema20_1h,
-                ],
-                'rsi' => [
-                    '1h' => $rsi1h,
-                    '4h' => $rsi4h,
-                    '1d' => $rsi1d,
-                    'signal' => $this->getRSISignal($rsi1h, $rsi4h),
-                ],
-                'support_resistance' => [
-                    'nearest_support' => $this->findNearestLevel($currentPrice, $sr['support'], 'support'),
-                    'nearest_resistance' => $this->findNearestLevel($currentPrice, $sr['resistance'], 'resistance'),
-                ],
-                'risk_zones' => $this->identifyRiskZones($currentPrice, $ticker),
-            ];
-        });
-    }
-
-    private function calculateVolumeChange(array $klines): string
-    {
-        if (count($klines) < 2) return 'N/A';
-
-        $todayVol = floatval($klines[count($klines) - 1][5]);
-        $yesterdayVol = floatval($klines[count($klines) - 2][5]);
-
-        if ($yesterdayVol == 0) return 'N/A';
-
-        $change = (($todayVol - $yesterdayVol) / $yesterdayVol) * 100;
-        return round($change, 2) . '%';
-    }
-
-    private function calculateATR(array $klines, int $period = 14): float
-    {
-        if (count($klines) < $period + 1) return 0;
-
-        $tr = [];
-        for ($i = 1; $i < count($klines); $i++) {
-            $high = floatval($klines[$i][2]);
-            $low = floatval($klines[$i][3]);
-            $prevClose = floatval($klines[$i - 1][4]);
-
-            $tr[] = max(
-                $high - $low,
-                abs($high - $prevClose),
-                abs($low - $prevClose)
-            );
+            $message .= "\n";
         }
 
-        $atr = array_sum(array_slice($tr, -$period)) / $period;
-        $currentPrice = floatval($klines[count($klines) - 1][4]);
-
-        return $currentPrice > 0 ? round(($atr / $currentPrice) * 100, 2) : 0;
-    }
-
-    private function calculatePriceRange(array $ticker): float
-    {
-        $high = floatval($ticker['highPrice']);
-        $low = floatval($ticker['lowPrice']);
-        $current = floatval($ticker['lastPrice']);
-
-        if ($current == 0) return 0;
-
-        return round((($high - $low) / $current) * 100, 2);
-    }
-
-    private function determineTrendBias(float $price, float $ma20, float $ma50, float $rsi): string
-    {
-        if ($price > $ma20 && $ma20 > $ma50 && $rsi > 50) {
-            return 'Bullish';
-        } elseif ($price < $ma20 && $ma20 < $ma50 && $rsi < 50) {
-            return 'Bearish';
-        } else {
-            return 'Neutral';
-        }
-    }
-
-    private function calculateTrendStrength(array $klines): string
-    {
-        if (count($klines) < 20) return 'Weak';
-
-        $closes = array_map(fn($k) => floatval($k[4]), array_slice($klines, -20));
-
-        $upMoves = 0;
-        for ($i = 1; $i < count($closes); $i++) {
-            if ($closes[$i] > $closes[$i - 1]) $upMoves++;
+        // Support/Resistance for crypto
+        if (isset($analysis['support_resistance'])) {
+            $sr = $analysis['support_resistance'];
+            $message .= "🎯 *Key Levels*\n";
+            if ($sr['nearest_support']) {
+                $message .= "Support: \${$sr['nearest_support']}\n";
+            }
+            if ($sr['nearest_resistance']) {
+                $message .= "Resistance: \${$sr['nearest_resistance']}\n";
+            }
+            $message .= "\n";
         }
 
-        $strength = ($upMoves / (count($closes) - 1)) * 100;
-
-        if ($strength > 70) return 'Strong';
-        if ($strength > 55) return 'Moderate';
-        if ($strength < 30) return 'Strong Reverse';
-        if ($strength < 45) return 'Weak';
-        return 'Choppy';
-    }
-
-    private function getRSISignal(float $rsi1h, float $rsi4h): string
-    {
-        if ($rsi1h < 30 && $rsi4h < 40) return 'Oversold - Potential Buy';
-        if ($rsi1h > 70 && $rsi4h > 60) return 'Overbought - Potential Sell';
-        if ($rsi1h > 50 && $rsi4h > 50) return 'Bullish Momentum';
-        if ($rsi1h < 50 && $rsi4h < 50) return 'Bearish Momentum';
-        return 'Neutral Range';
-    }
-
-    private function findNearestLevel(float $currentPrice, array $levels, string $type): ?float
-    {
-        if (empty($levels)) return null;
-
-        $filtered = array_filter($levels, function ($level) use ($currentPrice, $type) {
-            return $type === 'support' ? $level < $currentPrice : $level > $currentPrice;
-        });
-
-        if (empty($filtered)) return null;
-
-        usort($filtered, function ($a, $b) use ($currentPrice, $type) {
-            $diffA = abs($currentPrice - $a);
-            $diffB = abs($currentPrice - $b);
-            return $diffA <=> $diffB;
-        });
-
-        return round($filtered[0], 8);
-    }
-
-    private function identifyRiskZones(float $currentPrice, array $ticker): array
-    {
-        $high24h = floatval($ticker['highPrice']);
-        $low24h = floatval($ticker['lowPrice']);
-
-        $range = $high24h - $low24h;
-        $upperRisk = $low24h + ($range * 0.8);
-        $lowerRisk = $low24h + ($range * 0.2);
-
-        $position = '';
-        if ($currentPrice > $upperRisk) {
-            $position = 'Near Resistance - High Risk Zone';
-        } elseif ($currentPrice < $lowerRisk) {
-            $position = 'Near Support - Potential Entry Zone';
-        } else {
-            $position = 'Mid-Range - Neutral Zone';
+        // Risk Assessment for crypto
+        if (isset($analysis['risk_zones'])) {
+            $risk = $analysis['risk_zones'];
+            $message .= "⚠️ *Risk Assessment*\n";
+            $message .= "{$risk['current_position']}\n\n";
         }
 
-        return [
-            'current_position' => $position,
-            'upper_risk_level' => round($upperRisk, 8),
-            'lower_risk_level' => round($lowerRisk, 8),
-        ];
+        // Data Sources
+        if (isset($analysis['data_sources'])) {
+            $message .= "━━━━━━━━━━━━━━━━━━━━\n";
+            $message .= "📡 Data: " . implode(', ', $analysis['data_sources']) . "\n";
+        }
+
+        $message .= "\n💡 Use `/scan` for full market overview";
+
+        return $message;
     }
 
     private function formatNumber(float $num): string
@@ -231,66 +183,5 @@ class PairAnalyticsService
             return round($num / 1_000, 2) . 'K';
         }
         return (string) round($num, 2);
-    }
-
-    /**
-     * Format analysis for Telegram
-     */
-    public function formatAnalysis(array $analysis): string
-    {
-        if (isset($analysis['error'])) {
-            return "❌ " . $analysis['error'];
-        }
-
-        $pa = $analysis['price_action'];
-        $vol = $analysis['volume'];
-        $trend = $analysis['trend'];
-        $rsi = $analysis['rsi'];
-        $sr = $analysis['support_resistance'];
-        $risk = $analysis['risk_zones'];
-
-        $changeEmoji = $pa['change_percent'] > 0 ? '🟢' : '🔴';
-
-        $message = "📊 *PAIR ANALYTICS: {$analysis['symbol']}*\n\n";
-
-        $message .= "💰 *Price Action*\n";
-        $message .= "Current: \${$pa['current_price']}\n";
-        $message .= "24h Change: {$changeEmoji} {$pa['change_percent']}%\n";
-        $message .= "24h High: \${$pa['high_24h']}\n";
-        $message .= "24h Low: \${$pa['low_24h']}\n\n";
-
-        $message .= "📈 *Trend Analysis*\n";
-        $message .= "Bias: {$this->getTrendEmoji($trend['bias'])} {$trend['bias']}\n";
-        $message .= "Strength: {$trend['strength']}\n";
-        $message .= "MA20: \${$trend['ma20']} | MA50: \${$trend['ma50']}\n\n";
-
-        $message .= "📊 *RSI Levels*\n";
-        $message .= "1H: {$rsi['1h']} | 4H: {$rsi['4h']} | 1D: {$rsi['1d']}\n";
-        $message .= "Signal: {$rsi['signal']}\n\n";
-
-        $message .= "💹 *Volume*\n";
-        $message .= "24h Volume: {$vol['volume_24h']}\n";
-        $message .= "Quote Volume: {$vol['quote_volume_24h']} USDT\n";
-        $message .= "Volume Change: {$vol['volume_change']}\n\n";
-
-        $message .= "🎯 *Key Levels*\n";
-        $message .= "Nearest Support: " . ($sr['nearest_support'] ? "\${$sr['nearest_support']}" : "N/A") . "\n";
-        $message .= "Nearest Resistance: " . ($sr['nearest_resistance'] ? "\${$sr['nearest_resistance']}" : "N/A") . "\n\n";
-
-        $message .= "⚠️ *Risk Assessment*\n";
-        $message .= "{$risk['current_position']}\n";
-        $message .= "Volatility (ATR): {$analysis['volatility']['atr_percent']}%\n";
-
-        return $message;
-    }
-
-    private function getTrendEmoji(string $trend): string
-    {
-        return match ($trend) {
-            'Bullish' => '🐂',
-            'Bearish' => '🐻',
-            'Neutral' => '➡️',
-            default => '❓',
-        };
     }
 }

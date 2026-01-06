@@ -4,6 +4,7 @@ namespace App\Services;
 
 use OpenAI;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Cache;
 
 class OpenAIService
 {
@@ -29,10 +30,53 @@ class OpenAIService
     }
 
     /**
+     * Generate a simple completion (helper method for quick AI responses)
+     */
+    public function generateCompletion(string $prompt, int $maxTokens = 150): ?string
+    {
+        if (!$this->isConfigured()) {
+            return null;
+        }
+
+        try {
+            $response = $this->client->chat()->create([
+                'model' => $this->model,
+                'messages' => [
+                    [
+                        'role' => 'user',
+                        'content' => $prompt
+                    ],
+                ],
+                'max_tokens' => $maxTokens,
+                'temperature' => 0.7,
+            ]);
+
+            return $response->choices[0]->message->content ?? null;
+        } catch (\Exception $e) {
+            Log::error('OpenAI completion error', ['message' => $e->getMessage()]);
+            return null;
+        }
+    }
+
+    /**
      * Explain a trading term or concept
      */
     public function explainConcept(string $concept): ?string
     {
+        // Check cache first (concepts don't change)
+        $cacheKey = 'concept_explanation_' . strtolower(str_replace(' ', '_', $concept));
+        $cached = Cache::get($cacheKey);
+        if ($cached) {
+            return $cached;
+        }
+
+        // Try fallback explanations first (no API call needed)
+        $fallback = $this->getFallbackExplanation($concept);
+        if ($fallback) {
+            Cache::put($cacheKey, $fallback, 86400); // Cache for 24 hours
+            return $fallback;
+        }
+
         if (!$this->isConfigured()) {
             return "OpenAI is not configured. Please set your OPENAI_API_KEY in .env file.";
         }
@@ -54,18 +98,78 @@ class OpenAIService
                 'temperature' => 0.7,
             ]);
 
-            return $response->choices[0]->message->content ?? null;
+            $explanation = $response->choices[0]->message->content ?? null;
+            if ($explanation) {
+                Cache::put($cacheKey, $explanation, 86400); // Cache for 24 hours
+            }
+            return $explanation;
         } catch (\Exception $e) {
             $errorMessage = $e->getMessage();
             Log::error('OpenAI API error', ['message' => $errorMessage]);
 
-            // Handle rate limit errors
-            if (str_contains($errorMessage, 'rate limit')) {
-                return "⏱️ OpenAI rate limit reached. Please wait a moment and try again. (Free tier has limited requests per minute)";
-            }
-
-            return "Unable to generate explanation. Please try again later.";
+            // Return fallback for any error
+            return $this->getGenericFallbackExplanation($concept);
         }
+    }
+
+    /**
+     * Get fallback explanation for common trading concepts
+     */
+    private function getFallbackExplanation(string $concept): ?string
+    {
+        $concept = strtolower(trim($concept));
+        
+        $fallbacks = [
+            'rsi' => "RSI (Relative Strength Index) measures momentum on a scale of 0-100. Below 30 is oversold (potential buy signal), above 70 is overbought (potential sell signal). It helps identify if an asset is overextended.",
+            
+            'macd' => "MACD (Moving Average Convergence Divergence) shows trend strength and direction by comparing two moving averages. When the MACD line crosses above the signal line, it's bullish; below is bearish. It helps identify momentum shifts.",
+            
+            'moving average' => "Moving Averages smooth out price data to identify trends. The 50-day and 200-day MAs are popular. When price is above the MA, it's bullish; below is bearish. The 'golden cross' (50-day crossing above 200-day) signals strong uptrend.",
+            
+            'ma' => "Moving Averages smooth out price data to identify trends. The 50-day and 200-day MAs are popular. When price is above the MA, it's bullish; below is bearish. The 'golden cross' (50-day crossing above 200-day) signals strong uptrend.",
+            
+            'support' => "Support is a price level where buying pressure is strong enough to prevent the price from falling further. It's like a floor that holds the price up. Multiple tests without breaking make support stronger.",
+            
+            'resistance' => "Resistance is a price level where selling pressure is strong enough to prevent the price from rising further. It's like a ceiling that caps the price. Breaking through resistance often leads to strong upward moves.",
+            
+            'bollinger bands' => "Bollinger Bands consist of a middle line (20-day MA) and two outer bands (standard deviations). When bands squeeze, volatility is low and a breakout is likely. When price touches the upper band, it may be overbought; lower band may be oversold.",
+            
+            'volume' => "Volume shows how many shares/coins were traded. High volume confirms price moves (strong conviction), while low volume suggests weak moves. Volume spikes often occur at trend reversals.",
+            
+            'fibonacci' => "Fibonacci retracement levels (23.6%, 38.2%, 61.8%) help identify potential support/resistance during pullbacks. Traders watch these levels for entries during trends. The 61.8% level is considered the 'golden ratio' and most significant.",
+            
+            'ema' => "EMA (Exponential Moving Average) gives more weight to recent prices, making it more responsive than simple MA. Popular periods are 9, 12, and 26. Crossovers between different EMAs generate trading signals.",
+            
+            'stochastic' => "Stochastic Oscillator compares closing price to the price range over time (0-100 scale). Below 20 is oversold, above 80 is overbought. Look for crossovers in extreme zones for potential reversals.",
+            
+            'atr' => "ATR (Average True Range) measures volatility by showing the average price movement over time. Higher ATR means more volatility. Traders use it to set stop-loss levels and position sizing.",
+            
+            'dca' => "DCA (Dollar-Cost Averaging) means investing fixed amounts at regular intervals regardless of price. This reduces the impact of volatility and avoids trying to time the market. It's a long-term strategy for steady accumulation.",
+            
+            'fomo' => "FOMO (Fear Of Missing Out) is the anxiety of missing potential profits, causing impulsive buying at high prices. It often leads to buying tops and losing money. Stick to your strategy and avoid emotional decisions.",
+            
+            'fud' => "FUD (Fear, Uncertainty, Doubt) is negative information spread to influence sentiment and drive prices down. It can be real concerns or manipulation. Always verify information and don't panic sell.",
+            
+            'whale' => "Whales are large holders with enough capital to move markets. Their trades can create significant price swings. Tracking whale movements can provide insights into potential price action.",
+            
+            'liquidity' => "Liquidity is how easily an asset can be bought/sold without affecting its price. High liquidity means tight spreads and less slippage. Low liquidity assets are riskier due to price volatility.",
+            
+            'market cap' => "Market Cap = Price × Circulating Supply. It represents the total value of all coins. Higher market cap generally means more stability and less volatility. It helps compare the relative size of different cryptocurrencies.",
+            
+            'stop loss' => "Stop Loss is an automatic order to sell when price reaches a specified level, limiting potential losses. It's essential risk management. Set it below support levels or based on your risk tolerance (e.g., 2-5%).",
+            
+            'take profit' => "Take Profit is an automatic order to sell when price reaches your target, locking in gains. It removes emotion from profit-taking. Set multiple targets to scale out of positions gradually.",
+        ];
+        
+        return $fallbacks[$concept] ?? null;
+    }
+
+    /**
+     * Get generic fallback when no specific explanation exists
+     */
+    private function getGenericFallbackExplanation(string $concept): string
+    {
+        return "📚 {$concept}: A trading/market concept. For detailed explanation, please try again in a moment or check online trading resources. Our AI service is temporarily at capacity.";
     }
 
     /**

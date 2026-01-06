@@ -25,6 +25,14 @@ class CommandHandler
     private BlockchainMonitorService $blockchain;
     private AnalyticsReportService $analytics;
     private MultiLanguageService $language;
+    private TechnicalStructureService $technical;
+    private DerivativesAnalysisService $derivatives;
+    private TrendAnalysisService $trendAnalysis;
+    private CopyTradingService $copyTrading;
+    private ChartService $chartService;
+    private SuperChartService $superChart;
+    private HeatmapService $heatmap;
+    private WhaleAlertService $whaleAlert;
 
     public function __construct(
         TelegramBotService $telegram,
@@ -41,7 +49,15 @@ class CommandHandler
         RealSentimentService $realSentiment,
         BlockchainMonitorService $blockchain,
         AnalyticsReportService $analytics,
-        MultiLanguageService $language
+        MultiLanguageService $language,
+        TechnicalStructureService $technical,
+        DerivativesAnalysisService $derivatives,
+        TrendAnalysisService $trendAnalysis,
+        CopyTradingService $copyTrading,
+        ChartService $chartService,
+        SuperChartService $superChart,
+        HeatmapService $heatmap,
+        WhaleAlertService $whaleAlert
     ) {
         $this->telegram = $telegram;
         $this->marketData = $marketData;
@@ -58,6 +74,14 @@ class CommandHandler
         $this->blockchain = $blockchain;
         $this->analytics = $analytics;
         $this->language = $language;
+        $this->technical = $technical;
+        $this->derivatives = $derivatives;
+        $this->trendAnalysis = $trendAnalysis;
+        $this->copyTrading = $copyTrading;
+        $this->chartService = $chartService;
+        $this->superChart = $superChart;
+        $this->heatmap = $heatmap;
+        $this->whaleAlert = $whaleAlert;
     }
 
     /**
@@ -108,8 +132,29 @@ class CommandHandler
             // NEW: Analytics & Reports
             '/daily' => $this->handleDailyReport($chatId),
             '/weekly' => $this->handleWeeklyReport($chatId),
+
+            // NEW: Technical Structure & Momentum
+            '/sr' => $this->handleSupportResistance($chatId, $params),
+            '/rsi' => $this->handleRSIHeatmap($chatId, $params),
+            '/divergence' => $this->handleDivergence($chatId, $params),
+            '/cross' => $this->handleMACross($chatId, $params),
             '/trends' => $this->handleTrends($chatId, $params),
             '/whales' => $this->handleWhales($chatId),
+
+            // Money Flow & Derivatives
+            '/flow' => $this->handleMoneyFlow($chatId, $params),
+            '/oi' => $this->handleOpenInterest($chatId, $params),
+            '/rates' => $this->handleFundingRates($chatId, $params),
+
+            // Trade Ideas & Strategy
+            '/trendcoins' => $this->handleTrendCoins($chatId),
+            '/copy' => $this->handleCopyTrading($chatId),
+
+            // Charts, Heatmaps & Whales
+            '/charts' => $this->handleCharts($chatId, $params),
+            '/supercharts' => $this->handleSuperCharts($chatId, $params),
+            '/heatmap' => $this->handleHeatmap($chatId, $params),
+            '/whale' => $this->handleWhaleAlerts($chatId, $params),
 
             // Alerts
             '/alerts' => $this->handleAlertsCommand($chatId, $params, $user),
@@ -139,7 +184,7 @@ class CommandHandler
      */
     private function handleStart(int $chatId, User $user)
     {
-        $message = " *Welcome to SerpoAI!* \n\n";
+        $message = "🚀 *Welcome to SerpoAI!* 🚀\n\n";
         $message .= "I'm your AI-powered trading assistant for Serpocoin (SERPO).\n\n";
         $message .= "Here's what I can do:\n";
         $message .= "📊 Real-time price tracking\n";
@@ -148,7 +193,11 @@ class CommandHandler
         $message .= "🤖 AI-powered market insights\n\n";
         $message .= "Type /help to see all commands!";
 
-        $this->telegram->sendMessage($chatId, $message);
+        $keyboard = [
+            'inline_keyboard' => $this->getContextualKeyboard('start')
+        ];
+
+        $this->telegram->sendMessage($chatId, $message, $keyboard);
     }
 
     /**
@@ -156,61 +205,96 @@ class CommandHandler
      */
     private function handleHelp(int $chatId)
     {
-        $message = "🤖 *SerpoAI Trading Assistant*\n\n";
+        $message = "🤖 *SerpoAI Trading Assistant*\n";
+        $message .= "━━━━━━━━━━━━━━━━━━━━\n\n";
 
-        $message .= "*📊 Core Analysis*\n";
-        $message .= "/scan - Full market deep scan\n";
-        $message .= "/analyze [pair] - Analyze any trading pair\n";
-        $message .= "/radar - Top movers & market radar\n";
-        $message .= "/price - Get current SERPO price\n";
-        $message .= "/chart - View price chart\n";
-        $message .= "/signals - Get trading signals\n";
+        $message .= "*🌍 MULTI-MARKET ANALYSIS*\n";
+        $message .= "/scan - Deep scan across ALL markets\n";
+        $message .= "  • Crypto (Spot & Futures)\n";
+        $message .= "  • Stocks (NYSE, NASDAQ)\n";
+        $message .= "  • Forex (Major Pairs)\n\n";
+
+        $message .= "/analyze [symbol] - Universal Analytics\n";
+        $message .= "  • Crypto: `BTCUSDT`, `SERPO`\n";
+        $message .= "  • Stocks: `AAPL`, `TSLA`, `SPY`\n";
+        $message .= "  • Forex: `EURUSD`, `GBPJPY`\n\n";
+
+        $message .= "/radar - Top movers & market radar\n\n";
+
+        $message .= "*📊 Technical Structure & Momentum*\n";
+        $message .= "/sr [symbol] - Smart S/R levels\n";
+        $message .= "/rsi [symbol] - Multi-timeframe RSI heatmap\n";
+        $message .= "/divergence [symbol] - RSI divergence scanner\n";
+        $message .= "/cross [symbol] - MA cross monitor\n\n";
+
+        $message .= "*� Money Flow & Derivatives*\n";
+        $message .= "/flow [symbol] - Money flow monitor\n";
+        $message .= "/oi [symbol] - Open interest pulse (crypto)\n";
+        $message .= "/rates [symbol] - Funding rates watch (crypto)\n\n";
+
+        $message .= "*�📈 Market Intelligence*\n";
+        $message .= "/price [symbol] - Current price\n";
+        $message .= "/chart [symbol] - Price chart\n";
+        $message .= "/signals - Trading signals\n";
         $message .= "/sentiment - Market sentiment\n\n";
 
-        $message .= "*🔔 Alerts*\n";
-        $message .= "/alerts - Manage alert subscriptions\n";
+        $message .= "*🔔 Smart Alerts*\n";
+        $message .= "/alerts - Manage subscriptions\n";
         $message .= "/setalert [price] - Set price alert\n";
-        $message .= "/myalerts - View your active alerts\n\n";
+        $message .= "/myalerts - View active alerts\n\n";
 
         $message .= "*🎭 AI-Powered Features*\n";
         $message .= "/aisentiment [coin] - Real social sentiment\n";
-        $message .= "/predict [coin] - AI market predictions\n";
-        $message .= "/recommend - Personalized advice\n";
+        $message .= "/predict [coin] - AI price predictions\n";
+        $message .= "/recommend - Personalized trading advice\n";
         $message .= "/query [question] - Ask me anything\n\n";
 
-        $message .= "*📈 Analytics & Reports*\n";
+        $message .= "*📊 Analytics & Reports*\n";
         $message .= "/daily - Daily market summary\n";
         $message .= "/weekly - Weekly performance report\n";
         $message .= "/trends [days] - Holder & volume trends\n";
-        $message .= "/whales - Recent whale activity\n\n";
+        $message .= "/whales - Whale activity tracker\n\n";
 
-        $message .= "*📰 News & Calendar*\n";
+        $message .= "*📰 News & Events*\n";
         $message .= "/news - Latest crypto news & listings\n";
         $message .= "/calendar - Economic events calendar\n\n";
 
-        $message .= "*💰 Portfolio*\n";
+        $message .= "*💰 Portfolio Management*\n";
         $message .= "/portfolio - View your holdings\n";
-        $message .= "/addwallet [address] - Track a wallet\n";
+        $message .= "/addwallet [address] - Track wallet\n";
         $message .= "/removewallet [address] - Stop tracking\n\n";
 
         $message .= "*🤖 AI & Learning*\n";
         $message .= "/explain [term] - Explain trading concepts\n";
-        $message .= "/ask [question] - Ask me anything\n";
-        $message .= "/learn - Learning center\n";
+        $message .= "/ask [question] - Ask trading questions\n";
+        $message .= "/learn [topic] - Learning center\n";
         $message .= "/glossary [term] - Crypto dictionary\n\n";
 
-        $message .= "*👤 Account*\n";
+        $message .= "*👤 Account & Settings*\n";
         $message .= "/profile - Your trading profile\n";
         $message .= "/premium - Upgrade to premium\n";
         $message .= "/language - Change bot language\n";
-        $message .= "/settings - Bot settings\n\n";
-
+        $message .= "/settings - Bot settings\n";
         $message .= "/about - About SerpoAI\n\n";
-        $message .= "💡 *Examples:*\n";
-        $message .= "• `/aisentiment SERPO`\n";
-        $message .= "• `/predict SERPO`\n";
-        $message .= "• `/query what's the market trend?`\n";
-        $message .= "• `/trends 7`";
+
+        $message .= "━━━━━━━━━━━━━━━━━━━━\n";
+        $message .= "💡 *Quick Examples:*\n";
+        $message .= "• `/scan` - Full market overview\n";
+        $message .= "• `/sr BTCUSDT` - S/R analysis\n";
+        $message .= "• `/rsi ETHUSDT` - RSI heatmap\n";
+        $message .= "• `/analyze AAPL` - Stock analysis\n";
+        $message .= "• `/predict SERPO` - AI prediction\n";
+        $message .= "• `/divergence BTC` - Find divergences\n";
+        $message .= "• `/flow BTCUSDT` - Money flow\n";
+        $message .= "• `/rates ETHUSDT` - Funding rates\n\n";
+
+        $message .= "🌟 *Premium Features:*\n";
+        $message .= "• Advanced AI predictions\n";
+        $message .= "• Real-time whale alerts\n";
+        $message .= "• Custom alert portfolios\n";
+        $message .= "• Priority support\n\n";
+
+        $message .= "Type any command to get started! 🚀";
 
         $this->telegram->sendMessage($chatId, $message);
     }
@@ -244,11 +328,10 @@ class CommandHandler
             $chartUrl = "https://dexscreener.com/ton/{$pairAddress}";
 
             $keyboard = [
-                'inline_keyboard' => [
-                    [
-                        ['text' => '📊 View Live Chart', 'url' => $chartUrl]
-                    ]
-                ]
+                'inline_keyboard' => array_merge(
+                    [[['text' => '📊 View Live Chart', 'url' => $chartUrl]]],
+                    $this->getContextualKeyboard('price')
+                )
             ];
 
             $this->telegram->sendMessage($chatId, $message, $keyboard);
@@ -360,7 +443,11 @@ class CommandHandler
 
         $message .= "\n⚠️ _This is not financial advice. Always DYOR._";
 
-        $this->telegram->sendMessage($chatId, $message);
+        $keyboard = [
+            'inline_keyboard' => $this->getContextualKeyboard('signals')
+        ];
+
+        $this->telegram->sendMessage($chatId, $message, $keyboard);
 
         // Send chart with signals
         $chartUrl = $this->generatePriceChart('SERPO', '24h');
@@ -471,7 +558,10 @@ class CommandHandler
         $message .= "📈 Price alerts - 5%+ price changes\n";
         $message .= "💧 Liquidity alerts - 10%+ liquidity changes";
 
-        $this->telegram->sendMessage($chatId, $message);
+        $keyboard = [
+            'inline_keyboard' => $this->getContextualKeyboard('alerts')
+        ];
+        $this->telegram->sendMessage($chatId, $message, $keyboard);
     }
 
     /**
@@ -504,10 +594,16 @@ class CommandHandler
             $message = "✅ Alert created!\n\n";
             $message .= "You'll be notified when SERPO reaches $" . number_format($targetPrice, 8);
 
-            $this->telegram->sendMessage($chatId, $message);
+            $keyboard = [
+                'inline_keyboard' => $this->getContextualKeyboard('alerts')
+            ];
+            $this->telegram->sendMessage($chatId, $message, $keyboard);
         } catch (\Exception $e) {
             Log::error('Error creating alert', ['message' => $e->getMessage()]);
-            $this->telegram->sendMessage($chatId, "❌ Error creating alert. Please try again.");
+            $keyboard = [
+                'inline_keyboard' => $this->getContextualKeyboard('alerts')
+            ];
+            $this->telegram->sendMessage($chatId, "❌ Error creating alert. Please try again.", $keyboard);
         }
     }
 
@@ -531,7 +627,10 @@ class CommandHandler
             $message .= "• SERPO " . ucfirst($alert->condition) . " $" . number_format($alert->target_value, 8) . "\n";
         }
 
-        $this->telegram->sendMessage($chatId, $message);
+        $keyboard = [
+            'inline_keyboard' => $this->getContextualKeyboard('alerts')
+        ];
+        $this->telegram->sendMessage($chatId, $message, $keyboard);
     }
 
     /**
@@ -547,6 +646,13 @@ class CommandHandler
                     'text' => $user->notifications_enabled ? '🔕 Disable Notifications' : '🔔 Enable Notifications',
                     'callback_data' => 'settings_toggle_notif'
                 ],
+            ],
+            [
+                ['text' => '🌐 Change Language', 'callback_data' => '/language'],
+            ],
+            [
+                ['text' => '👤 My Profile', 'callback_data' => '/profile'],
+                ['text' => '💎 Premium', 'callback_data' => '/premium'],
             ],
         ];
 
@@ -702,7 +808,11 @@ class CommandHandler
             $message .= "\n_" . $sentiment['note'] . "_";
         }
 
-        $this->telegram->sendMessage($chatId, $message);
+        $keyboard = [
+            'inline_keyboard' => $this->getContextualKeyboard('sentiment')
+        ];
+
+        $this->telegram->sendMessage($chatId, $message, $keyboard);
     }
 
     /**
@@ -723,7 +833,10 @@ class CommandHandler
         $message = "💡 *" . ucwords($concept) . "*\n\n";
         $message .= $explanation;
 
-        $this->telegram->sendMessage($chatId, $message);
+        $keyboard = [
+            'inline_keyboard' => $this->getContextualKeyboard('learn')
+        ];
+        $this->telegram->sendMessage($chatId, $message, $keyboard);
     }
 
     /**
@@ -769,6 +882,34 @@ class CommandHandler
      */
     public function handleCallback(int $chatId, int $messageId, string $data, User $user)
     {
+        // Button text to command mapping
+        $buttonMap = [
+            '📈 Check Price' => '/price',
+            '📊 Get Signals' => '/signals',
+            '🔍 Analyze Token' => '/analyze',
+            '🔔 My Alerts' => '/myalerts',
+            '📰 Latest News' => '/news',
+            '📈 View Chart' => '/chart',
+            '🔔 Set Alert' => '/setalert',
+            '🔥 Trending' => '/trending',
+            '🗺️ Market Heatmap' => '/heatmap',
+            '🎯 Token Radar' => '/radar',
+            '💼 Portfolio' => '/portfolio',
+            '➕ Add Wallet' => '/addwallet',
+        ];
+
+        // Check if it's a button text, convert to command
+        if (isset($buttonMap[$data])) {
+            $data = $buttonMap[$data];
+        }
+
+        // If it's a command, execute it
+        if (str_starts_with($data, '/')) {
+            $this->handle($chatId, $data, $user);
+            return;
+        }
+
+        // Handle other callback types
         match ($data) {
             'alert_create' => $this->telegram->sendMessage($chatId, "To create an alert, use:\n`/setalert [price]`"),
             'alert_list' => $this->handleMyAlerts($chatId, $user),
@@ -814,14 +955,20 @@ class CommandHandler
             $portfolioData = $this->portfolio->calculatePortfolioValue($user);
             $message = $this->portfolio->formatPortfolioMessage($portfolioData);
 
-            $this->telegram->sendMessage($chatId, $message);
+            $keyboard = [
+                'inline_keyboard' => $this->getContextualKeyboard('portfolio')
+            ];
+            $this->telegram->sendMessage($chatId, $message, $keyboard);
         } catch (\Exception $e) {
             Log::error('Portfolio command error', [
                 'user_id' => $user->id,
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString(),
             ]);
-            $this->telegram->sendMessage($chatId, "❌ Error loading portfolio. Please try again later.\n\n_Tip: Make sure API_KEY_TON is configured._");
+            $keyboard = [
+                'inline_keyboard' => $this->getContextualKeyboard('portfolio')
+            ];
+            $this->telegram->sendMessage($chatId, "❌ Error loading portfolio. Please try again later.\n\n_Tip: Make sure API_KEY_TON is configured._", $keyboard);
         }
     }
 
@@ -861,7 +1008,10 @@ class CommandHandler
             $message .= "💵 Value: `$" . number_format($wallet->usd_value, 2) . "`\n\n";
             $message .= "View your portfolio: /portfolio";
 
-            $this->telegram->sendMessage($chatId, $message);
+            $keyboard = [
+                'inline_keyboard' => $this->getContextualKeyboard('portfolio')
+            ];
+            $this->telegram->sendMessage($chatId, $message, $keyboard);
         } catch (\InvalidArgumentException $e) {
             $this->telegram->sendMessage(
                 $chatId,
@@ -901,11 +1051,15 @@ class CommandHandler
             $removed = $this->portfolio->removeWallet($user, $walletAddress);
 
             if ($removed) {
+                $keyboard = [
+                    'inline_keyboard' => $this->getContextualKeyboard('portfolio')
+                ];
                 $this->telegram->sendMessage(
                     $chatId,
                     "✅ *Wallet Removed*\n\n" .
                         "The wallet has been removed from your portfolio.\n\n" .
-                        "View remaining wallets: /portfolio"
+                        "View remaining wallets: /portfolio",
+                    $keyboard
                 );
             } else {
                 $this->telegram->sendMessage(
@@ -951,13 +1105,19 @@ class CommandHandler
         try {
             $scan = $this->marketScan->performDeepScan();
             $message = $this->marketScan->formatScanResults($scan);
-            $this->telegram->sendMessage($chatId, $message);
+            $keyboard = [
+                'inline_keyboard' => $this->getContextualKeyboard('scan')
+            ];
+            $this->telegram->sendMessage($chatId, $message, $keyboard);
 
             // Log scan history
             \App\Models\ScanHistory::logScan($user->id, 'market_scan', null, [], $scan);
         } catch (\Exception $e) {
             Log::error('Scan command error', ['error' => $e->getMessage()]);
-            $this->telegram->sendMessage($chatId, "❌ Error performing market scan. Please try again later.");
+            $keyboard = [
+                'inline_keyboard' => $this->getContextualKeyboard('scan')
+            ];
+            $this->telegram->sendMessage($chatId, "❌ Error performing market scan. Please try again later.", $keyboard);
         }
     }
 
@@ -1020,10 +1180,16 @@ class CommandHandler
 
             $message .= "\n💡 Use /analyze [symbol] for detailed analysis";
 
-            $this->telegram->sendMessage($chatId, $message);
+            $keyboard = [
+                'inline_keyboard' => $this->getContextualKeyboard('radar')
+            ];
+            $this->telegram->sendMessage($chatId, $message, $keyboard);
         } catch (\Exception $e) {
             Log::error('Radar command error', ['error' => $e->getMessage()]);
-            $this->telegram->sendMessage($chatId, "❌ Error scanning market. Please try again later.");
+            $keyboard = [
+                'inline_keyboard' => $this->getContextualKeyboard('radar')
+            ];
+            $this->telegram->sendMessage($chatId, "❌ Error scanning market. Please try again later.", $keyboard);
         }
     }
 
@@ -1051,10 +1217,16 @@ class CommandHandler
     {
         try {
             $message = $this->news->getEconomicCalendar();
-            $this->telegram->sendMessage($chatId, $message);
+            $keyboard = [
+                'inline_keyboard' => $this->getContextualKeyboard('calendar')
+            ];
+            $this->telegram->sendMessage($chatId, $message, $keyboard);
         } catch (\Exception $e) {
             Log::error('Calendar command error', ['error' => $e->getMessage()]);
-            $this->telegram->sendMessage($chatId, "❌ Error fetching calendar. Please try again later.");
+            $keyboard = [
+                'inline_keyboard' => $this->getContextualKeyboard('calendar')
+            ];
+            $this->telegram->sendMessage($chatId, "❌ Error fetching calendar. Please try again later.", $keyboard);
         }
     }
 
@@ -1065,10 +1237,16 @@ class CommandHandler
     {
         try {
             $message = $this->education->getLearnTopics();
-            $this->telegram->sendMessage($chatId, $message);
+            $keyboard = [
+                'inline_keyboard' => $this->getContextualKeyboard('learn')
+            ];
+            $this->telegram->sendMessage($chatId, $message, $keyboard);
         } catch (\Exception $e) {
             Log::error('Learn command error', ['error' => $e->getMessage()]);
-            $this->telegram->sendMessage($chatId, "❌ Error loading learning content. Please try again later.");
+            $keyboard = [
+                'inline_keyboard' => $this->getContextualKeyboard('learn')
+            ];
+            $this->telegram->sendMessage($chatId, "❌ Error loading learning content. Please try again later.", $keyboard);
         }
     }
 
@@ -1080,10 +1258,16 @@ class CommandHandler
         try {
             $term = !empty($params) ? strtolower($params[0]) : null;
             $message = $this->education->getGlossary($term);
-            $this->telegram->sendMessage($chatId, $message);
+            $keyboard = [
+                'inline_keyboard' => $this->getContextualKeyboard('glossary')
+            ];
+            $this->telegram->sendMessage($chatId, $message, $keyboard);
         } catch (\Exception $e) {
             Log::error('Glossary command error', ['error' => $e->getMessage()]);
-            $this->telegram->sendMessage($chatId, "❌ Error loading glossary. Please try again later.");
+            $keyboard = [
+                'inline_keyboard' => $this->getContextualKeyboard('glossary')
+            ];
+            $this->telegram->sendMessage($chatId, "❌ Error loading glossary. Please try again later.", $keyboard);
         }
     }
 
@@ -1095,10 +1279,16 @@ class CommandHandler
         try {
             $profile = $this->userProfile->getProfileDashboard($user->id);
             $message = $this->userProfile->formatProfile($profile);
-            $this->telegram->sendMessage($chatId, $message);
+            $keyboard = [
+                'inline_keyboard' => $this->getContextualKeyboard('profile')
+            ];
+            $this->telegram->sendMessage($chatId, $message, $keyboard);
         } catch (\Exception $e) {
             Log::error('Profile command error', ['error' => $e->getMessage()]);
-            $this->telegram->sendMessage($chatId, "❌ Error loading profile. Please try again later.");
+            $keyboard = [
+                'inline_keyboard' => $this->getContextualKeyboard('profile')
+            ];
+            $this->telegram->sendMessage($chatId, "❌ Error loading profile. Please try again later.", $keyboard);
         }
     }
 
@@ -1109,10 +1299,16 @@ class CommandHandler
     {
         try {
             $message = $this->premium->formatPremiumInfo();
-            $this->telegram->sendMessage($chatId, $message);
+            $keyboard = [
+                'inline_keyboard' => $this->getContextualKeyboard('premium')
+            ];
+            $this->telegram->sendMessage($chatId, $message, $keyboard);
         } catch (\Exception $e) {
             Log::error('Premium command error', ['error' => $e->getMessage()]);
-            $this->telegram->sendMessage($chatId, "❌ Error loading premium info. Please try again later.");
+            $keyboard = [
+                'inline_keyboard' => $this->getContextualKeyboard('premium')
+            ];
+            $this->telegram->sendMessage($chatId, "❌ Error loading premium info. Please try again later.", $keyboard);
         }
     }
 
@@ -1147,10 +1343,16 @@ class CommandHandler
         try {
             $sentiment = $this->realSentiment->analyzeSentiment($symbol);
             $message = $this->realSentiment->formatSentimentAnalysis($sentiment);
-            $this->telegram->sendMessage($chatId, $message);
+            $keyboard = [
+                'inline_keyboard' => $this->getContextualKeyboard('sentiment')
+            ];
+            $this->telegram->sendMessage($chatId, $message, $keyboard);
         } catch (\Exception $e) {
             Log::error('AI Sentiment command error', ['error' => $e->getMessage()]);
-            $this->telegram->sendMessage($chatId, "❌ Error analyzing sentiment. Please try again later.");
+            $keyboard = [
+                'inline_keyboard' => $this->getContextualKeyboard('sentiment')
+            ];
+            $this->telegram->sendMessage($chatId, "❌ Error analyzing sentiment. Please try again later.", $keyboard);
         }
     }
 
@@ -1204,10 +1406,16 @@ class CommandHandler
             $message .= "🤖 *AI Analysis:*\n_{$prediction['reasoning']}_\n\n";
             $message .= "_⚠️ Not financial advice. AI predictions for informational purposes only._";
 
-            $this->telegram->sendMessage($chatId, $message);
+            $keyboard = [
+                'inline_keyboard' => $this->getContextualKeyboard('prediction')
+            ];
+            $this->telegram->sendMessage($chatId, $message, $keyboard);
         } catch (\Exception $e) {
             Log::error('Predict command error', ['error' => $e->getMessage()]);
-            $this->telegram->sendMessage($chatId, "❌ Error generating prediction. Please try again later.");
+            $keyboard = [
+                'inline_keyboard' => $this->getContextualKeyboard('prediction')
+            ];
+            $this->telegram->sendMessage($chatId, "❌ Error generating prediction. Please try again later.", $keyboard);
         }
     }
 
@@ -1241,10 +1449,16 @@ class CommandHandler
             $message .= $recommendation . "\n\n";
             $message .= "_Tailored to your trading profile. Always DYOR!_";
 
-            $this->telegram->sendMessage($chatId, $message);
+            $keyboard = [
+                'inline_keyboard' => $this->getContextualKeyboard('signals')
+            ];
+            $this->telegram->sendMessage($chatId, $message, $keyboard);
         } catch (\Exception $e) {
             Log::error('Recommend command error', ['error' => $e->getMessage()]);
-            $this->telegram->sendMessage($chatId, "❌ Error generating recommendation. Please try again later.");
+            $keyboard = [
+                'inline_keyboard' => $this->getContextualKeyboard('signals')
+            ];
+            $this->telegram->sendMessage($chatId, "❌ Error generating recommendation. Please try again later.", $keyboard);
         }
     }
 
@@ -1276,10 +1490,16 @@ class CommandHandler
 
             $answer = $this->openai->processNaturalQuery($query, $availableData);
 
-            $this->telegram->sendMessage($chatId, "🤖 *SerpoAI:*\n\n" . $answer);
+            $keyboard = [
+                'inline_keyboard' => $this->getContextualKeyboard('start')
+            ];
+            $this->telegram->sendMessage($chatId, "🤖 *SerpoAI:*\n\n" . $answer, $keyboard);
         } catch (\Exception $e) {
             Log::error('Natural query error', ['error' => $e->getMessage()]);
-            $this->telegram->sendMessage($chatId, "❌ Error processing query. Please try again.");
+            $keyboard = [
+                'inline_keyboard' => $this->getContextualKeyboard('start')
+            ];
+            $this->telegram->sendMessage($chatId, "❌ Error processing query. Please try again.", $keyboard);
         }
     }
 
@@ -1301,10 +1521,16 @@ class CommandHandler
             }
 
             $message = $this->analytics->formatDailySummary($report);
-            $this->telegram->sendMessage($chatId, $message);
+            $keyboard = [
+                'inline_keyboard' => $this->getContextualKeyboard('reports')
+            ];
+            $this->telegram->sendMessage($chatId, $message, $keyboard);
         } catch (\Exception $e) {
             Log::error('Daily report error', ['error' => $e->getMessage()]);
-            $this->telegram->sendMessage($chatId, "❌ Error loading daily report.");
+            $keyboard = [
+                'inline_keyboard' => $this->getContextualKeyboard('reports')
+            ];
+            $this->telegram->sendMessage($chatId, "❌ Error loading daily report.", $keyboard);
         }
     }
 
@@ -1325,10 +1551,16 @@ class CommandHandler
             }
 
             $message = $this->analytics->formatWeeklySummary($report);
-            $this->telegram->sendMessage($chatId, $message);
+            $keyboard = [
+                'inline_keyboard' => $this->getContextualKeyboard('reports')
+            ];
+            $this->telegram->sendMessage($chatId, $message, $keyboard);
         } catch (\Exception $e) {
             Log::error('Weekly report error', ['error' => $e->getMessage()]);
-            $this->telegram->sendMessage($chatId, "❌ Error loading weekly report.");
+            $keyboard = [
+                'inline_keyboard' => $this->getContextualKeyboard('reports')
+            ];
+            $this->telegram->sendMessage($chatId, "❌ Error loading weekly report.", $keyboard);
         }
     }
 
@@ -1361,10 +1593,16 @@ class CommandHandler
                 }
             }
 
-            $this->telegram->sendMessage($chatId, $message);
+            $keyboard = [
+                'inline_keyboard' => $this->getContextualKeyboard('reports')
+            ];
+            $this->telegram->sendMessage($chatId, $message, $keyboard);
         } catch (\Exception $e) {
             Log::error('Trends command error', ['error' => $e->getMessage()]);
-            $this->telegram->sendMessage($chatId, "❌ Error loading trends.");
+            $keyboard = [
+                'inline_keyboard' => $this->getContextualKeyboard('reports')
+            ];
+            $this->telegram->sendMessage($chatId, "❌ Error loading trends.", $keyboard);
         }
     }
 
@@ -1398,10 +1636,16 @@ class CommandHandler
                 $message .= "Time: " . $whale->transaction_time->diffForHumans() . "\n\n";
             }
 
-            $this->telegram->sendMessage($chatId, $message);
+            $keyboard = [
+                'inline_keyboard' => $this->getContextualKeyboard('whales')
+            ];
+            $this->telegram->sendMessage($chatId, $message, $keyboard);
         } catch (\Exception $e) {
             Log::error('Whales command error', ['error' => $e->getMessage()]);
-            $this->telegram->sendMessage($chatId, "❌ Error loading whale activity.");
+            $keyboard = [
+                'inline_keyboard' => $this->getContextualKeyboard('whales')
+            ];
+            $this->telegram->sendMessage($chatId, "❌ Error loading whale activity.", $keyboard);
         }
     }
 
@@ -1416,6 +1660,1224 @@ class CommandHandler
 
         $message = "🌐 *Choose Your Language*\n\n";
         $message .= "Select your preferred language for bot interactions:";
+
+        $this->telegram->sendMessage($chatId, $message, $keyboard);
+    }
+
+    /**
+     * Get contextual keyboard based on current context
+     */
+    private function getContextualKeyboard(string $context): array
+    {
+        $keyboards = [
+            'start' => [
+                [['text' => '📈 Check Price', 'callback_data' => '/price']],
+                [['text' => '🎯 Trading Signals', 'callback_data' => '/signals'], ['text' => '📊 Analyze', 'callback_data' => '/analyze']],
+                [['text' => '🔔 Set Alerts', 'callback_data' => '/alerts'], ['text' => '📰 Latest News', 'callback_data' => '/news']],
+            ],
+            'price' => [
+                [['text' => '📊 Full Analysis', 'callback_data' => '/analyze']],
+                [['text' => '🎯 Trading Signals', 'callback_data' => '/signals'], ['text' => '📈 View Chart', 'callback_data' => '/chart']],
+                [['text' => '🔔 Set Price Alert', 'callback_data' => '/setalert']],
+            ],
+            'analyze' => [
+                [['text' => '🎯 Get Signals', 'callback_data' => '/signals']],
+                [['text' => '📰 Check News', 'callback_data' => '/news'], ['text' => '🔥 Trending Tokens', 'callback_data' => '/trending']],
+                [['text' => '🔔 Set Alert', 'callback_data' => '/alerts']],
+            ],
+            'signals' => [
+                [['text' => '📊 Full Analysis', 'callback_data' => '/analyze']],
+                [['text' => '📈 Check Price', 'callback_data' => '/price'], ['text' => '🗺️ Market Radar', 'callback_data' => '/radar']],
+                [['text' => '📰 Latest News', 'callback_data' => '/news']],
+            ],
+            'help' => [
+                [['text' => '📈 Check Price', 'callback_data' => '/price']],
+                [['text' => '🎯 Trading Signals', 'callback_data' => '/signals'], ['text' => '📊 Analyze', 'callback_data' => '/analyze']],
+            ],
+            'sentiment' => [
+                [['text' => '📊 Analyze Market', 'callback_data' => '/analyze']],
+                [['text' => '🎯 Get Signals', 'callback_data' => '/signals'], ['text' => '📰 Latest News', 'callback_data' => '/news']],
+            ],
+            'scan' => [
+                [['text' => '📊 Analyze Token', 'callback_data' => '/analyze']],
+                [['text' => '🗺️ Market Radar', 'callback_data' => '/radar'], ['text' => '🎯 Signals', 'callback_data' => '/signals']],
+            ],
+            'radar' => [
+                [['text' => '🔍 Scan Market', 'callback_data' => '/scan']],
+                [['text' => '📊 Analyze', 'callback_data' => '/analyze'], ['text' => '🔥 Trending', 'callback_data' => '/trends']],
+            ],
+            'calendar' => [
+                [['text' => '📰 Latest News', 'callback_data' => '/news']],
+                [['text' => '📊 Market Analysis', 'callback_data' => '/analyze'], ['text' => '🔥 Trends', 'callback_data' => '/trends']],
+            ],
+            'learn' => [
+                [['text' => '📚 Glossary', 'callback_data' => '/glossary']],
+                [['text' => '💡 Explain Concept', 'callback_data' => '/explain'], ['text' => '❓ Ask Question', 'callback_data' => '/ask']],
+            ],
+            'glossary' => [
+                [['text' => '📚 Learn More', 'callback_data' => '/learn']],
+                [['text' => '💡 Explain', 'callback_data' => '/explain'], ['text' => '📊 Analyze', 'callback_data' => '/analyze']],
+            ],
+            'profile' => [
+                [['text' => '💼 View Portfolio', 'callback_data' => '/portfolio']],
+                [['text' => '🔔 My Alerts', 'callback_data' => '/myalerts'], ['text' => '⚙️ Settings', 'callback_data' => '/settings']],
+            ],
+            'premium' => [
+                [['text' => '👤 My Profile', 'callback_data' => '/profile']],
+                [['text' => '💼 Portfolio', 'callback_data' => '/portfolio'], ['text' => '📊 Daily Report', 'callback_data' => '/daily']],
+            ],
+            'settings' => [
+                [['text' => '🌐 Change Language', 'callback_data' => '/language']],
+                [['text' => '👤 My Profile', 'callback_data' => '/profile'], ['text' => '💎 Premium', 'callback_data' => '/premium']],
+            ],
+            'reports' => [
+                [['text' => '📊 Daily Report', 'callback_data' => '/daily'], ['text' => '📈 Weekly Report', 'callback_data' => '/weekly']],
+                [['text' => '🔥 Trends', 'callback_data' => '/trends'], ['text' => '🐋 Whales', 'callback_data' => '/whales']],
+            ],
+            'whales' => [
+                [['text' => '📊 Market Analysis', 'callback_data' => '/analyze']],
+                [['text' => '🔥 Trends', 'callback_data' => '/trends'], ['text' => '📰 News', 'callback_data' => '/news']],
+            ],
+            'chart' => [
+                [['text' => '📊 Full Analysis', 'callback_data' => '/analyze']],
+                [['text' => '🎯 Get Signals', 'callback_data' => '/signals'], ['text' => '📈 Check Price', 'callback_data' => '/price']],
+            ],
+            'trending' => [
+                [['text' => '📊 Analyze Token', 'callback_data' => '/analyze']],
+                [['text' => '🔥 Heatmap View', 'callback_data' => '/heatmap'], ['text' => '🎯 Get Signals', 'callback_data' => '/signals']],
+            ],
+            'heatmap' => [
+                [['text' => '🔥 Trending Tokens', 'callback_data' => '/trending']],
+                [['text' => '📊 Analyze', 'callback_data' => '/analyze'], ['text' => '🗺️ Market Radar', 'callback_data' => '/radar']],
+            ],
+            'news' => [
+                [['text' => '📊 Market Analysis', 'callback_data' => '/analyze']],
+                [['text' => '📈 Check Price', 'callback_data' => '/price'], ['text' => '🎯 Signals', 'callback_data' => '/signals']],
+            ],
+            'alerts' => [
+                [['text' => '➕ Add New Alert', 'callback_data' => '/setalert']],
+                [['text' => '📋 My Alerts', 'callback_data' => '/myalerts'], ['text' => '📈 Check Price', 'callback_data' => '/price']],
+            ],
+            'portfolio' => [
+                [['text' => '➕ Add Wallet', 'callback_data' => '/addwallet']],
+                [['text' => '📈 Check Price', 'callback_data' => '/price'], ['text' => '🎯 Get Signals', 'callback_data' => '/signals']],
+            ],
+            'prediction' => [
+                [['text' => '📊 Current Analysis', 'callback_data' => '/analyze']],
+                [['text' => '🎯 Trading Signals', 'callback_data' => '/signals'], ['text' => '📰 News', 'callback_data' => '/news']],
+            ],
+            'technical' => [
+                [['text' => '📊 Full Analysis', 'callback_data' => '/analyze']],
+                [['text' => '📈 S/R Levels', 'callback_data' => '/sr'], ['text' => '🔥 RSI Heatmap', 'callback_data' => '/rsi']],
+                [['text' => '🔍 Divergences', 'callback_data' => '/divergence'], ['text' => '🎯 MA Cross', 'callback_data' => '/cross']],
+            ],
+            'derivatives' => [
+                [['text' => '📊 Full Analysis', 'callback_data' => '/analyze']],
+                [['text' => '💰 Money Flow', 'callback_data' => '/flow'], ['text' => '📈 Open Interest', 'callback_data' => '/oi']],
+                [['text' => '⏰ Funding Rates', 'callback_data' => '/rates'], ['text' => '🎯 Signals', 'callback_data' => '/signals']],
+            ],
+            'trends' => [
+                [['text' => '📊 Analyze Symbol', 'callback_data' => '/analyze']],
+                [['text' => '🎯 Get Signals', 'callback_data' => '/signals'], ['text' => '📈 Price Check', 'callback_data' => '/price']],
+            ],
+            'copy' => [
+                [['text' => '💡 Learn More', 'callback_data' => '/explain copy trading']],
+                [['text' => '🔥 Trend Coins', 'callback_data' => '/trendcoins'], ['text' => '📊 Market Scan', 'callback_data' => '/scan']],
+            ],
+        ];
+
+        return $keyboards[$context] ?? [];
+    }
+
+    /**
+     * Handle /sr command - Smart Support & Resistance
+     */
+    private function handleSupportResistance(int $chatId, array $params)
+    {
+        if (empty($params)) {
+            $this->telegram->sendMessage($chatId, "Please specify a symbol.\n\nExample: `/sr BTCUSDT`");
+            return;
+        }
+
+        $symbol = $params[0];
+        $this->telegram->sendChatAction($chatId, 'typing');
+        $this->telegram->sendMessage($chatId, "🔍 Analyzing support & resistance for {$symbol}...");
+
+        try {
+            $analysis = $this->technical->getSmartSupportResistance($symbol);
+            $message = $this->formatSRAnalysis($analysis);
+            $keyboard = [
+                'inline_keyboard' => $this->getContextualKeyboard('technical')
+            ];
+            $this->telegram->sendMessage($chatId, $message, $keyboard);
+        } catch (\Exception $e) {
+            Log::error('SR command error', ['error' => $e->getMessage()]);
+            $keyboard = [
+                'inline_keyboard' => $this->getContextualKeyboard('technical')
+            ];
+            $this->telegram->sendMessage($chatId, "❌ Error analyzing {$symbol}. Please try again.", $keyboard);
+        }
+    }
+
+    /**
+     * Handle /rsi command - RSI Heatmap
+     */
+    private function handleRSIHeatmap(int $chatId, array $params)
+    {
+        if (empty($params)) {
+            $this->telegram->sendMessage($chatId, "Please specify a symbol.\n\nExample: `/rsi BTCUSDT`");
+            return;
+        }
+
+        $symbol = $params[0];
+        $this->telegram->sendChatAction($chatId, 'typing');
+        $this->telegram->sendMessage($chatId, "📊 Generating RSI heatmap for {$symbol}...");
+
+        try {
+            $analysis = $this->technical->getRSIHeatmap($symbol);
+            $message = $this->formatRSIHeatmap($analysis);
+            $keyboard = [
+                'inline_keyboard' => $this->getContextualKeyboard('technical')
+            ];
+            $this->telegram->sendMessage($chatId, $message, $keyboard);
+        } catch (\Exception $e) {
+            Log::error('RSI heatmap error', ['error' => $e->getMessage()]);
+            $keyboard = [
+                'inline_keyboard' => $this->getContextualKeyboard('technical')
+            ];
+            $this->telegram->sendMessage($chatId, "❌ Error generating heatmap for {$symbol}. Please try again.", $keyboard);
+        }
+    }
+
+    /**
+     * Handle /divergence command - RSI Divergence Scanner
+     */
+    private function handleDivergence(int $chatId, array $params)
+    {
+        if (empty($params)) {
+            $this->telegram->sendMessage($chatId, "Please specify a symbol.\n\nExample: `/divergence BTCUSDT`");
+            return;
+        }
+
+        $symbol = $params[0];
+        $this->telegram->sendChatAction($chatId, 'typing');
+        $this->telegram->sendMessage($chatId, "🔍 Scanning for divergences in {$symbol}...");
+
+        try {
+            $analysis = $this->technical->scanDivergences($symbol);
+            $message = $this->formatDivergenceAnalysis($analysis);
+            $keyboard = [
+                'inline_keyboard' => $this->getContextualKeyboard('technical')
+            ];
+            $this->telegram->sendMessage($chatId, $message, $keyboard);
+        } catch (\Exception $e) {
+            Log::error('Divergence scan error', ['error' => $e->getMessage()]);
+            $keyboard = [
+                'inline_keyboard' => $this->getContextualKeyboard('technical')
+            ];
+            $this->telegram->sendMessage($chatId, "❌ Error scanning {$symbol}. Please try again.", $keyboard);
+        }
+    }
+
+    /**
+     * Handle /cross command - Moving Average Cross Monitor
+     */
+    private function handleMACross(int $chatId, array $params)
+    {
+        if (empty($params)) {
+            $this->telegram->sendMessage($chatId, "Please specify a symbol.\n\nExample: `/cross BTCUSDT`");
+            return;
+        }
+
+        $symbol = $params[0];
+        $this->telegram->sendChatAction($chatId, 'typing');
+        $this->telegram->sendMessage($chatId, "📈 Monitoring MA crosses for {$symbol}...");
+
+        try {
+            $analysis = $this->technical->monitorMACross($symbol);
+            $message = $this->formatMACrossAnalysis($analysis);
+            $keyboard = [
+                'inline_keyboard' => $this->getContextualKeyboard('technical')
+            ];
+            $this->telegram->sendMessage($chatId, $message, $keyboard);
+        } catch (\Exception $e) {
+            Log::error('MA cross monitor error', ['error' => $e->getMessage()]);
+            $keyboard = [
+                'inline_keyboard' => $this->getContextualKeyboard('technical')
+            ];
+            $this->telegram->sendMessage($chatId, "❌ Error monitoring {$symbol}. Please try again.", $keyboard);
+        }
+    }
+
+    // ===== FORMATTING METHODS =====
+
+    private function formatSRAnalysis(array $analysis): string
+    {
+        if (isset($analysis['error'])) {
+            return "❌ " . $analysis['error'];
+        }
+
+        $message = "🎯 *SMART SUPPORT & RESISTANCE*\n";
+        $message .= "━━━━━━━━━━━━━━━━━━━━\n\n";
+        $message .= "Symbol: `{$analysis['symbol']}`\n";
+        $message .= "Current Price: \${$analysis['current_price']}\n\n";
+
+        $message .= "🔺 *Resistance Levels*\n";
+        foreach ($analysis['resistance_levels'] as $idx => $level) {
+            $dist = (($level - $analysis['current_price']) / $analysis['current_price']) * 100;
+            $message .= ($idx + 1) . ". \${$level} (+".round($dist, 2)."%)\n";
+        }
+
+        $message .= "\n🔻 *Support Levels*\n";
+        foreach ($analysis['support_levels'] as $idx => $level) {
+            $dist = (($analysis['current_price'] - $level) / $analysis['current_price']) * 100;
+            $message .= ($idx + 1) . ". \${$level} (-".round($dist, 2)."%)\n";
+        }
+
+        if (!empty($analysis['key_levels']['resistance']) || !empty($analysis['key_levels']['support'])) {
+            $message .= "\n⭐ *Key Levels*\n";
+            if ($analysis['key_levels']['support']) {
+                $message .= "Nearest Support: \${$analysis['key_levels']['support']}\n";
+            }
+            if ($analysis['key_levels']['resistance']) {
+                $message .= "Nearest Resistance: \${$analysis['key_levels']['resistance']}\n";
+            }
+        }
+
+        $message .= "\n💡 *AI Insight*\n";
+        $message .= $analysis['ai_insight'];
+
+        return $message;
+    }
+
+    private function formatRSIHeatmap(array $analysis): string
+    {
+        if (isset($analysis['error'])) {
+            return "❌ " . $analysis['error'];
+        }
+
+        $message = "📊 *RSI HEATMAP*\n";
+        $message .= "━━━━━━━━━━━━━━━━━━━━\n\n";
+        $message .= "Symbol: `{$analysis['symbol']}`\n";
+        $message .= "Price: \${$analysis['current_price']}\n\n";
+
+        foreach ($analysis['rsi_data'] as $tf => $data) {
+            $emoji = match($data['status']) {
+                'Overbought' => '🔴',
+                'Oversold' => '🟢',
+                'Strong' => '🟡',
+                'Weak' => '🟠',
+                default => '⚪'
+            };
+            
+            $message .= "{$emoji} *{$tf}*: {$data['value']} - {$data['status']}\n";
+            $message .= "   {$data['signal']}\n\n";
+        }
+
+        $message .= "━━━━━━━━━━━━━━━━━━━━\n";
+        $message .= "📈 Overall: *{$analysis['overall_sentiment']}*\n\n";
+        $message .= "💡 *Recommendation*\n";
+        $message .= $analysis['recommendation'];
+
+        return $message;
+    }
+
+    private function formatDivergenceAnalysis(array $analysis): string
+    {
+        if (isset($analysis['error'])) {
+            return "❌ " . $analysis['error'];
+        }
+
+        $message = "🔍 *RSI DIVERGENCE SCANNER*\n";
+        $message .= "━━━━━━━━━━━━━━━━━━━━\n\n";
+        $message .= "Symbol: `{$analysis['symbol']}`\n";
+        $message .= "Price: \${$analysis['current_price']}\n\n";
+
+        if (!$analysis['has_divergence']) {
+            $message .= "✅ No significant divergences detected\n";
+            $message .= "Market price and RSI are aligned\n";
+        } else {
+            $message .= "⚠️ *Divergences Detected*\n\n";
+            
+            foreach ($analysis['divergences'] as $tf => $div) {
+                $emoji = $div['type'] === 'Bullish' ? '🟢' : '🔴';
+                $message .= "{$emoji} *{$tf}*: {$div['type']} Divergence\n";
+                $message .= "   Strength: {$div['strength']}\n\n";
+            }
+
+            $message .= "━━━━━━━━━━━━━━━━━━━━\n";
+            $message .= "Signal Strength: *{$analysis['signal_strength']}*\n\n";
+
+            if (strpos($analysis['divergences'][array_key_first($analysis['divergences'])]['type'], 'Bullish') !== false) {
+                $message .= "💡 Bullish divergence suggests potential reversal to upside\n";
+            } else {
+                $message .= "💡 Bearish divergence suggests potential reversal to downside\n";
+            }
+        }
+
+        return $message;
+    }
+
+    private function formatMACrossAnalysis(array $analysis): string
+    {
+        if (isset($analysis['error'])) {
+            return "❌ " . $analysis['error'];
+        }
+
+        $message = "📈 *MOVING AVERAGE CROSS MONITOR*\n";
+        $message .= "━━━━━━━━━━━━━━━━━━━━\n\n";
+        $message .= "Symbol: `{$analysis['symbol']}`\n";
+        $message .= "Price: \${$analysis['current_price']}\n\n";
+
+        if (!empty($analysis['recent_crosses'])) {
+            $message .= "🔔 *Recent Crosses*\n";
+            foreach ($analysis['recent_crosses'] as $cross) {
+                $emoji = $cross['type'] === 'Golden Cross' ? '🟡' : '⚫';
+                $message .= "{$emoji} {$cross['type']} ({$cross['ma']}) - {$cross['timeframe']}\n";
+            }
+            $message .= "\n";
+        }
+
+        $message .= "📊 *Current Status*\n\n";
+        foreach ($analysis['crosses'] as $tf => $crosses) {
+            $message .= "*{$tf}*\n";
+            
+            // 20/50 MA
+            $ma2050 = $crosses['ma20_50'];
+            $status2050 = $ma2050['is_bullish'] ? '🟢 Bullish' : '🔴 Bearish';
+            $message .= "  MA20/50: {$status2050}\n";
+            
+            // 50/200 MA
+            $ma50200 = $crosses['ma50_200'];
+            $status50200 = $ma50200['is_bullish'] ? '🟢 Bullish' : '🔴 Bearish';
+            $message .= "  MA50/200: {$status50200}\n\n";
+        }
+
+        $message .= "━━━━━━━━━━━━━━━━━━━━\n";
+        $message .= "Trend: *{$analysis['trend_confirmation']}*";
+
+        return $message;
+    }
+
+    /**
+     * Handle /flow command - Money Flow Monitor
+     */
+    private function handleMoneyFlow(int $chatId, array $params)
+    {
+        if (empty($params)) {
+            $this->telegram->sendMessage($chatId, "Please specify a symbol.\n\n*Examples:*\n• `/flow BTCUSDT` - Crypto flow\n• `/flow AAPL` - Stock flow\n• `/flow EURUSD` - Forex flow");
+            return;
+        }
+
+        $symbol = $params[0];
+        $this->telegram->sendChatAction($chatId, 'typing');
+        $this->telegram->sendMessage($chatId, "💰 Analyzing money flow for {$symbol}...");
+
+        try {
+            $flow = $this->derivatives->getMoneyFlow($symbol);
+            $message = $this->formatMoneyFlow($flow);
+            $keyboard = [
+                'inline_keyboard' => $this->getContextualKeyboard('derivatives')
+            ];
+            $this->telegram->sendMessage($chatId, $message, $keyboard);
+        } catch (\Exception $e) {
+            Log::error('Money flow command error', ['error' => $e->getMessage()]);
+            $keyboard = [
+                'inline_keyboard' => $this->getContextualKeyboard('derivatives')
+            ];
+            $this->telegram->sendMessage($chatId, "❌ Error analyzing {$symbol}. Please try again.", $keyboard);
+        }
+    }
+
+    /**
+     * Handle /oi command - Open Interest Pulse
+     */
+    private function handleOpenInterest(int $chatId, array $params)
+    {
+        if (empty($params)) {
+            $this->telegram->sendMessage($chatId, "Please specify a crypto symbol.\n\n*Example:* `/oi BTCUSDT`\n\n_Note: Open Interest only available for crypto futures._");
+            return;
+        }
+
+        $symbol = $params[0];
+        $this->telegram->sendChatAction($chatId, 'typing');
+        $this->telegram->sendMessage($chatId, "📊 Fetching Open Interest data for {$symbol}...");
+
+        try {
+            $oi = $this->derivatives->getOpenInterest($symbol);
+            $message = $this->formatOpenInterest($oi);
+            $keyboard = [
+                'inline_keyboard' => $this->getContextualKeyboard('derivatives')
+            ];
+            $this->telegram->sendMessage($chatId, $message, $keyboard);
+        } catch (\Exception $e) {
+            Log::error('Open Interest command error', ['error' => $e->getMessage()]);
+            $keyboard = [
+                'inline_keyboard' => $this->getContextualKeyboard('derivatives')
+            ];
+            $this->telegram->sendMessage($chatId, "❌ Error fetching OI for {$symbol}. Make sure it's a valid crypto symbol.", $keyboard);
+        }
+    }
+
+    /**
+     * Handle /rates command - Funding Rates Watch
+     */
+    private function handleFundingRates(int $chatId, array $params)
+    {
+        if (empty($params)) {
+            $this->telegram->sendMessage($chatId, "Please specify a crypto symbol.\n\n*Example:* `/rates BTCUSDT`\n\n_Note: Funding rates only available for crypto futures._");
+            return;
+        }
+
+        $symbol = $params[0];
+        $this->telegram->sendChatAction($chatId, 'typing');
+        $this->telegram->sendMessage($chatId, "⏰ Analyzing funding rates for {$symbol}...");
+
+        try {
+            $rates = $this->derivatives->getFundingRates($symbol);
+            $message = $this->formatFundingRates($rates);
+            $keyboard = [
+                'inline_keyboard' => $this->getContextualKeyboard('derivatives')
+            ];
+            $this->telegram->sendMessage($chatId, $message, $keyboard);
+        } catch (\Exception $e) {
+            Log::error('Funding Rates command error', ['error' => $e->getMessage()]);
+            $keyboard = [
+                'inline_keyboard' => $this->getContextualKeyboard('derivatives')
+            ];
+            $this->telegram->sendMessage($chatId, "❌ Error fetching funding rates for {$symbol}. Make sure it's a valid crypto symbol.", $keyboard);
+        }
+    }
+
+    // ===== DERIVATIVES FORMATTING METHODS =====
+
+    private function formatMoneyFlow(array $flow): string
+    {
+        $message = "💰 *MONEY FLOW MONITOR*\n\n";
+        $message .= "🪙 *{$flow['symbol']}* ({$flow['market_type']})\n";
+        $message .= "━━━━━━━━━━━━━━━━━━━━\n\n";
+
+        if ($flow['market_type'] === 'crypto') {
+            $message .= "📊 *Spot Market*\n";
+            $message .= "Volume 24h: \$" . number_format($flow['spot']['volume_24h'], 0) . "\n";
+            $message .= "Dominance: " . number_format($flow['spot']['dominance'], 1) . "%\n";
+            $message .= "Trades: " . number_format($flow['spot']['trades']) . "\n";
+            $message .= "Avg Trade: \$" . number_format($flow['spot']['avg_trade_size'], 0) . "\n\n";
+
+            $message .= "📈 *Futures Market*\n";
+            $message .= "Volume 24h: \$" . number_format($flow['futures']['volume_24h'], 0) . "\n";
+            $message .= "Dominance: " . number_format($flow['futures']['dominance'], 1) . "%\n";
+            $message .= "Open Interest: \$" . number_format($flow['futures']['open_interest'], 0) . "\n\n";
+
+            $message .= "🔄 *Exchange Flow*\n";
+            $message .= "Net Flow: " . $flow['flow']['net_flow'] . "\n";
+            $message .= "Magnitude: " . number_format($flow['flow']['magnitude'], 1) . "%\n\n";
+            $message .= "_💡 {$flow['flow']['note']}_\n\n";
+
+            $message .= "💵 *Total Volume*: \$" . number_format($flow['total_volume'], 0);
+
+        } elseif ($flow['market_type'] === 'stock') {
+            $message .= "📊 *Volume Analysis*\n";
+            $message .= "Current: " . number_format($flow['volume']['current']) . "\n";
+            $message .= "Average: " . number_format($flow['volume']['average']) . "\n";
+            $message .= "Ratio: " . number_format($flow['volume']['ratio'], 2) . "x\n";
+            $message .= "Status: *{$flow['volume']['status']}*\n\n";
+
+            $message .= "⚡ *Volume Pressure*\n";
+            $message .= "Type: {$flow['pressure']['type']}\n";
+            $message .= "Pressure: *{$flow['pressure']['pressure']}*\n\n";
+            $message .= "_💡 {$flow['pressure']['interpretation']}_\n\n";
+
+            $message .= "📈 Price Change: " . ($flow['price_change_24h'] > 0 ? '+' : '') . number_format($flow['price_change_24h'], 2) . "%";
+
+        } elseif ($flow['market_type'] === 'forex') {
+            $message .= "📊 *Momentum Analysis*\n";
+            $message .= "Direction: {$flow['momentum']['direction']}\n";
+            $message .= "Strength: *{$flow['momentum']['strength']}*\n";
+            $message .= "Change: " . ($flow['momentum']['change_percent'] > 0 ? '+' : '') . number_format($flow['momentum']['change_percent'], 2) . "%\n\n";
+            $message .= "_💡 {$flow['note']}_";
+        }
+
+        return $message;
+    }
+
+    private function formatOpenInterest(array $oi): string
+    {
+        $signal = $oi['signal'];
+        
+        $message = "📊 *OPEN INTEREST PULSE*\n\n";
+        $message .= "🪙 *{$oi['symbol']}*\n";
+        $message .= "━━━━━━━━━━━━━━━━━━━━\n\n";
+
+        $message .= "📈 *Open Interest*\n";
+        $message .= "Contracts: " . number_format($oi['open_interest']['contracts'], 0) . "\n";
+        $message .= "Value: \$" . number_format($oi['open_interest']['value_usd'], 0) . "\n";
+        $message .= "24h Change: " . ($oi['open_interest']['change_24h_percent'] > 0 ? '+' : '') . 
+                    number_format($oi['open_interest']['change_24h_percent'], 2) . "%\n\n";
+
+        $message .= "💰 *Price*\n";
+        $message .= "Current: \$" . number_format($oi['price']['current'], 2) . "\n";
+        $message .= "24h Change: " . ($oi['price']['change_24h_percent'] > 0 ? '+' : '') . 
+                    number_format($oi['price']['change_24h_percent'], 2) . "%\n\n";
+
+        $message .= "━━━━━━━━━━━━━━━━━━━━\n";
+        $message .= "{$signal['emoji']} *{$signal['signal']}*\n\n";
+        $message .= "_💡 {$signal['interpretation']}_";
+
+        return $message;
+    }
+
+    private function formatFundingRates(array $rates): string
+    {
+        $analysis = $rates['analysis'];
+        
+        $message = "⏰ *FUNDING RATES WATCH*\n\n";
+        $message .= "🪙 *{$rates['symbol']}*\n";
+        $message .= "━━━━━━━━━━━━━━━━━━━━\n\n";
+
+        $message .= "💸 *Current Funding Rate*\n";
+        $message .= "Rate: " . ($rates['current_rate_percent'] > 0 ? '+' : '') . 
+                    number_format($rates['current_rate_percent'], 4) . "%\n";
+        $message .= "Next Funding: " . ($rates['next_funding_time'] ?? 'N/A') . "\n\n";
+
+        $message .= "📊 *Historical Average*\n";
+        $message .= "8h Avg: " . ($rates['avg_8h'] * 100 > 0 ? '+' : '') . number_format($rates['avg_8h'] * 100, 4) . "%\n";
+        $message .= "24h Avg: " . ($rates['avg_24h'] * 100 > 0 ? '+' : '') . number_format($rates['avg_24h'] * 100, 4) . "%\n";
+        $message .= "Trend: {$analysis['trend']}\n\n";
+
+        $message .= "━━━━━━━━━━━━━━━━━━━━\n";
+        $message .= "{$analysis['emoji']} *{$analysis['status']}*\n\n";
+        $message .= "_💡 {$analysis['interpretation']}_\n\n";
+        $message .= "⚠️ *Squeeze Risk: {$analysis['squeeze_risk']}*\n\n";
+
+        if ($rates['current_rate'] > 0) {
+            $message .= "_Positive funding = Longs pay shorts_\n";
+            $message .= "_Market sentiment: Bullish leveraged_";
+        } else {
+            $message .= "_Negative funding = Shorts pay longs_\n";
+            $message .= "_Market sentiment: Bearish leveraged_";
+        }
+
+        return $message;
+    }
+
+    /**
+     * Handle /trendcoins command - Trend Leaders
+     */
+    private function handleTrendCoins(int $chatId)
+    {
+        $this->telegram->sendChatAction($chatId, 'typing');
+        $this->telegram->sendMessage($chatId, "🔥 Analyzing trending assets across all markets...");
+
+        try {
+            $trends = $this->trendAnalysis->getTrendLeaders();
+            
+            if (isset($trends['error'])) {
+                $keyboard = [
+                    'inline_keyboard' => $this->getContextualKeyboard('trends')
+                ];
+                $this->telegram->sendMessage($chatId, "❌ " . $trends['error'], $keyboard);
+                return;
+            }
+
+            $message = $this->formatTrendLeaders($trends);
+            $keyboard = [
+                'inline_keyboard' => $this->getContextualKeyboard('trends')
+            ];
+            $this->telegram->sendMessage($chatId, $message, $keyboard);
+        } catch (\Exception $e) {
+            Log::error('Trend coins error', ['error' => $e->getMessage()]);
+            $keyboard = [
+                'inline_keyboard' => $this->getContextualKeyboard('trends')
+            ];
+            $this->telegram->sendMessage($chatId, "❌ Error analyzing trends. Please try again.", $keyboard);
+        }
+    }
+
+    /**
+     * Handle /copy command - Copy Trading Hub
+     */
+    private function handleCopyTrading(int $chatId)
+    {
+        try {
+            $copyHub = $this->copyTrading->getCopyTradingHub();
+            $message = $this->formatCopyTradingHub($copyHub);
+            $keyboard = [
+                'inline_keyboard' => $this->getContextualKeyboard('copy')
+            ];
+            $this->telegram->sendMessage($chatId, $message, $keyboard);
+        } catch (\Exception $e) {
+            Log::error('Copy trading error', ['error' => $e->getMessage()]);
+            $keyboard = [
+                'inline_keyboard' => $this->getContextualKeyboard('copy')
+            ];
+            $this->telegram->sendMessage($chatId, "❌ Error loading copy trading info. Please try again.", $keyboard);
+        }
+    }
+
+    private function formatTrendLeaders(array $trends): string
+    {
+        $message = "🔥 *TREND LEADERS*\n";
+        $message .= "━━━━━━━━━━━━━━━━━━━━\n\n";
+
+        // Crypto Trends
+        if (!empty($trends['crypto'])) {
+            $message .= "📈 *CRYPTO TRENDING* (24h Biggest Movers)\n";
+            foreach ($trends['crypto'] as $idx => $asset) {
+                $emoji = $asset['trend_direction'] === 'bullish' ? '🟢' : '🔴';
+                $message .= "\n" . ($idx + 1) . ". {$emoji} *{$asset['symbol']}*\n";
+                $message .= "   💰 \${$this->formatNumber($asset['price'])}\n";
+                $message .= "   📊 24h: " . ($asset['change_24h'] > 0 ? '+' : '') . number_format($asset['change_24h'], 2) . "%\n";
+                $message .= "   💹 Strength: {$asset['trend_strength']}/100 ({$asset['momentum']})\n";
+                $message .= "   💧 Volume: \${$this->formatNumber($asset['volume_24h'])}\n";
+            }
+            $message .= "\n";
+        } else {
+            $message .= "📈 *CRYPTO TRENDS*\n";
+            $message .= "No significant trends detected at the moment.\n\n";
+        }
+
+        // Stock Trends
+        if (!empty($trends['stocks'])) {
+            $message .= "📊 *STOCK TRENDS*\n";
+            foreach (array_slice($trends['stocks'], 0, 3) as $idx => $asset) {
+                $emoji = $asset['trend_direction'] === 'bullish' ? '🟢' : '🔴';
+                $message .= "\n" . ($idx + 1) . ". {$emoji} *{$asset['symbol']}*\n";
+                $message .= "   💰 \${$this->formatNumber($asset['price'])}\n";
+                $message .= "   📊 24h: " . ($asset['change_24h'] > 0 ? '+' : '') . number_format($asset['change_24h'], 2) . "%\n";
+            }
+            $message .= "\n";
+        }
+
+        // Forex Trends
+        if (!empty($trends['forex'])) {
+            $message .= "💱 *FOREX TRENDS*\n";
+            foreach (array_slice($trends['forex'], 0, 3) as $idx => $asset) {
+                $emoji = $asset['trend_direction'] === 'bullish' ? '🟢' : '🔴';
+                $message .= "\n" . ($idx + 1) . ". {$emoji} *{$asset['symbol']}*\n";
+                $message .= "   💰 " . number_format($asset['price'], 5) . "\n";
+                $message .= "   📊 24h: " . ($asset['change_24h'] > 0 ? '+' : '') . number_format($asset['change_24h'], 2) . "%\n";
+            }
+            $message .= "\n";
+        }
+
+        // AI Insights
+        if (!empty($trends['ai_insights'])) {
+            $message .= "━━━━━━━━━━━━━━━━━━━━\n";
+            $message .= "🤖 *AI INSIGHTS*\n\n";
+            $message .= "_" . $trends['ai_insights'] . "_\n\n";
+        }
+
+        $message .= "━━━━━━━━━━━━━━━━━━━━\n";
+        $message .= "💡 Use `/analyze [symbol]` for detailed analysis\n";
+        $message .= "⏰ Updated: " . now()->diffForHumans();
+
+        return $message;
+    }
+
+    private function formatCopyTradingHub(array $hub): string
+    {
+        $message = "📋 *COPY TRADING HUB*\n";
+        $message .= "━━━━━━━━━━━━━━━━━━━━\n\n";
+
+        $message .= "🎯 *Available Platforms*\n\n";
+        
+        foreach ($hub['platforms'] as $idx => $platform) {
+            $message .= ($idx + 1) . ". *{$platform['name']}*\n";
+            $message .= "   📊 Type: {$platform['type']}\n";
+            $message .= "   ℹ️ {$platform['description']}\n";
+            $message .= "   💰 " . end($platform['features']) . "\n";
+            $message .= "   🔗 [Visit Platform]({$platform['url']})\n\n";
+        }
+
+        $message .= "━━━━━━━━━━━━━━━━━━━━\n";
+        $message .= "📚 *How to Get Started*\n\n";
+        
+        $steps = $hub['how_to_connect'];
+        foreach ($steps as $key => $step) {
+            if ($key !== 'important') {
+                $stepNum = str_replace('step_', '', $key);
+                $message .= "{$stepNum}. {$step}\n";
+            }
+        }
+        $message .= "\n⚠️ {$steps['important']}\n\n";
+
+        $message .= "━━━━━━━━━━━━━━━━━━━━\n";
+        $message .= "✅ *Key Benefits*\n\n";
+        foreach (array_slice($hub['benefits'], 0, 4) as $benefit => $desc) {
+            $message .= "{$benefit}: {$desc}\n";
+        }
+
+        $message .= "\n━━━━━━━━━━━━━━━━━━━━\n";
+        $message .= "⚠️ *Important Risks*\n\n";
+        foreach (array_slice($hub['risks'], 0, 3) as $risk => $desc) {
+            $message .= "{$risk}: {$desc}\n";
+        }
+
+        $message .= "\n━━━━━━━━━━━━━━━━━━━━\n";
+        $message .= "🚀 *Coming Soon in SerpoAI*\n\n";
+        foreach ($hub['coming_soon'] as $feature => $desc) {
+            $message .= "• {$desc}\n";
+        }
+
+        $message .= "\n💡 For educational guide, use `/explain copy trading`";
+
+        return $message;
+    }
+
+    private function formatNumber(float $num): string
+    {
+        if ($num >= 1000000) {
+            return number_format($num / 1000000, 2) . 'M';
+        }
+        if ($num >= 1000) {
+            return number_format($num / 1000, 2) . 'K';
+        }
+        if ($num < 1) {
+            return number_format($num, 8);
+        }
+        return number_format($num, 2);
+    }
+
+    /**
+     * Handle /charts command - TradingView live charts
+     */
+    private function handleCharts(int $chatId, array $params)
+    {
+        if (empty($params)) {
+            $message = "📊 *Live TradingView Charts*\n\n";
+            $message .= "Usage: `/charts [symbol] [mode]`\n\n";
+            $message .= "🎯 *Chart Modes:*\n";
+            $message .= "• `scalp` - 5min chart with VWAP\n";
+            $message .= "• `intraday` - 15min with RSI/MACD/BB\n";
+            $message .= "• `swing` - 4H with Moving Averages\n\n";
+            $message .= "📝 *Examples:*\n";
+            $message .= "• `/charts BTC scalp`\n";
+            $message .= "• `/charts AAPL intraday`\n";
+            $message .= "• `/charts EURUSD swing`\n\n";
+            $message .= "💡 Default mode: `intraday`";
+
+            $keyboard = [
+                'inline_keyboard' => [
+                    [
+                        ['text' => '📈 BTC Scalp', 'callback_data' => '/charts BTC scalp'],
+                        ['text' => '📊 ETH Intraday', 'callback_data' => '/charts ETH intraday'],
+                    ],
+                    [
+                        ['text' => '⏰ BTC Swing', 'callback_data' => '/charts BTC swing'],
+                        ['text' => '📉 SOL Intraday', 'callback_data' => '/charts SOL intraday'],
+                    ],
+                    [
+                        ['text' => '🔙 Back to Menu', 'callback_data' => '/help'],
+                    ],
+                ]
+            ];
+            $this->telegram->sendMessage($chatId, $message, $keyboard);
+            return;
+        }
+
+        $symbol = strtoupper($params[0]);
+        $mode = $params[1] ?? 'intraday';
+
+        if (!in_array($mode, ['scalp', 'intraday', 'swing'])) {
+            $this->telegram->sendMessage($chatId, "❌ Invalid mode. Choose: `scalp`, `intraday`, or `swing`");
+            return;
+        }
+
+        $this->telegram->sendMessage($chatId, "📊 Generating chart for {$symbol}...");
+
+        $chartData = $this->chartService->generateChartLink($symbol, $mode);
+
+        if (isset($chartData['error'])) {
+            $this->telegram->sendMessage($chatId, "❌ Error: " . $chartData['error']);
+            return;
+        }
+
+        // Get quick analysis
+        $analysis = $this->chartService->getQuickAnalysis($symbol);
+
+        $message = "📊 *Live Chart - {$symbol}*\n\n";
+        
+        if (!isset($analysis['error'])) {
+            $message .= "{$analysis['emoji']} *Trend:* {$analysis['trend']}\n";
+            $message .= "💰 *Price:* \${$analysis['price']}\n";
+            $message .= "📈 *24h Change:* {$analysis['change_24h']}%\n";
+            if (isset($analysis['high_24h']) && $analysis['high_24h']) {
+                $message .= "🔝 *24h High:* \${$analysis['high_24h']}\n";
+                $message .= "🔻 *24h Low:* \${$analysis['low_24h']}\n";
+            }
+            $message .= "\n";
+        }
+
+        $message .= "🎯 *Chart Mode:* " . ucfirst($mode) . "\n";
+        $message .= "📊 *Interval:* {$chartData['interval']} minutes\n";
+        $message .= "💡 *" . $chartData['description'] . "*\n\n";
+        $message .= "━━━━━━━━━━━━━━━━━━━━\n\n";
+        $message .= "🔗 [Open in TradingView]({$chartData['url']})\n\n";
+        $message .= "💡 Tip: Click the link to view interactive chart with all features";
+
+        $keyboard = [
+            'inline_keyboard' => [
+                [
+                    ['text' => '⚡ Scalp (5m)', 'callback_data' => "/charts {$symbol} scalp"],
+                    ['text' => '📊 Intraday (15m)', 'callback_data' => "/charts {$symbol} intraday"],
+                ],
+                [
+                    ['text' => '⏰ Swing (4h)', 'callback_data' => "/charts {$symbol} swing"],
+                ],
+                [
+                    ['text' => '📈 Analyze', 'callback_data' => "/analyze {$symbol}"],
+                    ['text' => '🔍 Scan', 'callback_data' => "/scan {$symbol}"],
+                ],
+            ]
+        ];
+
+        $this->telegram->sendMessage($chatId, $message, $keyboard);
+    }
+
+    /**
+     * Handle /supercharts command - Derivatives super charts
+     */
+    private function handleSuperCharts(int $chatId, array $params)
+    {
+        if (empty($params)) {
+            $message = "🔥 *Derivatives Super Charts*\n\n";
+            $message .= "Advanced futures data including:\n";
+            $message .= "• 📊 Open Interest (OI)\n";
+            $message .= "• 💰 Funding Rates\n";
+            $message .= "• ⚡ Liquidations\n";
+            $message .= "• 📈 CVD (Cumulative Volume Delta)\n";
+            $message .= "• 📊 Long/Short Ratios\n\n";
+            $message .= "Usage: `/supercharts [symbol]`\n\n";
+            $message .= "📝 Examples:\n";
+            $message .= "• `/supercharts BTC`\n";
+            $message .= "• `/supercharts ETH`\n";
+            $message .= "• `/supercharts SOL`";
+
+            $keyboard = [
+                'inline_keyboard' => [
+                    [
+                        ['text' => '🔥 BTC Derivatives', 'callback_data' => '/supercharts BTC'],
+                        ['text' => '⚡ ETH Derivatives', 'callback_data' => '/supercharts ETH'],
+                    ],
+                    [
+                        ['text' => '📊 SOL Derivatives', 'callback_data' => '/supercharts SOL'],
+                        ['text' => '💎 BNB Derivatives', 'callback_data' => '/supercharts BNB'],
+                    ],
+                    [
+                        ['text' => '🔙 Back to Menu', 'callback_data' => '/help'],
+                    ],
+                ]
+            ];
+            $this->telegram->sendMessage($chatId, $message, $keyboard);
+            return;
+        }
+
+        $symbol = strtoupper($params[0]);
+        
+        $this->telegram->sendMessage($chatId, "🔥 Loading derivatives data for {$symbol}...");
+
+        $data = $this->superChart->getSuperChartData($symbol);
+
+        if (isset($data['error'])) {
+            $this->telegram->sendMessage($chatId, "❌ Error: " . $data['error']);
+            return;
+        }
+
+        $message = "🔥 *Derivatives Super Chart - {$data['symbol']}*\n\n";
+
+        // Open Interest
+        $oi = $data['open_interest'];
+        if (!isset($oi['error'])) {
+            $message .= "━━━━━━━━━━━━━━━━━━━━\n";
+            $message .= "{$oi['emoji']} *Open Interest*\n";
+            $message .= "📊 Value: {$oi['value']} {$data['symbol']}\n";
+            $message .= "📈 Trend: {$oi['trend']}\n";
+            $message .= "💡 {$oi['description']}\n\n";
+        }
+
+        // Funding Rate
+        $funding = $data['funding_rate'];
+        if (!isset($funding['error'])) {
+            $message .= "━━━━━━━━━━━━━━━━━━━━\n";
+            $message .= "{$funding['emoji']} *Funding Rate*\n";
+            $message .= "💰 Rate: {$funding['rate_percent']}%\n";
+            $message .= "📊 Sentiment: {$funding['sentiment']}\n";
+            $message .= "💡 {$funding['description']}\n\n";
+        }
+
+        // Long/Short Ratio
+        $ls = $data['long_short_ratio'];
+        if (!isset($ls['error'])) {
+            $message .= "━━━━━━━━━━━━━━━━━━━━\n";
+            $message .= "{$ls['emoji']} *Long/Short Ratio*\n";
+            $message .= "📊 Ratio: {$ls['ratio']}\n";
+            $message .= "🟢 Long: {$ls['long_percent']}%\n";
+            $message .= "🔴 Short: {$ls['short_percent']}%\n";
+            $message .= "💡 {$ls['sentiment']}\n\n";
+        }
+
+        // Liquidations
+        $liq = $data['liquidations'];
+        if (!isset($liq['error'])) {
+            $message .= "━━━━━━━━━━━━━━━━━━━━\n";
+            $message .= "{$liq['emoji']} *Recent Liquidations*\n";
+            $message .= "⚡ Total: {$liq['total_liquidations']}\n";
+            $message .= "🟢 Long Liqs: {$liq['long_liquidations']}\n";
+            $message .= "🔴 Short Liqs: {$liq['short_liquidations']}\n";
+            $message .= "💰 Value: \${$liq['total_value']}\n";
+            $message .= "📊 {$liq['dominant']}\n\n";
+        }
+
+        // CVD
+        $cvd = $data['cvd'];
+        if (!isset($cvd['error'])) {
+            $message .= "━━━━━━━━━━━━━━━━━━━━\n";
+            $message .= "{$cvd['emoji']} *Cumulative Volume Delta*\n";
+            $message .= "📊 CVD: {$cvd['cvd_percent']}%\n";
+            $message .= "🟢 Buy Volume: {$cvd['buy_volume']}\n";
+            $message .= "🔴 Sell Volume: {$cvd['sell_volume']}\n";
+            $message .= "💡 {$cvd['pressure']}\n\n";
+        }
+
+        $chartLink = $this->superChart->getDerivativesChartLink($symbol);
+        $message .= "━━━━━━━━━━━━━━━━━━━━\n\n";
+        $message .= "🔗 [Open TradingView Futures Chart]({$chartLink})";
+
+        $keyboard = [
+            'inline_keyboard' => [
+                [
+                    ['text' => '💰 Funding Rates', 'callback_data' => "/rates {$symbol}"],
+                    ['text' => '📊 Open Interest', 'callback_data' => "/oi {$symbol}"],
+                ],
+                [
+                    ['text' => '💸 Money Flow', 'callback_data' => "/flow {$symbol}"],
+                    ['text' => '🐋 Whale Alerts', 'callback_data' => "/whale {$symbol}"],
+                ],
+                [
+                    ['text' => '🔄 Refresh', 'callback_data' => "/supercharts {$symbol}"],
+                ],
+            ]
+        ];
+
+        $this->telegram->sendMessage($chatId, $message, $keyboard);
+    }
+
+    /**
+     * Handle /heatmap command - Market heat map
+     */
+    private function handleHeatmap(int $chatId, array $params)
+    {
+        $category = $params[0] ?? 'top';
+
+        $this->telegram->sendMessage($chatId, "🎨 Generating market heatmap...");
+
+        $data = $this->heatmap->generateHeatmap($category);
+
+        if (isset($data['error'])) {
+            $this->telegram->sendMessage($chatId, "❌ Error: " . $data['error']);
+            return;
+        }
+
+        $sentiment = $this->heatmap->getMarketSentiment($data);
+
+        $message = "🎨 *Market Heat Map*\n\n";
+        $message .= "{$sentiment['emoji']} *Overall Sentiment: {$sentiment['sentiment']}*\n";
+        $message .= "💡 {$sentiment['description']}\n\n";
+        $message .= "━━━━━━━━━━━━━━━━━━━━\n\n";
+        $message .= "📊 *Market Distribution*\n";
+        $message .= "🟢 Gainers: {$sentiment['gainer_percent']}%\n";
+        $message .= "⚪ Neutral: {$sentiment['neutral_percent']}%\n";
+        $message .= "🔴 Losers: {$sentiment['loser_percent']}%\n\n";
+        $message .= "━━━━━━━━━━━━━━━━━━━━\n\n";
+
+        $categorized = $data['categorized'];
+
+        // Strong Gainers
+        $strongGainers = $categorized['strong_gainers'];
+        $message .= "{$strongGainers['emoji']} *{$strongGainers['label']}* ({$strongGainers['count']})\n";
+        foreach (array_slice($strongGainers['coins'], 0, 3) as $coin) {
+            $message .= "• {$coin['symbol']}: +{$coin['change_24h']}%\n";
+        }
+        $message .= "\n";
+
+        // Gainers
+        $gainers = $categorized['gainers'];
+        $message .= "{$gainers['emoji']} *{$gainers['label']}* ({$gainers['count']})\n";
+        foreach (array_slice($gainers['coins'], 0, 3) as $coin) {
+            $message .= "• {$coin['symbol']}: +{$coin['change_24h']}%\n";
+        }
+        $message .= "\n";
+
+        // Losers
+        $losers = $categorized['losers'];
+        $message .= "{$losers['emoji']} *{$losers['label']}* ({$losers['count']})\n";
+        foreach (array_slice($losers['coins'], 0, 3) as $coin) {
+            $message .= "• {$coin['symbol']}: {$coin['change_24h']}%\n";
+        }
+        $message .= "\n";
+
+        // Strong Losers
+        $strongLosers = $categorized['strong_losers'];
+        $message .= "{$strongLosers['emoji']} *{$strongLosers['label']}* ({$strongLosers['count']})\n";
+        foreach (array_slice($strongLosers['coins'], 0, 3) as $coin) {
+            $message .= "• {$coin['symbol']}: {$coin['change_24h']}%\n";
+        }
+
+        $message .= "\n━━━━━━━━━━━━━━━━━━━━\n";
+        $message .= "📊 Total Coins Analyzed: {$data['total_coins']}\n";
+        $message .= "⏰ Updated: " . now()->format('H:i');
+
+        $keyboard = [
+            'inline_keyboard' => [
+                [
+                    ['text' => '🔄 Refresh Heatmap', 'callback_data' => '/heatmap'],
+                ],
+                [
+                    ['text' => '📈 Trend Leaders', 'callback_data' => '/trendcoins'],
+                    ['text' => '🐋 Whale Activity', 'callback_data' => '/whale BTC'],
+                ],
+                [
+                    ['text' => '🔙 Back to Menu', 'callback_data' => '/help'],
+                ],
+            ]
+        ];
+
+        $this->telegram->sendMessage($chatId, $message, $keyboard);
+    }
+
+    /**
+     * Handle /whale command - Whale alerts
+     */
+    private function handleWhaleAlerts(int $chatId, array $params)
+    {
+        if (empty($params)) {
+            $message = "🐋 *Whale Alerts*\n\n";
+            $message .= "Track large market movements:\n";
+            $message .= "• 💰 Large Order Book Walls\n";
+            $message .= "• ⚡ Liquidation Clusters\n";
+            $message .= "• 📊 Volume Spikes\n\n";
+            $message .= "Usage: `/whale [symbol]`\n\n";
+            $message .= "📝 Examples:\n";
+            $message .= "• `/whale BTC`\n";
+            $message .= "• `/whale ETH`\n";
+            $message .= "• `/whale SOL`\n\n";
+            $message .= "💡 Minimum order size: $100,000";
+
+            $keyboard = [
+                'inline_keyboard' => [
+                    [
+                        ['text' => '🐋 BTC Whales', 'callback_data' => '/whale BTC'],
+                        ['text' => '🐋 ETH Whales', 'callback_data' => '/whale ETH'],
+                    ],
+                    [
+                        ['text' => '🐋 SOL Whales', 'callback_data' => '/whale SOL'],
+                        ['text' => '🐋 BNB Whales', 'callback_data' => '/whale BNB'],
+                    ],
+                    [
+                        ['text' => '🔙 Back to Menu', 'callback_data' => '/help'],
+                    ],
+                ]
+            ];
+            $this->telegram->sendMessage($chatId, $message, $keyboard);
+            return;
+        }
+
+        $symbol = strtoupper($params[0]);
+        
+        $this->telegram->sendMessage($chatId, "🐋 Scanning whale activity for {$symbol}...");
+
+        $alerts = $this->whaleAlert->getWhaleAlerts($symbol);
+
+        if (isset($alerts['error'])) {
+            $this->telegram->sendMessage($chatId, "❌ Error: " . $alerts['error']);
+            return;
+        }
+
+        $message = "🐋 *Whale Alerts - {$alerts['symbol']}*\n\n";
+
+        // Large Orders
+        $orders = $alerts['large_orders'];
+        if (!isset($orders['error'])) {
+            $message .= "━━━━━━━━━━━━━━━━━━━━\n";
+            $message .= "{$orders['emoji']} *Large Order Walls*\n";
+            $message .= "💡 Pressure: {$orders['pressure']}\n";
+            $message .= "🟢 Buy Walls: \$" . number_format($orders['total_bid_value']) . "\n";
+            $message .= "🔴 Sell Walls: \$" . number_format($orders['total_ask_value']) . "\n\n";
+
+            if (!empty($orders['large_bids'])) {
+                $message .= "📊 *Top Buy Walls:*\n";
+                foreach (array_slice($orders['large_bids'], 0, 3) as $bid) {
+                    $message .= "• \${$bid['price']}: \$" . number_format($bid['value']) . " ({$bid['distance_from_price']}% below)\n";
+                }
+                $message .= "\n";
+            }
+
+            if (!empty($orders['large_asks'])) {
+                $message .= "📊 *Top Sell Walls:*\n";
+                foreach (array_slice($orders['large_asks'], 0, 3) as $ask) {
+                    $message .= "• \${$ask['price']}: \$" . number_format($ask['value']) . " (+{$ask['distance_from_price']}% above)\n";
+                }
+                $message .= "\n";
+            }
+        }
+
+        // Liquidation Clusters
+        $liq = $alerts['liquidation_clusters'];
+        if (!isset($liq['error'])) {
+            $message .= "━━━━━━━━━━━━━━━━━━━━\n";
+            $message .= "{$liq['emoji']} *Liquidation Clusters*\n";
+            $message .= "⚡ Total Liquidations: {$liq['total_liquidations']}\n";
+            
+            if ($liq['warning']) {
+                $message .= "⚠️ {$liq['warning']}\n";
+            }
+            
+            if (!empty($liq['clusters'])) {
+                $message .= "\n📊 *Top Liquidation Zones:*\n";
+                foreach (array_slice($liq['clusters'], 0, 3) as $cluster) {
+                    $dominant = $cluster['long_count'] > $cluster['short_count'] ? 'Longs' : 'Shorts';
+                    $message .= "• \${$cluster['price_level']}: {$cluster['count']} liqs ({$dominant})\n";
+                }
+            }
+            $message .= "\n";
+        }
+
+        // Volume Spikes
+        $volume = $alerts['volume_spikes'];
+        if (!isset($volume['error'])) {
+            $message .= "━━━━━━━━━━━━━━━━━━━━\n";
+            $message .= "{$volume['emoji']} *Volume Spikes*\n";
+            $message .= "📊 Status: {$volume['status']}\n";
+            
+            if (!empty($volume['spikes'])) {
+                $message .= "\n⚡ *Recent Spikes:*\n";
+                foreach (array_slice($volume['spikes'], 0, 3) as $spike) {
+                    $message .= "• {$spike['minutes_ago']}min ago: {$spike['ratio_to_avg']}x avg ({$spike['intensity']})\n";
+                }
+            } else {
+                $message .= "✅ No unusual volume detected\n";
+            }
+        }
+
+        $message .= "\n━━━━━━━━━━━━━━━━━━━━\n";
+        $message .= "💡 Threshold: Orders > $" . number_format($orders['threshold'] ?? 100000) . "\n";
+        $message .= "⏰ Updated: " . now()->format('H:i');
+
+        $keyboard = [
+            'inline_keyboard' => [
+                [
+                    ['text' => '🔄 Refresh', 'callback_data' => "/whale {$symbol}"],
+                ],
+                [
+                    ['text' => '🔥 Super Charts', 'callback_data' => "/supercharts {$symbol}"],
+                    ['text' => '📊 Money Flow', 'callback_data' => "/flow {$symbol}"],
+                ],
+                [
+                    ['text' => '🎨 Market Heatmap', 'callback_data' => '/heatmap'],
+                ],
+            ]
+        ];
 
         $this->telegram->sendMessage($chatId, $message, $keyboard);
     }
