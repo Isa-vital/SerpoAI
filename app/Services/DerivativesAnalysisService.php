@@ -42,30 +42,30 @@ class DerivativesAnalysisService
     private function getCryptoMoneyFlow(string $symbol): array
     {
         $cacheKey = "money_flow_{$symbol}";
-        
+
         return Cache::remember($cacheKey, 300, function () use ($symbol) {
             try {
                 // Ensure symbol ends with USDT for Binance
                 $spotSymbol = $this->normalizeSymbol($symbol, 'USDT');
-                
+
                 // Get spot market data
                 $spotData = $this->binance->get24hTicker($spotSymbol);
-                
+
                 // Get futures data
                 $futuresData = $this->getFuturesStats($spotSymbol);
-                
+
                 // Calculate flow metrics
                 $spotVolume = floatval($spotData['quoteVolume'] ?? 0);
                 $futuresVolume = floatval($futuresData['quoteVolume'] ?? 0);
                 $totalVolume = $spotVolume + $futuresVolume;
-                
+
                 // Volume distribution
                 $spotDominance = $totalVolume > 0 ? ($spotVolume / $totalVolume) * 100 : 0;
                 $futuresDominance = $totalVolume > 0 ? ($futuresVolume / $totalVolume) * 100 : 0;
-                
+
                 // Get exchange flow data (simplified - in production use Glassnode/Nansen APIs)
                 $exchangeFlow = $this->estimateExchangeFlow($spotSymbol, $spotVolume);
-                
+
                 return [
                     'symbol' => $symbol,
                     'market_type' => 'crypto',
@@ -97,21 +97,21 @@ class DerivativesAnalysisService
     private function getStockMoneyFlow(string $symbol): array
     {
         $cacheKey = "money_flow_stock_{$symbol}";
-        
+
         return Cache::remember($cacheKey, 300, function () use ($symbol) {
             try {
                 $stockData = $this->marketData->analyzeStock($symbol);
-                
+
                 // Simplified institutional flow proxy using volume analysis
                 $volume = floatval($stockData['volume'] ?? 0);
                 $avgVolume = floatval($stockData['avg_volume'] ?? $volume);
                 $volumeRatio = $avgVolume > 0 ? $volume / $avgVolume : 1;
-                
+
                 $priceChange = floatval($stockData['change_percent'] ?? 0);
-                
+
                 // Estimate buying/selling pressure
                 $pressure = $this->estimateVolumePressure($priceChange, $volumeRatio);
-                
+
                 return [
                     'symbol' => $symbol,
                     'market_type' => 'stock',
@@ -138,15 +138,15 @@ class DerivativesAnalysisService
     private function getForexMoneyFlow(string $symbol): array
     {
         $cacheKey = "money_flow_forex_{$symbol}";
-        
+
         return Cache::remember($cacheKey, 300, function () use ($symbol) {
             try {
                 $forexData = $this->marketData->analyzeForexPair($symbol);
-                
+
                 // Forex doesn't have volume, so we use price momentum as proxy
                 $priceChange = floatval($forexData['change_percent'] ?? 0);
                 $volatility = abs($priceChange);
-                
+
                 $flow = [
                     'symbol' => $symbol,
                     'market_type' => 'forex',
@@ -158,7 +158,7 @@ class DerivativesAnalysisService
                     'note' => 'Forex markets have no centralized volume data. Analysis based on price momentum.',
                     'timestamp' => now()->toIso8601String(),
                 ];
-                
+
                 return $flow;
             } catch (\Exception $e) {
                 Log::error('Forex money flow error', ['symbol' => $symbol, 'error' => $e->getMessage()]);
@@ -174,21 +174,21 @@ class DerivativesAnalysisService
     {
         $symbol = $this->normalizeSymbol($symbol, 'USDT');
         $cacheKey = "open_interest_{$symbol}";
-        
+
         return Cache::remember($cacheKey, 180, function () use ($symbol) {
             try {
                 $futuresData = $this->getFuturesStats($symbol);
                 $openInterest = floatval($futuresData['openInterest'] ?? 0);
                 $openInterestValue = floatval($futuresData['openInterestValue'] ?? 0);
                 $price = floatval($futuresData['lastPrice'] ?? 0);
-                
+
                 // Get historical OI (simplified - would use historical API in production)
                 $oiChange24h = $this->estimateOIChange($symbol);
-                
+
                 // Analyze OI relationship with price
                 $priceChange = floatval($futuresData['priceChangePercent'] ?? 0);
                 $signal = $this->analyzeOIPriceRelationship($oiChange24h, $priceChange);
-                
+
                 return [
                     'symbol' => $symbol,
                     'open_interest' => [
@@ -217,15 +217,15 @@ class DerivativesAnalysisService
     {
         $symbol = $this->normalizeSymbol($symbol, 'USDT');
         $cacheKey = "funding_rates_{$symbol}";
-        
+
         return Cache::remember($cacheKey, 180, function () use ($symbol) {
             try {
                 $fundingRate = $this->getCurrentFundingRate($symbol);
                 $fundingHistory = $this->getFundingRateHistory($symbol);
-                
+
                 // Analyze funding rate for squeeze signals
                 $analysis = $this->analyzeFundingRate($fundingRate, $fundingHistory);
-                
+
                 return [
                     'symbol' => $symbol,
                     'current_rate' => $fundingRate['rate'],
@@ -282,7 +282,7 @@ class DerivativesAnalysisService
                 $data = $response->json();
                 return [
                     'rate' => floatval($data['lastFundingRate'] ?? 0),
-                    'nextFundingTime' => isset($data['nextFundingTime']) ? 
+                    'nextFundingTime' => isset($data['nextFundingTime']) ?
                         \Carbon\Carbon::createFromTimestampMs($data['nextFundingTime'])->toDateTimeString() : null,
                 ];
             }
@@ -304,7 +304,7 @@ class DerivativesAnalysisService
             if ($response->successful()) {
                 $history = $response->json();
                 $rates = array_map(fn($h) => floatval($h['fundingRate']), $history);
-                
+
                 return [
                     'avg_8h' => array_sum(array_slice($rates, 0, 2)) / 2,
                     'avg_24h' => array_sum(array_slice($rates, 0, 8)) / 8,
@@ -322,9 +322,9 @@ class DerivativesAnalysisService
     {
         // Simplified estimation - in production use Glassnode/Nansen APIs
         // This is a basic heuristic based on volume patterns
-        
+
         $volumeChange = rand(-20, 20); // Placeholder - would calculate from historical data
-        
+
         return [
             'net_flow' => $volumeChange > 0 ? 'Inflow' : 'Outflow',
             'magnitude' => abs($volumeChange),
@@ -336,7 +336,7 @@ class DerivativesAnalysisService
     {
         $pressure = 'Neutral';
         $type = 'Mixed';
-        
+
         if ($priceChange > 0 && $volumeRatio > 1.2) {
             $pressure = 'Strong Buying';
             $type = 'Bullish';
@@ -350,7 +350,7 @@ class DerivativesAnalysisService
             $pressure = 'Weak Selling';
             $type = 'Cautious';
         }
-        
+
         return [
             'pressure' => $pressure,
             'type' => $type,
@@ -360,7 +360,7 @@ class DerivativesAnalysisService
 
     private function interpretPressure(string $pressure, string $type): string
     {
-        return match($pressure) {
+        return match ($pressure) {
             'Strong Buying' => 'High volume + rising price = strong institutional accumulation',
             'Weak Buying' => 'Rising price + low volume = weak rally, potential reversal',
             'Strong Selling' => 'High volume + falling price = strong distribution/panic',
@@ -380,7 +380,7 @@ class DerivativesAnalysisService
         $signal = 'Neutral';
         $interpretation = '';
         $emoji = '⚪';
-        
+
         if ($oiChange > 5 && $priceChange > 2) {
             $signal = 'Strong Bullish';
             $emoji = '🟢';
@@ -402,7 +402,7 @@ class DerivativesAnalysisService
             $emoji = '⚪';
             $interpretation = 'Stable OI + stable price = market consolidating';
         }
-        
+
         return [
             'signal' => $signal,
             'emoji' => $emoji,
@@ -414,12 +414,12 @@ class DerivativesAnalysisService
     {
         $rate = $current['rate'];
         $avg24h = $history['avg_24h'];
-        
+
         $status = 'Neutral';
         $emoji = '⚪';
         $interpretation = '';
         $risk = 'Low';
-        
+
         // Extremely positive funding = longs crowded = short squeeze risk
         if ($rate > 0.001) { // > 0.1% per 8h = 0.3% daily
             $status = 'Extremely Bullish Crowded';
@@ -447,7 +447,7 @@ class DerivativesAnalysisService
             $interpretation = 'Funding rate near zero. Balanced market, low squeeze risk.';
             $risk = 'Low';
         }
-        
+
         return [
             'status' => $status,
             'emoji' => $emoji,

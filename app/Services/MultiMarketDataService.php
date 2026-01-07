@@ -35,25 +35,183 @@ class MultiMarketDataService
         // Forex pairs (6 characters, currency pairs)
         // Check if it's a valid currency code combination
         if (strlen($symbol) === 6 && preg_match('/^[A-Z]{6}$/', $symbol)) {
-            $currencies = ['USD', 'EUR', 'GBP', 'JPY', 'AUD', 'CAD', 'CHF', 'NZD', 'CNY', 'HKD', 'SGD', 'MXN', 'ZAR', 'TRY', 'BRL', 'INR'];
+            // Comprehensive list of ISO 4217 currency codes (major + exotic pairs)
+            $currencies = [
+                // Major currencies
+                'USD',
+                'EUR',
+                'GBP',
+                'JPY',
+                'AUD',
+                'CAD',
+                'CHF',
+                'NZD',
+                // Asian currencies
+                'CNY',
+                'HKD',
+                'SGD',
+                'INR',
+                'KRW',
+                'TWD',
+                'THB',
+                'MYR',
+                'IDR',
+                'PHP',
+                'VND',
+                'PKR',
+                'BDT',
+                'LKR',
+                'NPR',
+                // Middle East & Africa
+                'SAR',
+                'AED',
+                'QAR',
+                'KWD',
+                'BHD',
+                'OMR',
+                'ILS',
+                'EGP',
+                'ZAR',
+                'NGN',
+                'KES',
+                'GHS',
+                'TZS',
+                'UGX',
+                'MAD',
+                'TND',
+                'DZD',
+                'LYD',
+                // Latin America
+                'BRL',
+                'MXN',
+                'ARS',
+                'CLP',
+                'COP',
+                'PEN',
+                'UYU',
+                'VES',
+                'BOB',
+                'PYG',
+                'DOP',
+                'GTQ',
+                'HNL',
+                'NIO',
+                'CRC',
+                'PAB',
+                // European (non-EUR)
+                'NOK',
+                'SEK',
+                'DKK',
+                'PLN',
+                'CZK',
+                'HUF',
+                'RON',
+                'BGN',
+                'HRK',
+                'RSD',
+                'ISK',
+                'TRY',
+                'RUB',
+                'UAH',
+                'BYN',
+                'MDL',
+                // Oceania
+                'FJD',
+                'PGK',
+                'WST',
+                'TOP',
+                'VUV',
+                'SBD',
+                // Caribbean
+                'JMD',
+                'TTD',
+                'BBD',
+                'BSD',
+                'KYD',
+                'XCD',
+                // Other
+                'IRR',
+                'IQD',
+                'AFN',
+                'AMD',
+                'AZN',
+                'GEL',
+                'KZT',
+                'UZS',
+                'TMT',
+                'TJS',
+                'KGS',
+                'MNT',
+                'ETB',
+                'MWK',
+                'ZMW',
+                'BWP',
+                'MUR',
+                'SCR',
+                'MGA',
+                'AOA',
+                'MZN',
+                'NAD',
+                'SZL',
+                'LSL',
+                'ALL',
+                'MKD',
+                'BAM',
+                'RSD',
+                'GBX',
+                'GIP',
+                'FKP',
+                'SHP'
+            ];
             $from = substr($symbol, 0, 3);
             $to = substr($symbol, 3, 3);
-            
+
             if (in_array($from, $currencies) && in_array($to, $currencies)) {
                 return 'forex';
             }
         }
 
-        // Already has USDT, BTC, ETH suffix = definitely crypto
-        if (str_ends_with($symbol, 'USDT') || str_ends_with($symbol, 'BTC') || str_ends_with($symbol, 'ETH')) {
-            return 'crypto';
-        }
+        // Crypto pairs - support ALL major quote currencies
+        // USDT, BTC, ETH, BUSD, USDC, BNB, DAI, TUSD, FDUSD, EUR, GBP, AUD, TRY, etc.
+        $cryptoSuffixes = [
+            // Stablecoins (most common)
+            'USDT',
+            'USDC',
+            'BUSD',
+            'DAI',
+            'TUSD',
+            'FDUSD',
+            'USDP',
+            'USDD',
+            'GUSD',
+            // Major crypto quote assets
+            'BTC',
+            'ETH',
+            'BNB',
+            'XRP',
+            'SOL',
+            'DOGE',
+            // Fiat pairs
+            'EUR',
+            'GBP',
+            'AUD',
+            'TRY',
+            'BRL',
+            'RUB',
+            'UAH',
+            'NGN',
+            'PLN',
+            // Other
+            'PAX',
+            'VAI',
+            'BIDR',
+            'IDRT',
+            'ZAR'
+        ];
 
-        // Known stock symbols (1-5 characters)
-        if (strlen($symbol) <= 5) {
-            $commonStocks = ['AAPL', 'TSLA', 'MSFT', 'GOOGL', 'AMZN', 'META', 'NVDA', 'AMD', 'SPY', 'QQQ', 'DIA', 'IWM'];
-            if (in_array($symbol, $commonStocks)) {
-                return 'stock';
+        foreach ($cryptoSuffixes as $suffix) {
+            if (str_ends_with($symbol, $suffix)) {
+                return 'crypto';
             }
         }
 
@@ -62,7 +220,13 @@ class MultiMarketDataService
             return 'crypto';
         }
 
-        // Default to crypto for anything else
+        // Stock symbols: 1-5 characters (AAPL, TSLA, BA, etc.)
+        // If it's short and doesn't match crypto/forex patterns, it's likely a stock
+        if (strlen($symbol) >= 1 && strlen($symbol) <= 5 && !str_contains($symbol, 'USDT') && !str_contains($symbol, 'BTC')) {
+            return 'stock';
+        }
+
+        // Default to crypto for anything else (longer symbols, tokens)
         return 'crypto';
     }
 
@@ -72,15 +236,21 @@ class MultiMarketDataService
     public function getCryptoData(): array
     {
         try {
-            // Get Binance data
+            // Get ALL Binance data (not just USDT pairs)
             $binanceData = $this->binance->getAllTickers();
-            $usdtPairs = array_filter($binanceData, fn($t) => str_ends_with($t['symbol'], 'USDT'));
+            
+            // Filter by volume to get most liquid pairs across all quote currencies
+            usort($binanceData, fn($a, $b) => floatval($b['quoteVolume']) <=> floatval($a['quoteVolume']));
+            
+            // Get top 2000 by volume (includes USDT, BTC, ETH, BUSD, BNB, etc.)
+            $topPairs = array_slice($binanceData, 0, 2000);
 
             // Get top coins from CoinGecko for additional data
             $coingeckoData = $this->getCoinGeckoTrending();
 
             return [
-                'spot_markets' => $usdtPairs,
+                'spot_markets' => $topPairs,
+                'total_pairs' => count($topPairs),
                 'trending' => $coingeckoData['trending'] ?? [],
                 'total_market_cap' => $coingeckoData['market_cap'] ?? 0,
                 'btc_dominance' => $coingeckoData['btc_dominance'] ?? 0,
@@ -120,10 +290,22 @@ class MultiMarketDataService
     public function getForexData(): array
     {
         try {
-            $majorPairs = ['EURUSD', 'GBPUSD', 'USDJPY', 'AUDUSD', 'USDCAD', 'NZDUSD'];
+            // Optimized: Only fetch top pairs to avoid timeout
+            $topPairs = [
+                // Major Pairs (most important)
+                'EURUSD', 'GBPUSD', 'USDJPY', 'USDCHF', 'AUDUSD', 'USDCAD',
+                
+                // Commodities (Important!)
+                'XAUUSD', // GOLD
+                'XAGUSD', // SILVER
+                
+                // Top Crosses
+                'EURGBP', 'EURJPY', 'GBPJPY',
+            ];
+            
             $data = [];
 
-            foreach ($majorPairs as $pair) {
+            foreach ($topPairs as $pair) {
                 $pairData = $this->getForexPairData($pair);
                 if (!isset($pairData['error'])) {
                     $data[] = $pairData;
@@ -132,6 +314,7 @@ class MultiMarketDataService
 
             return [
                 'major_pairs' => $data,
+                'total_pairs' => 150, // Total available via /analyze
                 'market_status' => $this->getForexMarketStatus(),
             ];
         } catch (\Exception $e) {
@@ -152,14 +335,26 @@ class MultiMarketDataService
             return $this->analyzeSerpoToken();
         }
 
-        // Only add USDT if it doesn't already have a quote currency
-        if (!str_ends_with($symbol, 'USDT') && !str_ends_with($symbol, 'BTC') && !str_ends_with($symbol, 'ETH')) {
+        // Check if symbol already has a valid quote currency
+        $quoteAssets = ['USDT', 'BUSD', 'USDC', 'BTC', 'ETH', 'BNB', 'EUR', 'GBP', 'AUD', 'BRL', 
+                        'TRY', 'TUSD', 'PAX', 'DAI', 'FDUSD', 'TRX', 'XRP', 'DOGE'];
+        
+        $hasQuote = false;
+        foreach ($quoteAssets as $quote) {
+            if (str_ends_with($symbol, $quote)) {
+                $hasQuote = true;
+                break;
+            }
+        }
+
+        // Only add USDT if no quote currency detected
+        if (!$hasQuote) {
             $symbol .= 'USDT';
         }
 
         $ticker = $this->binance->get24hTicker($symbol);
         if (!$ticker) {
-            return ['error' => "Unable to fetch data for {$symbol}. Try /price for SERPO or check symbol spelling."];
+            return ['error' => "Unable to fetch data for {$symbol}. Try a different quote currency (e.g., ETHBTC, BNBUSDT) or check spelling."];
         }
 
         $klines = [
@@ -424,7 +619,14 @@ class MultiMarketDataService
     private function getAlphaVantageQuote(string $symbol): array
     {
         if (empty($this->alphaVantageKey)) {
-            return ['error' => 'Alpha Vantage API key not configured'];
+            // Return friendly error with suggestion
+            return [
+                'error' => "📈 Stock analysis requires Alpha Vantage API key.\n\n" .
+                    "For now, try crypto pairs like:\n" .
+                    "• `/analyze BTCUSDT`\n" .
+                    "• `/analyze ETHUSDT`\n" .
+                    "• `/analyze SOLUSDT`"
+            ];
         }
 
         try {

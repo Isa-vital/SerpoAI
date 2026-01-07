@@ -45,7 +45,22 @@ class SentimentAnalysisService
     private function getCryptoCompareSentiment(string $coin): ?array
     {
         try {
-            $url = "https://min-api.cryptocompare.com/data/v2/news/?categories=BTC,ETH";
+            // Map coin name to CryptoCompare category
+            $categoryMap = [
+                'Bitcoin' => 'BTC',
+                'Ethereum' => 'ETH',
+                'Ripple' => 'XRP',
+                'Binance Coin' => 'BNB',
+                'Solana' => 'SOL',
+                'Cardano' => 'ADA',
+                'Dogecoin' => 'DOGE',
+                'Polygon' => 'MATIC',
+                'Polkadot' => 'DOT',
+            ];
+            
+            // For unknown coins like SERPO, fetch general crypto news
+            $category = $categoryMap[$coin] ?? 'BTC,ETH';
+            $url = "https://min-api.cryptocompare.com/data/v2/news/?categories={$category}";
             $response = Http::timeout(10)->get($url);
 
             if (!$response->successful()) {
@@ -91,23 +106,28 @@ class SentimentAnalysisService
                 ];
             }
 
-            // Calculate sentiment score (-100 to +100)
+            // Calculate sentiment score (0 to 100)
             $totalMentions = $positiveCount + $negativeCount;
-            $score = $totalMentions > 0 
-                ? (($positiveCount - $negativeCount) / $totalMentions) * 100 
-                : 0;
+            
+            if ($totalMentions > 0) {
+                // Convert to 0-100 scale where 50 is neutral
+                $ratio = $positiveCount / $totalMentions;
+                $score = $ratio * 100;
+            } else {
+                $score = 50; // Neutral if no mentions
+            }
 
-            // Determine label and emoji
-            if ($score > 30) {
+            // Determine label and emoji based on 0-100 scale
+            if ($score >= 75) {
                 $label = 'Very Bullish';
                 $emoji = '🟢🟢';
-            } elseif ($score > 10) {
+            } elseif ($score >= 60) {
                 $label = 'Bullish';
                 $emoji = '🟢';
-            } elseif ($score < -30) {
+            } elseif ($score <= 25) {
                 $label = 'Very Bearish';
                 $emoji = '🔴🔴';
-            } elseif ($score < -10) {
+            } elseif ($score <= 40) {
                 $label = 'Bearish';
                 $emoji = '🔴';
             } else {
@@ -122,6 +142,7 @@ class SentimentAnalysisService
                 'sources' => array_slice($sources, 0, 3),
                 'positive_mentions' => $positiveCount,
                 'negative_mentions' => $negativeCount,
+                'total_mentions' => $totalMentions,
             ];
         } catch (\Exception $e) {
             Log::error('CryptoCompare sentiment error', ['message' => $e->getMessage()]);
@@ -140,22 +161,33 @@ class SentimentAnalysisService
 
             if (!$marketData) {
                 return [
-                    'score' => 0,
-                    'label' => 'Unknown',
+                    'score' => 50,
+                    'label' => 'Neutral',
                     'emoji' => '⚪',
                     'sources' => [],
+                    'positive_mentions' => 0,
+                    'negative_mentions' => 0,
+                    'total_mentions' => 0,
                 ];
             }
 
             $priceChange = $marketData['price_change_24h'];
 
-            // Score based on price movement
-            $score = min(100, max(-100, $priceChange * 2));
+            // Convert price change to 0-100 scale (50 = neutral)
+            // Map -50% to 0, 0% to 50, +50% to 100
+            $score = 50 + ($priceChange);
+            $score = max(0, min(100, $score));
 
-            if ($score > 20) {
+            if ($score >= 75) {
+                $label = 'Very Bullish';
+                $emoji = '🟢🟢';
+            } elseif ($score >= 60) {
                 $label = 'Bullish';
                 $emoji = '🟢';
-            } elseif ($score < -20) {
+            } elseif ($score <= 25) {
+                $label = 'Very Bearish';
+                $emoji = '🔴🔴';
+            } elseif ($score <= 40) {
                 $label = 'Bearish';
                 $emoji = '🔴';
             } else {
@@ -163,24 +195,61 @@ class SentimentAnalysisService
                 $emoji = '⚪';
             }
 
+            // Fetch general crypto news to include with sentiment
+            $sources = [];
+            try {
+                $newsUrl = "https://min-api.cryptocompare.com/data/v2/news/?categories=BTC,ETH";
+                $response = Http::timeout(5)->get($newsUrl);
+                if ($response->successful()) {
+                    $data = $response->json();
+                    $articles = $data['Data'] ?? [];
+                    foreach (array_slice($articles, 0, 3) as $article) {
+                        $sources[] = [
+                            'title' => $article['title'] ?? '',
+                            'url' => $article['url'] ?? '',
+                            'source' => $article['source'] ?? 'News',
+                        ];
+                    }
+                }
+            } catch (\Exception $e) {
+                // News fetch failed, continue without sources
+            }
+
             return [
                 'score' => round($score, 1),
                 'label' => $label,
                 'emoji' => $emoji,
-                'sources' => [
-                    ['title' => 'Based on 24h price movement', 'source' => 'Market Data']
-                ],
-                'note' => 'Sentiment based on price action (real-time news unavailable)',
+                'sources' => $sources,
+                'positive_mentions' => $priceChange > 0 ? 1 : 0,
+                'negative_mentions' => $priceChange < 0 ? 1 : 0,
+                'total_mentions' => 1,
             ];
         } catch (\Exception $e) {
             Log::error('Basic sentiment error', ['message' => $e->getMessage()]);
             return [
-                'score' => 0,
+                'score' => 50,
                 'label' => 'Neutral',
                 'emoji' => '⚪',
                 'sources' => [],
+                'positive_mentions' => 0,
+                'negative_mentions' => 0,
+                'total_mentions' => 0,
             ];
         }
+    }
+
+    /**
+     * Get news sentiment from Twitter (placeholder)
+     */
+    private function getTwitterSentiment(): array
+    {
+        // Implementation would go here when Twitter API is integrated
+        return [
+            'score' => 50,
+            'label' => 'Neutral',
+            'emoji' => '⚪',
+            'sources' => [],
+        ];
     }
 
     /**

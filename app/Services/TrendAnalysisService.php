@@ -52,25 +52,25 @@ class TrendAnalysisService
     private function getCryptoTrends(): array
     {
         $topTrending = [];
-        
+
         try {
             // Get all tickers with timeout
             $tickers = $this->binance->getAllTickers();
-            
+
             if (empty($tickers)) {
                 Log::warning('No tickers received from Binance');
                 return [];
             }
-            
+
             // Filter USDT pairs only
             $usdtPairs = array_filter($tickers, function ($ticker) {
-                return isset($ticker['symbol']) && 
-                       str_ends_with($ticker['symbol'], 'USDT') &&
-                       !str_contains($ticker['symbol'], 'UP') &&
-                       !str_contains($ticker['symbol'], 'DOWN') &&
-                       !str_contains($ticker['symbol'], 'BEAR') &&
-                       !str_contains($ticker['symbol'], 'BULL') &&
-                       floatval($ticker['quoteVolume'] ?? 0) > 1000000; // Min $1M volume
+                return isset($ticker['symbol']) &&
+                    str_ends_with($ticker['symbol'], 'USDT') &&
+                    !str_contains($ticker['symbol'], 'UP') &&
+                    !str_contains($ticker['symbol'], 'DOWN') &&
+                    !str_contains($ticker['symbol'], 'BEAR') &&
+                    !str_contains($ticker['symbol'], 'BULL') &&
+                    floatval($ticker['quoteVolume'] ?? 0) > 1000000; // Min $1M volume
             });
 
             // Sort by absolute price change percentage (biggest movers)
@@ -81,12 +81,12 @@ class TrendAnalysisService
             // Process top movers efficiently
             foreach (array_slice($usdtPairs, 0, 10) as $ticker) {
                 $changePercent = floatval($ticker['priceChangePercent']);
-                
+
                 // Consider trending if change > 5%
                 if (abs($changePercent) >= 5) {
                     $direction = $changePercent > 0 ? 'bullish' : 'bearish';
                     $strength = min(abs($changePercent) * 8, 100); // Scale to 0-100
-                    
+
                     // Determine momentum based on change magnitude
                     if (abs($changePercent) > 15) {
                         $momentum = 'strong';
@@ -95,7 +95,7 @@ class TrendAnalysisService
                     } else {
                         $momentum = 'weak';
                     }
-                    
+
                     $topTrending[] = [
                         'symbol' => str_replace('USDT', '', $ticker['symbol']),
                         'pair' => $ticker['symbol'],
@@ -111,7 +111,7 @@ class TrendAnalysisService
 
                 if (count($topTrending) >= 8) break; // Get 8 for better list
             }
-            
+
             return $topTrending;
         } catch (\Exception $e) {
             Log::error('Crypto trends fetch error', ['error' => $e->getMessage()]);
@@ -131,7 +131,7 @@ class TrendAnalysisService
 
             foreach ($timeframes as $tf) {
                 $klines = $this->binance->getKlines($symbol, $tf, 50);
-                
+
                 if (empty($klines)) continue;
 
                 // Calculate EMA trend
@@ -181,16 +181,16 @@ class TrendAnalysisService
     {
         $ema = [];
         $multiplier = 2 / ($period + 1);
-        
+
         // Start with SMA
         $sma = array_sum(array_slice($data, 0, $period)) / $period;
         $ema[] = $sma;
-        
+
         // Calculate EMA
         for ($i = $period; $i < count($data); $i++) {
             $ema[] = ($data[$i] - end($ema)) * $multiplier + end($ema);
         }
-        
+
         return $ema;
     }
 
@@ -198,11 +198,11 @@ class TrendAnalysisService
     {
         $positiveCount = count(array_filter($trendScores, fn($s) => $s > 0));
         $totalCount = count($trendScores);
-        
+
         if ($totalCount === 0) return 'weak';
-        
+
         $agreement = $positiveCount / $totalCount;
-        
+
         if ($agreement >= 0.75 || $agreement <= 0.25) return 'strong';
         if ($agreement >= 0.5 || $agreement <= 0.5) return 'moderate';
         return 'weak';
@@ -214,21 +214,21 @@ class TrendAnalysisService
     private function getStockTrends(): array
     {
         $trending = [];
-        
+
         try {
             // Limit to just 3 quick checks to avoid timeout
             $symbols = ['SPY', 'QQQ', 'AAPL'];
-            
+
             foreach ($symbols as $symbol) {
                 try {
                     // Use cached data only, timeout after 2 seconds
                     $stockData = Cache::remember("trend_stock_{$symbol}", 300, function () use ($symbol) {
                         return $this->marketData->analyzeStock($symbol);
                     });
-                    
+
                     if (!isset($stockData['error'])) {
                         $change = floatval($stockData['change_percent'] ?? 0);
-                        
+
                         // Only include if showing significant movement
                         if (abs($change) > 1.5) {
                             $trending[] = [
@@ -274,11 +274,11 @@ class TrendAnalysisService
         try {
             $cryptoCount = count($trends['crypto'] ?? []);
             $stockCount = count($trends['stocks'] ?? []);
-            
+
             $context = "Current market trends:\n";
             $context .= "Crypto trending: {$cryptoCount} assets\n";
             $context .= "Stocks trending: {$stockCount} assets\n";
-            
+
             if ($cryptoCount > 0) {
                 $topCrypto = $trends['crypto'][0] ?? null;
                 if ($topCrypto) {
@@ -287,7 +287,7 @@ class TrendAnalysisService
             }
 
             $prompt = "Based on this market data, provide a brief 2-3 sentence insight about the current trending market conditions and what it might indicate:\n\n{$context}";
-            
+
             $insight = $this->openai->generateCompletion($prompt, 100);
             return $insight ?? "Market showing mixed trends across multiple timeframes.";
         } catch (\Exception $e) {

@@ -42,7 +42,6 @@ class WhaleAlertService
 
             Cache::put($cacheKey, $alerts, 120); // 2 minutes cache
             return $alerts;
-
         } catch (\Exception $e) {
             Log::error('Whale alert error', ['symbol' => $symbol, 'error' => $e->getMessage()]);
             return ['error' => 'Unable to fetch whale activity'];
@@ -183,7 +182,7 @@ class WhaleAlertService
 
                 $clusters[$bucket]['count']++;
                 $clusters[$bucket]['total_value'] += $value;
-                
+
                 if ($side === 'SELL') {
                     $clusters[$bucket]['long_count']++;
                 } else {
@@ -259,7 +258,7 @@ class WhaleAlertService
             $spikes = [];
             foreach ($buckets as $minute => $volume) {
                 $ratio = $avgVolumePerMinute > 0 ? $volume / $avgVolumePerMinute : 0;
-                
+
                 if ($ratio > 3) {
                     $spikes[] = [
                         'minutes_ago' => $minute,

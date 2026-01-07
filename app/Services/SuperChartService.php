@@ -51,7 +51,6 @@ class SuperChartService
 
             Cache::put($cacheKey, $data, 120); // 2 minutes cache
             return $data;
-
         } catch (\Exception $e) {
             Log::error('SuperChart data error', ['symbol' => $symbol, 'error' => $e->getMessage()]);
             return ['error' => 'Unable to fetch derivatives data'];
@@ -65,7 +64,7 @@ class SuperChartService
     {
         try {
             $oi = $this->binance->getFuturesOpenInterest($symbol);
-            
+
             if (!$oi) {
                 return ['error' => 'OI data unavailable'];
             }
@@ -96,7 +95,7 @@ class SuperChartService
     {
         try {
             $funding = $this->binance->getFundingRate($symbol);
-            
+
             if (!$funding) {
                 return ['error' => 'Funding rate unavailable'];
             }
@@ -198,7 +197,7 @@ class SuperChartService
             }
 
             $liquidations = $response->json();
-            
+
             $longLiqs = 0;
             $shortLiqs = 0;
             $totalLiqValue = 0;

@@ -20,11 +20,36 @@ class RealSentimentService
      */
     public function analyzeSentiment(string $symbol): array
     {
-        $sources = [
-            'twitter' => $this->getTwitterSentiment($symbol),
-            'telegram' => $this->getTelegramSentiment($symbol),
-            'reddit' => $this->getRedditSentiment($symbol),
-        ];
+        // Check if at least one social media API is configured
+        $hasTwitterApi = !empty(env('TWITTER_BEARER_TOKEN')) && env('TWITTER_BEARER_TOKEN') !== 'your_twitter_bearer_token';
+        $hasRedditApi = !empty(env('REDDIT_CLIENT_ID')) && env('REDDIT_CLIENT_ID') !== 'your_reddit_client_id';
+        
+        // If no APIs configured, show upgrade message
+        if (!$hasTwitterApi && !$hasRedditApi) {
+            return [
+                'error' => true,
+                'message' => "🔒 *Premium Feature*\n\n" .
+                           "Real-time social sentiment analysis is currently being upgraded to provide accurate data from Twitter, Reddit, and Telegram.\n\n" .
+                           "Meanwhile, try these commands:\n" .
+                           "• `/analyze {$symbol}` - Technical analysis\n" .
+                           "• `/predict {$symbol}` - AI price prediction\n" .
+                           "• `/trends` - Top trending coins"
+            ];
+        }
+        
+        $sources = [];
+        
+        // Fetch from available sources
+        if ($hasTwitterApi) {
+            $sources['twitter'] = $this->getTwitterSentiment($symbol);
+        }
+        
+        if ($hasRedditApi) {
+            $sources['reddit'] = $this->getRedditSentiment($symbol);
+        }
+        
+        // Telegram doesn't require special API
+        $sources['telegram'] = $this->getTelegramSentiment($symbol);
 
         // Store sentiment data
         foreach ($sources as $source => $data) {
@@ -48,22 +73,47 @@ class RealSentimentService
     }
 
     /**
-     * Get Twitter sentiment (using API or web scraping)
+     * Get Twitter sentiment (using Twitter API v2)
      */
     private function getTwitterSentiment(string $symbol): ?array
     {
-        try {
-            // In production, use Twitter API v2 with bearer token
-            // For now, using simulated data structure
+        $bearerToken = env('TWITTER_BEARER_TOKEN');
+        
+        if (empty($bearerToken)) {
+            return null;
+        }
 
-            $tweets = $this->fetchTweetsForCoin($symbol);
+        try {
+            // Search for tweets about the symbol
+            $query = "{$symbol} OR #{$symbol} OR \${$symbol} -is:retweet lang:en";
+            
+            $response = Http::withHeaders([
+                'Authorization' => "Bearer {$bearerToken}",
+            ])->get('https://api.twitter.com/2/tweets/search/recent', [
+                'query' => $query,
+                'max_results' => 50,
+                'tweet.fields' => 'created_at,public_metrics,text',
+            ]);
+
+            if (!$response->successful()) {
+                Log::warning('Twitter API error', ['status' => $response->status(), 'body' => $response->body()]);
+                return null;
+            }
+
+            $data = $response->json();
+            $tweets = $data['data'] ?? [];
 
             if (empty($tweets)) {
                 return null;
             }
 
+            // Extract tweet texts
+            $tweetTexts = array_map(fn($tweet) => $tweet['text'], $tweets);
+            // Extract tweet texts
+            $tweetTexts = array_map(fn($tweet) => $tweet['text'], $tweets);
+
             // Use OpenAI to analyze sentiment
-            $analysis = $this->openai->analyzeSentimentBatch($tweets);
+            $analysis = $this->openai->analyzeSentimentBatch($tweetTexts);
 
             return [
                 'score' => $analysis['average_score'],
@@ -72,11 +122,11 @@ class RealSentimentService
                 'negative' => $analysis['negative_count'],
                 'neutral' => $analysis['neutral_count'],
                 'keywords' => $analysis['trending_keywords'],
-                'samples' => array_slice($tweets, 0, 5),
+                'samples' => array_slice($tweetTexts, 0, 5),
                 'volume_change' => $this->calculateVolumeChange($symbol, 'twitter'),
             ];
         } catch (\Exception $e) {
-            Log::error('Twitter sentiment analysis failed', ['error' => $e->getMessage()]);
+            Log::error('Twitter sentiment analysis failed', ['symbol' => $symbol, 'error' => $e->getMessage()]);
             return null;
         }
     }

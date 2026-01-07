@@ -17,14 +17,64 @@ class TelegramBotService
     }
 
     /**
+     * Escape Markdown special characters for Telegram
+     */
+    private function escapeMarkdown(string $text): string
+    {
+        // Escape special Markdown characters that aren't part of intended formatting
+        // But preserve intended formatting like *bold* and _italic_
+
+        // First, protect already formatted text by temporarily replacing it
+        $text = preg_replace_callback('/\*([^*]+)\*/', function ($matches) {
+            return '⚡BOLD⚡' . base64_encode($matches[1]) . '⚡ENDBOLD⚡';
+        }, $text);
+
+        $text = preg_replace_callback('/_([^_]+)_/', function ($matches) {
+            return '⚡ITALIC⚡' . base64_encode($matches[1]) . '⚡ENDITALIC⚡';
+        }, $text);
+
+        $text = preg_replace_callback('/`([^`]+)`/', function ($matches) {
+            return '⚡CODE⚡' . base64_encode($matches[1]) . '⚡ENDCODE⚡';
+        }, $text);
+
+        // Escape special characters in the remaining text
+        $text = str_replace(
+            ['\\', '_', '*', '[', ']', '(', ')'],
+            ['\\\\', '\\_', '\\*', '\\[', '\\]', '\\(', '\\)'],
+            $text
+        );
+
+        // Restore the protected formatting
+        $text = preg_replace_callback('/⚡BOLD⚡([^⚡]+)⚡ENDBOLD⚡/', function ($matches) {
+            return '*' . base64_decode($matches[1]) . '*';
+        }, $text);
+
+        $text = preg_replace_callback('/⚡ITALIC⚡([^⚡]+)⚡ENDITALIC⚡/', function ($matches) {
+            return '_' . base64_decode($matches[1]) . '_';
+        }, $text);
+
+        $text = preg_replace_callback('/⚡CODE⚡([^⚡]+)⚡ENDCODE⚡/', function ($matches) {
+            return '`' . base64_decode($matches[1]) . '`';
+        }, $text);
+
+        return $text;
+    }
+
+    /**
      * Send a text message to a user
      */
     public function sendMessage(int $chatId, string $text, array $replyMarkup = [], array $options = []): array
     {
+        // Escape Markdown if parse_mode is Markdown and not disabled
+        $parseMode = $options['parse_mode'] ?? 'Markdown';
+        if ($parseMode === 'Markdown') {
+            $text = $this->escapeMarkdown($text);
+        }
+
         $payload = array_merge([
             'chat_id' => $chatId,
             'text' => $text,
-            'parse_mode' => 'Markdown',
+            'parse_mode' => $parseMode,
         ], $options);
 
         // Add reply markup (inline keyboard) if provided

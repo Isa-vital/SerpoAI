@@ -28,7 +28,7 @@ class HeatmapService
 
         try {
             $tickers = $this->binance->getAllTickers();
-            
+
             if (empty($tickers)) {
                 return ['error' => 'Unable to fetch market data'];
             }
@@ -37,7 +37,7 @@ class HeatmapService
             $coins = [];
             foreach ($tickers as $ticker) {
                 $symbol = $ticker['symbol'] ?? '';
-                
+
                 // Only USDT pairs
                 if (!str_ends_with($symbol, 'USDT')) {
                     continue;
@@ -64,7 +64,7 @@ class HeatmapService
             }
 
             // Sort by volume (proxy for market cap)
-            usort($coins, function($a, $b) {
+            usort($coins, function ($a, $b) {
                 return $b['volume_24h'] <=> $a['volume_24h'];
             });
 
@@ -85,7 +85,6 @@ class HeatmapService
 
             Cache::put($cacheKey, $data, 180); // 3 minutes cache
             return $data;
-
         } catch (\Exception $e) {
             Log::error('Heatmap generation error', ['error' => $e->getMessage()]);
             return ['error' => 'Unable to generate heatmap'];
@@ -107,7 +106,7 @@ class HeatmapService
 
         foreach ($coins as $coin) {
             $change = $coin['change_24h'];
-            
+
             if ($change >= 10) {
                 $categories['strong_gainers'][] = $coin;
             } elseif ($change >= 3) {
@@ -165,7 +164,7 @@ class HeatmapService
         }
 
         $categorized = $heatmapData['categorized'] ?? [];
-        
+
         $gainersCount = ($categorized['strong_gainers']['count'] ?? 0) + ($categorized['gainers']['count'] ?? 0);
         $losersCount = ($categorized['strong_losers']['count'] ?? 0) + ($categorized['losers']['count'] ?? 0);
         $neutralCount = $categorized['neutral']['count'] ?? 0;

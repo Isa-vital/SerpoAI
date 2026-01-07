@@ -271,8 +271,18 @@ class BinanceAPIService
      */
     public function findSupportResistance(array $klines, int $lookback = 50): array
     {
+        if (empty($klines)) {
+            return [
+                'resistance' => [],
+                'support' => [],
+                'nearest_resistance' => null,
+                'nearest_support' => null,
+            ];
+        }
+
         $highs = array_map(fn($k) => floatval($k[2]), array_slice($klines, -$lookback));
         $lows = array_map(fn($k) => floatval($k[3]), array_slice($klines, -$lookback));
+        $currentPrice = floatval(end($klines)[4]); // Close price of last candle
 
         $resistance = [];
         $support = [];
@@ -297,9 +307,25 @@ class BinanceAPIService
             }
         }
 
+        // Find nearest resistance (above current price)
+        $nearestResistance = null;
+        $resistanceAbove = array_filter($resistance, fn($r) => $r > $currentPrice);
+        if (!empty($resistanceAbove)) {
+            $nearestResistance = min($resistanceAbove);
+        }
+
+        // Find nearest support (below current price)
+        $nearestSupport = null;
+        $supportBelow = array_filter($support, fn($s) => $s < $currentPrice);
+        if (!empty($supportBelow)) {
+            $nearestSupport = max($supportBelow);
+        }
+
         return [
             'resistance' => array_unique($resistance),
             'support' => array_unique($support),
+            'nearest_resistance' => $nearestResistance,
+            'nearest_support' => $nearestSupport,
         ];
     }
 }

@@ -284,9 +284,17 @@ class MarketDataService
      */
     public function generateTradingSignal(string $symbol): array
     {
+        // For SERPO, get fresh DEX data instead of stale database records
+        if ($symbol === 'SERPO') {
+            $dexData = $this->getSerpoPriceFromDex();
+            $currentPriceValue = $dexData ? $dexData['price'] : null;
+        } else {
+            $currentPrice = $this->getLatestMarketData($symbol);
+            $currentPriceValue = $currentPrice ? (float) $currentPrice->price : null;
+        }
+        
         $rsi = $this->calculateRSI($symbol);
         $macd = $this->calculateMACD($symbol);
-        $currentPrice = $this->getLatestMarketData($symbol);
 
         $signals = [];
         $score = 0;
@@ -316,12 +324,11 @@ class MarketDataService
         }
 
         // EMA Trend Analysis
-        if ($macd !== null && $currentPrice) {
-            $price = (float) $currentPrice->price;
-            if ($price > $macd['ema12'] && $macd['ema12'] > $macd['ema26']) {
+        if ($macd !== null && $currentPriceValue) {
+            if ($currentPriceValue > $macd['ema12'] && $macd['ema12'] > $macd['ema26']) {
                 $signals[] = '🟢 Strong Uptrend (Price > EMA12 > EMA26)';
                 $score += 1;
-            } elseif ($price < $macd['ema26']) {
+            } elseif ($currentPriceValue < $macd['ema26']) {
                 $signals[] = '🔴 Downtrend (Price < EMA26)';
                 $score -= 1;
             }
@@ -352,7 +359,7 @@ class MarketDataService
             'signals' => $signals,
             'rsi' => $rsi,
             'macd' => $macd,
-            'price' => $currentPrice ? (float) $currentPrice->price : null,
+            'price' => $currentPriceValue,
         ];
     }
 }

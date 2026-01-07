@@ -59,12 +59,12 @@ class PairAnalyticsService
         $message .= "💰 *Price Action*\n";
         $message .= "Current: \${$price}\n";
         $message .= "24h Change: {$changeEmoji} ";
-        
+
         // Format the change properly
         if ($changePercent != 0) {
             $sign = $changePercent > 0 ? '+' : '';
             $message .= "{$sign}{$changePercent}%";
-            
+
             // Only show absolute change if it's not zero and makes sense
             if ($market === 'CRYPTO' && $change != 0) {
                 $changeSign = $change > 0 ? '+' : '';
@@ -146,10 +146,10 @@ class PairAnalyticsService
         if (isset($analysis['support_resistance'])) {
             $sr = $analysis['support_resistance'];
             $message .= "🎯 *Key Levels*\n";
-            if ($sr['nearest_support']) {
+            if (isset($sr['nearest_support']) && $sr['nearest_support']) {
                 $message .= "Support: \${$sr['nearest_support']}\n";
             }
-            if ($sr['nearest_resistance']) {
+            if (isset($sr['nearest_resistance']) && $sr['nearest_resistance']) {
                 $message .= "Resistance: \${$sr['nearest_resistance']}\n";
             }
             $message .= "\n";

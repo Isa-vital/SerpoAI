@@ -115,7 +115,7 @@ class ChartService
     {
         try {
             $marketType = $this->marketData->detectMarketType($symbol);
-            
+
             $data = null;
             switch ($marketType) {
                 case 'crypto':
@@ -128,7 +128,7 @@ class ChartService
                     $data = $this->marketData->analyzeForexPair($symbol);
                     break;
             }
-            
+
             if (!$data || !isset($data['price'])) {
                 return ['error' => 'Unable to fetch market data'];
             }

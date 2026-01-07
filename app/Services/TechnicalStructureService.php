@@ -36,7 +36,7 @@ class TechnicalStructureService
             try {
                 // Get kline data for multiple timeframes
                 $klines = $this->getKlineData($symbol, $marketType);
-                
+
                 if (isset($klines['error'])) {
                     return $klines;
                 }
@@ -88,7 +88,7 @@ class TechnicalStructureService
         return Cache::remember($cacheKey, 180, function () use ($symbol, $marketType) {
             try {
                 $klines = $this->getKlineData($symbol, $marketType);
-                
+
                 if (isset($klines['error'])) {
                     return $klines;
                 }
@@ -135,7 +135,7 @@ class TechnicalStructureService
         return Cache::remember($cacheKey, 300, function () use ($symbol, $marketType) {
             try {
                 $klines = $this->getKlineData($symbol, $marketType);
-                
+
                 if (isset($klines['error'])) {
                     return $klines;
                 }
@@ -178,7 +178,7 @@ class TechnicalStructureService
         return Cache::remember($cacheKey, 300, function () use ($symbol, $marketType) {
             try {
                 $klines = $this->getKlineData($symbol, $marketType);
-                
+
                 if (isset($klines['error'])) {
                     return $klines;
                 }
@@ -189,7 +189,7 @@ class TechnicalStructureService
                     if (isset($klines[$tf])) {
                         // Check 20/50 cross
                         $cross2050 = $this->detectMACross($klines[$tf], 20, 50);
-                        
+
                         // Check 50/200 cross (Golden/Death Cross)
                         $cross50200 = $this->detectMACross($klines[$tf], 50, 200);
 
@@ -501,7 +501,7 @@ class TechnicalStructureService
 
         // Bullish divergence: lower low in price, higher low in RSI
         $bullish = $this->checkBullishDivergence($recentPrices, $recentRSI);
-        
+
         // Bearish divergence: higher high in price, lower high in RSI
         $bearish = $this->checkBearishDivergence($recentPrices, $recentRSI);
 
@@ -520,7 +520,7 @@ class TechnicalStructureService
     {
         $priceMin1 = min(array_slice($prices, 0, 10));
         $priceMin2 = min(array_slice($prices, 10));
-        
+
         $rsiMin1 = min(array_slice($rsi, 0, 10));
         $rsiMin2 = min(array_slice($rsi, 10));
 
@@ -531,7 +531,7 @@ class TechnicalStructureService
     {
         $priceMax1 = max(array_slice($prices, 0, 10));
         $priceMax2 = max(array_slice($prices, 10));
-        
+
         $rsiMax1 = max(array_slice($rsi, 0, 10));
         $rsiMax2 = max(array_slice($rsi, 10));
 
@@ -577,7 +577,14 @@ class TechnicalStructureService
     private function detectMACross(array $klines, int $fastPeriod, int $slowPeriod): array
     {
         if (count($klines) < $slowPeriod + 5) {
-            return ['status' => 'Insufficient data'];
+            return [
+                'status' => 'Insufficient data',
+                'ma_fast' => null,
+                'ma_slow' => null,
+                'cross_type' => null,
+                'is_bullish' => null,
+                'periods' => "{$fastPeriod}/{$slowPeriod}",
+            ];
         }
 
         $maFast = $this->binance->calculateMA($klines, $fastPeriod);
@@ -632,7 +639,7 @@ class TechnicalStructureService
         $bearishCount = 0;
 
         foreach ($crosses as $tfCrosses) {
-            if (isset($tfCrosses['ma50_200']['is_bullish'])) {
+            if (isset($tfCrosses['ma50_200']['is_bullish']) && $tfCrosses['ma50_200']['is_bullish'] !== null) {
                 $tfCrosses['ma50_200']['is_bullish'] ? $bullishCount++ : $bearishCount++;
             }
         }

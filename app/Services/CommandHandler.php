@@ -111,7 +111,7 @@ class CommandHandler
             '/price' => $this->handlePrice($chatId, $params),
             '/chart' => $this->handleChart($chatId, $params),
             '/signals' => $this->handleSignals($chatId),
-            '/sentiment' => $this->handleSentiment($chatId),
+            '/sentiment' => $this->handleSentiment($chatId, $params),
 
             // NEW: AI-Powered Features
             '/aisentiment' => $this->handleAISentiment($chatId, $params),
@@ -210,14 +210,14 @@ class CommandHandler
 
         $message .= "*🌍 MULTI-MARKET ANALYSIS*\n";
         $message .= "/scan - Deep scan across ALL markets\n";
-        $message .= "  • Crypto (Spot & Futures)\n";
-        $message .= "  • Stocks (NYSE, NASDAQ)\n";
-        $message .= "  • Forex (Major Pairs)\n\n";
+        $message .= "  • Crypto: 2000+ pairs (all quote currencies)\n";
+        $message .= "  • Stocks: All NYSE, NASDAQ symbols\n";
+        $message .= "  • Forex: 150+ pairs + Gold/Silver\n\n";
 
         $message .= "/analyze [symbol] - Universal Analytics\n";
-        $message .= "  • Crypto: `BTCUSDT`, `SERPO`\n";
-        $message .= "  • Stocks: `AAPL`, `TSLA`, `SPY`\n";
-        $message .= "  • Forex: `EURUSD`, `GBPJPY`\n\n";
+        $message .= "  • Crypto: `BTCUSDT`, `ETHBTC`, `BNBBUSD`\n";
+        $message .= "  • Stocks: `AAPL`, `TSLA`, `NVDA`\n";
+        $message .= "  • Forex: `EURUSD`, `XAUUSD` (Gold)\n\n";
 
         $message .= "/radar - Top movers & market radar\n\n";
 
@@ -781,32 +781,64 @@ class CommandHandler
     /**
      * Handle /sentiment command
      */
-    private function handleSentiment(int $chatId)
+    private function handleSentiment(int $chatId, array $params = [])
     {
-        $this->telegram->sendMessage($chatId, "🔍 Analyzing market sentiment...");
+        // Get symbol from params or default to BTC
+        $symbol = !empty($params) ? strtoupper($params[0]) : 'BTC';
+        
+        // Map common symbols to full names for API
+        $symbolMap = [
+            'BTC' => 'Bitcoin',
+            'ETH' => 'Ethereum',
+            'SERPO' => 'Serpo',
+            'XRP' => 'Ripple',
+            'BNB' => 'Binance Coin',
+            'SOL' => 'Solana',
+            'ADA' => 'Cardano',
+            'DOGE' => 'Dogecoin',
+            'MATIC' => 'Polygon',
+            'DOT' => 'Polkadot',
+        ];
+        
+        $coinName = $symbolMap[$symbol] ?? $symbol;
+        
+        $this->telegram->sendMessage($chatId, "🔍 Analyzing {$symbol} sentiment...");
 
-        $sentiment = $this->sentiment->getCryptoSentiment('bitcoin');
+        $sentiment = $this->sentiment->getCryptoSentiment($coinName);
 
-        $message = "📊 *Market Sentiment Analysis*\n\n";
+        $message = "📊 *{$symbol} SENTIMENT*\n";
+        $message .= "Based on {$coinName} news & social media\n\n";
         $message .= $sentiment['emoji'] . " *" . $sentiment['label'] . "*\n";
-        $message .= "Sentiment Score: " . $sentiment['score'] . "/100\n\n";
+        $message .= "Overall Score: *" . $sentiment['score'] . "/100*\n\n";
 
+        $message .= "📈 *Market Mood*\n";
         if (!empty($sentiment['positive_mentions']) || !empty($sentiment['negative_mentions'])) {
-            $message .= "Positive Mentions: " . ($sentiment['positive_mentions'] ?? 0) . "\n";
-            $message .= "Negative Mentions: " . ($sentiment['negative_mentions'] ?? 0) . "\n\n";
+            $positive = $sentiment['positive_mentions'] ?? 0;
+            $negative = $sentiment['negative_mentions'] ?? 0;
+            $total = $sentiment['total_mentions'] ?? ($positive + $negative);
+            
+            $message .= "✅ Positive signals: {$positive}\n";
+            $message .= "❌ Negative signals: {$negative}\n";
+            
+            if ($total > 0) {
+                $positivePercent = round(($positive / $total) * 100);
+                $message .= "📊 Optimism: {$positivePercent}%\n";
+            }
+            $message .= "\n";
         }
 
         if (!empty($sentiment['sources'])) {
-            $message .= "*Recent News:*\n";
+            $message .= "📰 *Latest News:*\n";
             foreach ($sentiment['sources'] as $source) {
-                $title = strlen($source['title']) > 60 ? substr($source['title'], 0, 60) . '...' : $source['title'];
-                $message .= "• " . $title . "\n";
+                $title = strlen($source['title']) > 65 ? substr($source['title'], 0, 65) . '...' : $source['title'];
+                $url = $source['url'] ?? '#';
+                $sourceName = $source['source'] ?? 'Source';
+                $message .= "• [{$title}]({$url})\n  _via {$sourceName}_\n";
             }
+            $message .= "\n";
         }
 
-        if (isset($sentiment['note'])) {
-            $message .= "\n_" . $sentiment['note'] . "_";
-        }
+        $message .= "_Sentiment updates every 30 minutes from crypto news sources_";
 
         $keyboard = [
             'inline_keyboard' => $this->getContextualKeyboard('sentiment')
@@ -1166,14 +1198,24 @@ class CommandHandler
 
             $message = "🎯 *MARKET RADAR*\n\n";
 
+            // Access crypto data from the scan
+            $crypto = $scan['crypto'] ?? [];
+            $topGainers = $crypto['top_gainers'] ?? [];
+            $topLosers = $crypto['top_losers'] ?? [];
+
+            if (empty($topGainers) && empty($topLosers)) {
+                $this->telegram->sendMessage($chatId, "❌ No market data available. Please try again.");
+                return;
+            }
+
             $message .= "🚀 *Top Gainers (24h)*\n";
-            foreach (array_slice($scan['top_gainers'], 0, 5) as $idx => $coin) {
+            foreach (array_slice($topGainers, 0, 5) as $idx => $coin) {
                 $message .= ($idx + 1) . ". {$coin['symbol']}: *+{$coin['change_percent']}%*\n";
                 $message .= "   💰 \${$coin['price']} | Vol: {$coin['volume']}\n";
             }
 
             $message .= "\n📉 *Top Losers (24h)*\n";
-            foreach (array_slice($scan['top_losers'], 0, 5) as $idx => $coin) {
+            foreach (array_slice($topLosers, 0, 5) as $idx => $coin) {
                 $message .= ($idx + 1) . ". {$coin['symbol']}: *{$coin['change_percent']}%*\n";
                 $message .= "   💰 \${$coin['price']} | Vol: {$coin['volume']}\n";
             }
@@ -1342,6 +1384,13 @@ class CommandHandler
 
         try {
             $sentiment = $this->realSentiment->analyzeSentiment($symbol);
+
+            // Check if it's an error response about missing APIs
+            if (isset($sentiment['error']) && $sentiment['error'] === true) {
+                $this->telegram->sendMessage($chatId, $sentiment['message']);
+                return;
+            }
+
             $message = $this->realSentiment->formatSentimentAnalysis($sentiment);
             $keyboard = [
                 'inline_keyboard' => $this->getContextualKeyboard('sentiment')
@@ -1367,9 +1416,35 @@ class CommandHandler
         $this->telegram->sendMessage($chatId, "🔮 Generating AI prediction...");
 
         try {
-            $marketData = $this->marketData->getSerpoPriceFromDex();
+            // Get market data based on symbol
+            if ($symbol === 'SERPO') {
+                $marketData = $this->marketData->getSerpoPriceFromDex();
+            } else {
+                // For other coins, use Binance
+                $binanceSymbol = $symbol;
+                if (!str_contains($symbol, 'USDT') && !str_contains($symbol, 'BTC')) {
+                    $binanceSymbol .= 'USDT';
+                }
+
+                $ticker = app(\App\Services\BinanceAPIService::class)->get24hTicker($binanceSymbol);
+
+                if (!$ticker) {
+                    $this->telegram->sendMessage($chatId, "❌ Could not fetch market data for {$symbol}. Please check the symbol.");
+                    return;
+                }
+
+                $marketData = [
+                    'symbol' => $symbol,
+                    'price' => (float) $ticker['lastPrice'],
+                    'price_change_24h' => (float) $ticker['priceChangePercent'],
+                    'volume_24h' => (float) $ticker['volume'] * (float) $ticker['lastPrice'],
+                    'high_24h' => (float) $ticker['highPrice'],
+                    'low_24h' => (float) $ticker['lowPrice'],
+                ];
+            }
+
             $sentimentData = \App\Models\SentimentData::getAggregatedSentiment($symbol);
-            $prediction = $this->openai->generateMarketPrediction($marketData, $sentimentData);
+            $prediction = $this->openai->generateMarketPrediction($symbol, $marketData, $sentimentData);
 
             if (isset($prediction['error'])) {
                 $this->telegram->sendMessage($chatId, "❌ " . $prediction['error']);
@@ -1569,40 +1644,56 @@ class CommandHandler
      */
     private function handleTrends(int $chatId, array $params)
     {
-        $days = !empty($params) ? (int)$params[0] : 7;
-        $days = min(max($days, 1), 30); // 1-30 days
+        $this->telegram->sendChatAction($chatId, 'typing');
+        $this->telegram->sendMessage($chatId, "📈 Scanning market trends...");
 
         try {
-            $holderTrend = $this->analytics->getHolderGrowthTrend('SERPO', $days);
-            $volumeTrend = $this->analytics->getVolumeTrend('SERPO', $days);
-
-            $message = "📈 *MARKET TRENDS ({$days} days)*\n\n";
-
-            if (!empty($holderTrend)) {
-                $message .= "👥 *Holder Growth:*\n";
-                foreach (array_slice($holderTrend, -5) as $data) {
-                    $message .= "{$data['date']}: {$data['holders']} (+{$data['new_holders']})\n";
-                }
-                $message .= "\n";
+            // Get trending coins from multiple sources
+            $binanceData = $this->binance->getAllTickers();
+            
+            // Sort by 24h change
+            usort($binanceData, fn($a, $b) => floatval($b['priceChangePercent']) <=> floatval($a['priceChangePercent']));
+            
+            // Filter USDT pairs
+            $usdtPairs = array_filter($binanceData, fn($t) => str_ends_with($t['symbol'], 'USDT'));
+            
+            $topGainers = array_slice($usdtPairs, 0, 5);
+            $topLosers = array_slice(array_reverse($usdtPairs), 0, 5);
+            
+            $message = "📈 *MARKET TRENDS (24H)*\n\n";
+            
+            $message .= "🚀 *Top Gainers*\n";
+            foreach ($topGainers as $idx => $coin) {
+                $symbol = str_replace('USDT', '', $coin['symbol']);
+                $change = number_format($coin['priceChangePercent'], 2);
+                $price = number_format($coin['lastPrice'], 8);
+                $volume = number_format($coin['quoteVolume'] / 1000000, 2);
+                $message .= ($idx + 1) . ". *{$symbol}* +{$change}%\n";
+                $message .= "   💰 \${$price} | Vol: \${$volume}M\n";
             }
-
-            if (!empty($volumeTrend)) {
-                $message .= "💰 *Trading Volume:*\n";
-                foreach (array_slice($volumeTrend, -5) as $data) {
-                    $message .= "{$data['date']}: $" . number_format($data['volume'], 0) . "\n";
-                }
+            
+            $message .= "\n📉 *Top Losers*\n";
+            foreach ($topLosers as $idx => $coin) {
+                $symbol = str_replace('USDT', '', $coin['symbol']);
+                $change = number_format($coin['priceChangePercent'], 2);
+                $price = number_format($coin['lastPrice'], 8);
+                $volume = number_format($coin['quoteVolume'] / 1000000, 2);
+                $message .= ($idx + 1) . ". *{$symbol}* {$change}%\n";
+                $message .= "   💰 \${$price} | Vol: \${$volume}M\n";
             }
+            
+            $message .= "\n💡 Use `/analyze [symbol]` for detailed analysis";
 
             $keyboard = [
-                'inline_keyboard' => $this->getContextualKeyboard('reports')
+                'inline_keyboard' => $this->getContextualKeyboard('trends')
             ];
             $this->telegram->sendMessage($chatId, $message, $keyboard);
         } catch (\Exception $e) {
             Log::error('Trends command error', ['error' => $e->getMessage()]);
             $keyboard = [
-                'inline_keyboard' => $this->getContextualKeyboard('reports')
+                'inline_keyboard' => $this->getContextualKeyboard('trends')
             ];
-            $this->telegram->sendMessage($chatId, "❌ Error loading trends.", $keyboard);
+            $this->telegram->sendMessage($chatId, "❌ Error loading trends. Please try again.", $keyboard);
         }
     }
 
@@ -1925,13 +2016,13 @@ class CommandHandler
         $message .= "🔺 *Resistance Levels*\n";
         foreach ($analysis['resistance_levels'] as $idx => $level) {
             $dist = (($level - $analysis['current_price']) / $analysis['current_price']) * 100;
-            $message .= ($idx + 1) . ". \${$level} (+".round($dist, 2)."%)\n";
+            $message .= ($idx + 1) . ". \${$level} (+" . round($dist, 2) . "%)\n";
         }
 
         $message .= "\n🔻 *Support Levels*\n";
         foreach ($analysis['support_levels'] as $idx => $level) {
             $dist = (($analysis['current_price'] - $level) / $analysis['current_price']) * 100;
-            $message .= ($idx + 1) . ". \${$level} (-".round($dist, 2)."%)\n";
+            $message .= ($idx + 1) . ". \${$level} (-" . round($dist, 2) . "%)\n";
         }
 
         if (!empty($analysis['key_levels']['resistance']) || !empty($analysis['key_levels']['support'])) {
@@ -1962,14 +2053,14 @@ class CommandHandler
         $message .= "Price: \${$analysis['current_price']}\n\n";
 
         foreach ($analysis['rsi_data'] as $tf => $data) {
-            $emoji = match($data['status']) {
+            $emoji = match ($data['status']) {
                 'Overbought' => '🔴',
                 'Oversold' => '🟢',
                 'Strong' => '🟡',
                 'Weak' => '🟠',
                 default => '⚪'
             };
-            
+
             $message .= "{$emoji} *{$tf}*: {$data['value']} - {$data['status']}\n";
             $message .= "   {$data['signal']}\n\n";
         }
@@ -1998,7 +2089,7 @@ class CommandHandler
             $message .= "Market price and RSI are aligned\n";
         } else {
             $message .= "⚠️ *Divergences Detected*\n\n";
-            
+
             foreach ($analysis['divergences'] as $tf => $div) {
                 $emoji = $div['type'] === 'Bullish' ? '🟢' : '🔴';
                 $message .= "{$emoji} *{$tf}*: {$div['type']} Divergence\n";
@@ -2041,12 +2132,12 @@ class CommandHandler
         $message .= "📊 *Current Status*\n\n";
         foreach ($analysis['crosses'] as $tf => $crosses) {
             $message .= "*{$tf}*\n";
-            
+
             // 20/50 MA
             $ma2050 = $crosses['ma20_50'];
             $status2050 = $ma2050['is_bullish'] ? '🟢 Bullish' : '🔴 Bearish';
             $message .= "  MA20/50: {$status2050}\n";
-            
+
             // 50/200 MA
             $ma50200 = $crosses['ma50_200'];
             $status50200 = $ma50200['is_bullish'] ? '🟢 Bullish' : '🔴 Bearish';
@@ -2175,7 +2266,6 @@ class CommandHandler
             $message .= "_💡 {$flow['flow']['note']}_\n\n";
 
             $message .= "💵 *Total Volume*: \$" . number_format($flow['total_volume'], 0);
-
         } elseif ($flow['market_type'] === 'stock') {
             $message .= "📊 *Volume Analysis*\n";
             $message .= "Current: " . number_format($flow['volume']['current']) . "\n";
@@ -2189,7 +2279,6 @@ class CommandHandler
             $message .= "_💡 {$flow['pressure']['interpretation']}_\n\n";
 
             $message .= "📈 Price Change: " . ($flow['price_change_24h'] > 0 ? '+' : '') . number_format($flow['price_change_24h'], 2) . "%";
-
         } elseif ($flow['market_type'] === 'forex') {
             $message .= "📊 *Momentum Analysis*\n";
             $message .= "Direction: {$flow['momentum']['direction']}\n";
@@ -2204,7 +2293,7 @@ class CommandHandler
     private function formatOpenInterest(array $oi): string
     {
         $signal = $oi['signal'];
-        
+
         $message = "📊 *OPEN INTEREST PULSE*\n\n";
         $message .= "🪙 *{$oi['symbol']}*\n";
         $message .= "━━━━━━━━━━━━━━━━━━━━\n\n";
@@ -2212,13 +2301,13 @@ class CommandHandler
         $message .= "📈 *Open Interest*\n";
         $message .= "Contracts: " . number_format($oi['open_interest']['contracts'], 0) . "\n";
         $message .= "Value: \$" . number_format($oi['open_interest']['value_usd'], 0) . "\n";
-        $message .= "24h Change: " . ($oi['open_interest']['change_24h_percent'] > 0 ? '+' : '') . 
-                    number_format($oi['open_interest']['change_24h_percent'], 2) . "%\n\n";
+        $message .= "24h Change: " . ($oi['open_interest']['change_24h_percent'] > 0 ? '+' : '') .
+            number_format($oi['open_interest']['change_24h_percent'], 2) . "%\n\n";
 
         $message .= "💰 *Price*\n";
         $message .= "Current: \$" . number_format($oi['price']['current'], 2) . "\n";
-        $message .= "24h Change: " . ($oi['price']['change_24h_percent'] > 0 ? '+' : '') . 
-                    number_format($oi['price']['change_24h_percent'], 2) . "%\n\n";
+        $message .= "24h Change: " . ($oi['price']['change_24h_percent'] > 0 ? '+' : '') .
+            number_format($oi['price']['change_24h_percent'], 2) . "%\n\n";
 
         $message .= "━━━━━━━━━━━━━━━━━━━━\n";
         $message .= "{$signal['emoji']} *{$signal['signal']}*\n\n";
@@ -2230,14 +2319,14 @@ class CommandHandler
     private function formatFundingRates(array $rates): string
     {
         $analysis = $rates['analysis'];
-        
+
         $message = "⏰ *FUNDING RATES WATCH*\n\n";
         $message .= "🪙 *{$rates['symbol']}*\n";
         $message .= "━━━━━━━━━━━━━━━━━━━━\n\n";
 
         $message .= "💸 *Current Funding Rate*\n";
-        $message .= "Rate: " . ($rates['current_rate_percent'] > 0 ? '+' : '') . 
-                    number_format($rates['current_rate_percent'], 4) . "%\n";
+        $message .= "Rate: " . ($rates['current_rate_percent'] > 0 ? '+' : '') .
+            number_format($rates['current_rate_percent'], 4) . "%\n";
         $message .= "Next Funding: " . ($rates['next_funding_time'] ?? 'N/A') . "\n\n";
 
         $message .= "📊 *Historical Average*\n";
@@ -2271,7 +2360,7 @@ class CommandHandler
 
         try {
             $trends = $this->trendAnalysis->getTrendLeaders();
-            
+
             if (isset($trends['error'])) {
                 $keyboard = [
                     'inline_keyboard' => $this->getContextualKeyboard('trends')
@@ -2381,7 +2470,7 @@ class CommandHandler
         $message .= "━━━━━━━━━━━━━━━━━━━━\n\n";
 
         $message .= "🎯 *Available Platforms*\n\n";
-        
+
         foreach ($hub['platforms'] as $idx => $platform) {
             $message .= ($idx + 1) . ". *{$platform['name']}*\n";
             $message .= "   📊 Type: {$platform['type']}\n";
@@ -2392,7 +2481,7 @@ class CommandHandler
 
         $message .= "━━━━━━━━━━━━━━━━━━━━\n";
         $message .= "📚 *How to Get Started*\n\n";
-        
+
         $steps = $hub['how_to_connect'];
         foreach ($steps as $key => $step) {
             if ($key !== 'important') {
@@ -2497,7 +2586,7 @@ class CommandHandler
         $analysis = $this->chartService->getQuickAnalysis($symbol);
 
         $message = "📊 *Live Chart - {$symbol}*\n\n";
-        
+
         if (!isset($analysis['error'])) {
             $message .= "{$analysis['emoji']} *Trend:* {$analysis['trend']}\n";
             $message .= "💰 *Price:* \${$analysis['price']}\n";
@@ -2574,7 +2663,7 @@ class CommandHandler
         }
 
         $symbol = strtoupper($params[0]);
-        
+
         $this->telegram->sendMessage($chatId, "🔥 Loading derivatives data for {$symbol}...");
 
         $data = $this->superChart->getSuperChartData($symbol);
@@ -2784,7 +2873,7 @@ class CommandHandler
         }
 
         $symbol = strtoupper($params[0]);
-        
+
         $this->telegram->sendMessage($chatId, "🐋 Scanning whale activity for {$symbol}...");
 
         $alerts = $this->whaleAlert->getWhaleAlerts($symbol);
@@ -2828,11 +2917,11 @@ class CommandHandler
             $message .= "━━━━━━━━━━━━━━━━━━━━\n";
             $message .= "{$liq['emoji']} *Liquidation Clusters*\n";
             $message .= "⚡ Total Liquidations: {$liq['total_liquidations']}\n";
-            
+
             if ($liq['warning']) {
                 $message .= "⚠️ {$liq['warning']}\n";
             }
-            
+
             if (!empty($liq['clusters'])) {
                 $message .= "\n📊 *Top Liquidation Zones:*\n";
                 foreach (array_slice($liq['clusters'], 0, 3) as $cluster) {
@@ -2849,7 +2938,7 @@ class CommandHandler
             $message .= "━━━━━━━━━━━━━━━━━━━━\n";
             $message .= "{$volume['emoji']} *Volume Spikes*\n";
             $message .= "📊 Status: {$volume['status']}\n";
-            
+
             if (!empty($volume['spikes'])) {
                 $message .= "\n⚡ *Recent Spikes:*\n";
                 foreach (array_slice($volume['spikes'], 0, 3) as $spike) {
