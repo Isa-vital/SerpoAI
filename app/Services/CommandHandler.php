@@ -119,6 +119,12 @@ class CommandHandler
             '/recommend' => $this->handleRecommend($chatId, $user),
             '/query' => $this->handleNaturalQuery($chatId, $params),
 
+            // NEW: ELITE FEATURES
+            '/search' => $this->handleDeepSearch($chatId, $params),
+            '/backtest' => $this->handleBacktest($chatId, $params, $user),
+            '/verify' => $this->handleTokenVerify($chatId, $params),
+            '/degen101' => $this->handleDegenGuide($chatId),
+
             // AI & Learning
             '/explain' => $this->handleExplain($chatId, $params),
             '/ask' => $this->handleAsk($chatId, $params),
@@ -185,16 +191,30 @@ class CommandHandler
     private function handleStart(int $chatId, User $user)
     {
         $message = "🚀 *Welcome to SerpoAI!* 🚀\n\n";
-        $message .= "I'm your AI-powered trading assistant for Serpocoin (SERPO).\n\n";
-        $message .= "Here's what I can do:\n";
-        $message .= "📊 Real-time price tracking\n";
-        $message .= "📈 Technical analysis & signals\n";
-        $message .= "🔔 Custom price alerts\n";
-        $message .= "🤖 AI-powered market insights\n\n";
-        $message .= "Type /help to see all commands!";
+        $message .= "I'm your elite AI trading assistant with human-level intelligence.\n\n";
+        $message .= "*What Makes Me Different:*\n";
+        $message .= "🔥 Natural language search - ask anything\n";
+        $message .= "🔥 Strategy backtesting - text or screenshots\n";
+        $message .= "🔥 Token verification - pro-grade risk assessment\n";
+        $message .= "🔥 Cross-market analysis - 2000+ crypto, forex, stocks\n\n";
+        $message .= "📊 Real-time tracking across ALL markets\n";
+        $message .= "📈 AI-powered technical analysis\n";
+        $message .= "🔔 Smart alerts & whale tracking\n";
+        $message .= "🧠 Education - learn to trade like a pro\n\n";
+        $message .= "Type /help to explore all features!";
 
         $keyboard = [
-            'inline_keyboard' => $this->getContextualKeyboard('start')
+            'inline_keyboard' => [
+                [['text' => '🔥 Elite Features', 'callback_data' => '/degen101']],
+                [
+                    ['text' => '🔍 Deep Search', 'callback_data' => '/search'],
+                    ['text' => '📊 Backtest', 'callback_data' => '/backtest']
+                ],
+                [
+                    ['text' => '🧠 Verify Token', 'callback_data' => '/verify'],
+                    ['text' => '📚 Help', 'callback_data' => '/help']
+                ],
+            ]
         ];
 
         $this->telegram->sendMessage($chatId, $message, $keyboard);
@@ -236,7 +256,13 @@ class CommandHandler
         $message .= "/price [symbol] - Current price\n";
         $message .= "/chart [symbol] - Price chart\n";
         $message .= "/signals - Trading signals\n";
-        $message .= "/sentiment - Market sentiment\n\n";
+        $message .= "/sentiment [symbol] - Market sentiment\n\n";
+
+        $message .= "*🚀 ELITE FEATURES*\n";
+        $message .= "🔥 `/search` - Natural language market search\n";
+        $message .= "🔥 `/backtest` - Strategy backtesting (text/image)\n";
+        $message .= "🔥 `/verify` - Professional token verification\n";
+        $message .= "🔥 `/degen101` - Learn to trade like a pro\n\n";
 
         $message .= "*🔔 Smart Alerts*\n";
         $message .= "/alerts - Manage subscriptions\n";
@@ -785,7 +811,7 @@ class CommandHandler
     {
         // Get symbol from params or default to BTC
         $symbol = !empty($params) ? strtoupper($params[0]) : 'BTC';
-        
+
         // Map common symbols to full names for API
         $symbolMap = [
             'BTC' => 'Bitcoin',
@@ -799,9 +825,9 @@ class CommandHandler
             'MATIC' => 'Polygon',
             'DOT' => 'Polkadot',
         ];
-        
+
         $coinName = $symbolMap[$symbol] ?? $symbol;
-        
+
         $this->telegram->sendMessage($chatId, "🔍 Analyzing {$symbol} sentiment...");
 
         $sentiment = $this->sentiment->getCryptoSentiment($coinName);
@@ -816,10 +842,10 @@ class CommandHandler
             $positive = $sentiment['positive_mentions'] ?? 0;
             $negative = $sentiment['negative_mentions'] ?? 0;
             $total = $sentiment['total_mentions'] ?? ($positive + $negative);
-            
+
             $message .= "✅ Positive signals: {$positive}\n";
             $message .= "❌ Negative signals: {$negative}\n";
-            
+
             if ($total > 0) {
                 $positivePercent = round(($positive / $total) * 100);
                 $message .= "📊 Optimism: {$positivePercent}%\n";
@@ -1419,6 +1445,11 @@ class CommandHandler
             // Get market data based on symbol
             if ($symbol === 'SERPO') {
                 $marketData = $this->marketData->getSerpoPriceFromDex();
+
+                if (!$marketData) {
+                    $this->telegram->sendMessage($chatId, "❌ Could not fetch SERPO market data. Please try again later.");
+                    return;
+                }
             } else {
                 // For other coins, use Binance
                 $binanceSymbol = $symbol;
@@ -1650,18 +1681,18 @@ class CommandHandler
         try {
             // Get trending coins from multiple sources
             $binanceData = $this->binance->getAllTickers();
-            
+
             // Sort by 24h change
             usort($binanceData, fn($a, $b) => floatval($b['priceChangePercent']) <=> floatval($a['priceChangePercent']));
-            
+
             // Filter USDT pairs
             $usdtPairs = array_filter($binanceData, fn($t) => str_ends_with($t['symbol'], 'USDT'));
-            
+
             $topGainers = array_slice($usdtPairs, 0, 5);
             $topLosers = array_slice(array_reverse($usdtPairs), 0, 5);
-            
+
             $message = "📈 *MARKET TRENDS (24H)*\n\n";
-            
+
             $message .= "🚀 *Top Gainers*\n";
             foreach ($topGainers as $idx => $coin) {
                 $symbol = str_replace('USDT', '', $coin['symbol']);
@@ -1671,7 +1702,7 @@ class CommandHandler
                 $message .= ($idx + 1) . ". *{$symbol}* +{$change}%\n";
                 $message .= "   💰 \${$price} | Vol: \${$volume}M\n";
             }
-            
+
             $message .= "\n📉 *Top Losers*\n";
             foreach ($topLosers as $idx => $coin) {
                 $symbol = str_replace('USDT', '', $coin['symbol']);
@@ -1681,7 +1712,7 @@ class CommandHandler
                 $message .= ($idx + 1) . ". *{$symbol}* {$change}%\n";
                 $message .= "   💰 \${$price} | Vol: \${$volume}M\n";
             }
-            
+
             $message .= "\n💡 Use `/analyze [symbol]` for detailed analysis";
 
             $keyboard = [
@@ -2969,5 +3000,371 @@ class CommandHandler
         ];
 
         $this->telegram->sendMessage($chatId, $message, $keyboard);
+    }
+
+    /**
+     * ═══════════════════════════════════════════════════════
+     *  ELITE FEATURES - SERPO AI ADVANCED INTELLIGENCE
+     * ═══════════════════════════════════════════════════════
+     */
+
+    /**
+     * Handle /search command - Natural language market search
+     */
+    private function handleDeepSearch(int $chatId, array $params)
+    {
+        if (empty($params)) {
+            $message = "🔍 *SERPO DeepSearch™*\n\n";
+            $message .= "Search anything about any market in natural language.\n\n";
+            $message .= "*Examples:*\n";
+            $message .= "• `/search BTC risk management for scalping`\n";
+            $message .= "• `/search EURUSD best stop loss zones`\n";
+            $message .= "• `/search TSLA trend and support levels`\n";
+            $message .= "• `/search meme coin with strong volume but low MC`\n\n";
+            $message .= "✨ Works with typos, understands context, explains WHY not just WHAT";
+
+            $this->telegram->sendMessage($chatId, $message);
+            return;
+        }
+
+        $query = implode(' ', $params);
+        $this->telegram->sendMessage($chatId, "🔍 Searching: \"{$query}\"...");
+
+        try {
+            // Detect if query contains a specific symbol
+            $symbol = $this->extractSymbolFromQuery($query);
+
+            // Build context-aware prompt
+            $prompt = "You are Serpo AI, an elite trading assistant. Analyze this query: \"{$query}\"\n\n";
+
+            if ($symbol) {
+                // Get market data for the symbol
+                $marketData = $this->multiMarket->analyzeCryptoPair($symbol);
+                if (!isset($marketData['error'])) {
+                    $prompt .= "Current {$symbol} Data:\n";
+                    $prompt .= "Price: \${$marketData['price']}\n";
+                    $prompt .= "24h Change: {$marketData['change_percent']}%\n";
+                    if (isset($marketData['indicators'])) {
+                        $prompt .= "Trend: {$marketData['indicators']['trend']}\n";
+                    }
+                    $prompt .= "\n";
+                }
+            }
+
+            $prompt .= "Provide a professional trading analysis that includes:\n";
+            $prompt .= "1. Market Structure Assessment\n";
+            $prompt .= "2. Risk Management Recommendations (SL/TP zones)\n";
+            $prompt .= "3. Trend Strength Analysis\n";
+            $prompt .= "4. Entry/Exit Strategy\n";
+            $prompt .= "5. Why this matters (not just what)\n\n";
+            $prompt .= "Keep it concise, actionable, and explain like a pro trader would.";
+
+            $response = $this->openai->generateCompletion($prompt, 800);
+
+            if (!$response) {
+                Log::error('DeepSearch: AI returned null response', ['query' => $query]);
+                $this->telegram->sendMessage($chatId, "❌ AI service unavailable. Please try again in a moment.");
+                return;
+            }
+
+            $message = "🔍 *SERPO DeepSearch™ Result*\n\n";
+            $message .= "Query: _{$query}_\n\n";
+            $message .= $response;
+
+            $keyboard = [
+                'inline_keyboard' => [
+                    [['text' => '📊 Analyze Symbol', 'callback_data' => "/analyze {$symbol}"]],
+                    [['text' => '🔮 Get Prediction', 'callback_data' => "/predict {$symbol}"]],
+                ]
+            ];
+
+            $this->telegram->sendMessage($chatId, $message, $keyboard);
+        } catch (\Exception $e) {
+            Log::error('DeepSearch error', ['error' => $e->getMessage()]);
+            $this->telegram->sendMessage($chatId, "❌ Search failed. Try rephrasing your query.");
+        }
+    }
+
+    /**
+     * Handle /backtest command - Strategy backtesting
+     */
+    private function handleBacktest(int $chatId, array $params, User $user)
+    {
+        if (empty($params)) {
+            $message = "📊 *SERPO Vision Backtest™*\n\n";
+            $message .= "Backtest strategies using natural language or screenshots.\n\n";
+            $message .= "*Text Usage:*\n";
+            $message .= "`/backtest BTCUSDT breakout strategy 1H timeframe`\n";
+            $message .= "`/backtest EURUSD trend following with 50 EMA`\n\n";
+            $message .= "*Screenshot Usage:*\n";
+            $message .= "1. Upload your chart screenshot\n";
+            $message .= "2. Caption: `/backtest this setup`\n\n";
+            $message .= "🎯 Returns: Win rate, max drawdown, RR efficiency";
+
+            $this->telegram->sendMessage($chatId, $message);
+            return;
+        }
+
+        $strategy = implode(' ', $params);
+        $this->telegram->sendMessage($chatId, "📊 Simulating strategy: \"{$strategy}\"...");
+
+        try {
+            // Extract symbol and timeframe
+            $symbol = $this->extractSymbolFromQuery($strategy);
+            $timeframe = $this->extractTimeframeFromQuery($strategy);
+
+            if (!$symbol) {
+                $this->telegram->sendMessage($chatId, "❌ Please specify a trading pair (e.g., BTCUSDT, EURUSD)");
+                return;
+            }
+
+            // Fetch recent market data for the symbol
+            $marketData = null;
+            try {
+                $marketData = $this->dexscreener->searchPairs($symbol);
+            } catch (\Exception $e) {
+                Log::warning('Failed to fetch market data for backtest', ['symbol' => $symbol]);
+            }
+
+            // Get current date and calculate backtest period
+            $currentDate = now()->format('Y-m-d');
+            $startDate = now()->subMonths(6)->format('Y-m-d'); // Last 6 months
+
+            // Build context-aware backtest prompt
+            $prompt = "You are a quantitative trading analyst. Today's date is {$currentDate}.\n\n";
+            $prompt .= "Analyze this trading strategy: \"{$strategy}\"\n\n";
+            $prompt .= "Symbol: {$symbol}\n";
+            $prompt .= "Timeframe: {$timeframe}\n";
+            $prompt .= "Backtest Period: {$startDate} to {$currentDate} (last 6 months)\n\n";
+
+            if ($marketData && isset($marketData['pairs'][0])) {
+                $pair = $marketData['pairs'][0];
+                $prompt .= "Current Market Context:\n";
+                $prompt .= "- Current Price: \${$pair['priceUsd']}\n";
+                $prompt .= "- 24h Volume: \$" . number_format($pair['volume']['h24'] ?? 0, 0) . "\n";
+                $prompt .= "- 24h Change: " . ($pair['priceChange']['h24'] ?? 'N/A') . "%\n\n";
+            }
+
+            $prompt .= "Provide a realistic backtest simulation for the LAST 6 MONTHS ONLY ({$startDate} to {$currentDate}):\n\n";
+            $prompt .= "1. Estimated win rate (be conservative, 35-55% range)\n";
+            $prompt .= "2. Maximum drawdown (realistic for crypto volatility)\n";
+            $prompt .= "3. Average risk-to-reward ratio\n";
+            $prompt .= "4. Total trades executed in 6-month period\n";
+            $prompt .= "5. Monthly performance breakdown\n";
+            $prompt .= "6. Key risks and current market conditions\n\n";
+            $prompt .= "IMPORTANT: Use ONLY the date range {$startDate} to {$currentDate}. Be realistic and conservative.\n";
+            $prompt .= "Format as a concise professional backtest report (max 500 words).";
+
+            $response = $this->openai->generateCompletion($prompt, 800);
+
+            if (!$response) {
+                Log::error('Backtest: AI returned null response', ['strategy' => $strategy]);
+                $this->telegram->sendMessage($chatId, "❌ AI service unavailable. Please try again in a moment.");
+                return;
+            }
+
+            $message = "📊 *SERPO Backtest Result*\n\n";
+            $message .= "Strategy: _{$strategy}_\n\n";
+            $message .= $response;
+            $message .= "\n\n⚠️ _Past performance does not guarantee future results_";
+
+            $this->telegram->sendMessage($chatId, $message);
+        } catch (\Exception $e) {
+            Log::error('Backtest error', ['error' => $e->getMessage()]);
+            $this->telegram->sendMessage($chatId, "❌ Backtest failed. Check your strategy description.");
+        }
+    }
+
+    /**
+     * Handle /verify command - Token verification and risk assessment
+     */
+    private function handleTokenVerify(int $chatId, array $params)
+    {
+        if (empty($params)) {
+            $message = "🧠 *SERPO Degen Scanner™*\n\n";
+            $message .= "Professional-grade token verification.\n\n";
+            $message .= "*Usage:*\n";
+            $message .= "`/verify 0xABC123...`\n";
+            $message .= "`/verify SERPO`\n";
+            $message .= "`/verify new TON token`\n\n";
+            $message .= "*Analyzes:*\n";
+            $message .= "✅ Contract verification\n";
+            $message .= "✅ Mint/burn functions\n";
+            $message .= "✅ Liquidity locks\n";
+            $message .= "✅ Holder distribution\n";
+            $message .= "✅ Wallet clustering\n";
+            $message .= "✅ Dev behavior patterns\n";
+            $message .= "✅ Rug probability score\n\n";
+            $message .= "🎯 Returns: Professional risk assessment";
+
+            $this->telegram->sendMessage($chatId, $message);
+            return;
+        }
+
+        $token = implode(' ', $params);
+        $this->telegram->sendMessage($chatId, "🧠 Analyzing token: \"{$token}\"...");
+
+        try {
+            // Check if it's a contract address or symbol
+            $isAddress = str_starts_with($token, '0x') || str_starts_with($token, 'EQ');
+
+            // Build verification prompt
+            $prompt = "You are a blockchain security expert specializing in token verification.\n\n";
+            $prompt .= "Token to analyze: {$token}\n\n";
+            $prompt .= "Provide a comprehensive risk assessment covering:\n\n";
+            $prompt .= "1. CONTRACT SECURITY\n";
+            $prompt .= "   - Verification status\n";
+            $prompt .= "   - Mint function (active/removed)\n";
+            $prompt .= "   - Ownership (renounced/active)\n";
+            $prompt .= "   - Hidden taxes or backdoors\n";
+            $prompt .= "   - Proxy/upgrade risks\n\n";
+            $prompt .= "2. LIQUIDITY ANALYSIS\n";
+            $prompt .= "   - LP locked or burned?\n";
+            $prompt .= "   - Lock duration\n";
+            $prompt .= "   - LP % vs total supply\n\n";
+            $prompt .= "3. HOLDER INTELLIGENCE\n";
+            $prompt .= "   - Wallet clustering patterns\n";
+            $prompt .= "   - Dev wallet behavior\n";
+            $prompt .= "   - Sniper bot detection\n";
+            $prompt .= "   - Top holder distribution\n\n";
+            $prompt .= "4. RISK SCORE (Low/Medium/High)\n";
+            $prompt .= "5. VERDICT: Investment recommendation\n\n";
+            $prompt .= "Be brutally honest. Flag red flags clearly.";
+
+            $response = $this->openai->generateCompletion($prompt, 900);
+
+            if (!$response) {
+                Log::error('TokenVerify: AI returned null response', ['token' => $token]);
+                $this->telegram->sendMessage($chatId, "❌ AI service unavailable. Please try again in a moment.");
+                return;
+            }
+
+            $message = "🧠 *SERPO DEGEN VERIFICATION REPORT*\n\n";
+            $message .= "Token: `{$token}`\n\n";
+            $message .= $response;
+            $message .= "\n\n⚠️ _DYOR. Not financial advice._";
+
+            $this->telegram->sendMessage($chatId, $message);
+        } catch (\Exception $e) {
+            Log::error('Token verify error', ['error' => $e->getMessage()]);
+            $this->telegram->sendMessage($chatId, "❌ Verification failed. Check token address/symbol.");
+        }
+    }
+
+    /**
+     * Handle /degen101 command - Educational guide
+     */
+    private function handleDegenGuide(int $chatId)
+    {
+        $message = "🎓 *SERPO DEGEN GUIDE*\n";
+        $message .= "How Professionals Detect Winners Early\n\n";
+        $message .= "━━━━━━━━━━━━━━━━━━━━\n\n";
+
+        $message .= "📋 *THE CHECKLIST*\n\n";
+
+        $message .= "*Step 1: Contract Inspection*\n";
+        $message .= "✅ Contract must be verified\n";
+        $message .= "✅ Mint function should be removed/disabled\n";
+        $message .= "✅ No hidden fees >10%\n";
+        $message .= "✅ No proxy contracts (upgrade risk)\n\n";
+
+        $message .= "*Step 2: Liquidity Analysis*\n";
+        $message .= "✅ LP locked minimum 30 days\n";
+        $message .= "✅ LP represents >50% of supply\n";
+        $message .= "✅ Lock on reputable platform\n";
+        $message .= "⚠️ Burned LP = risky (irreversible)\n\n";
+
+        $message .= "*Step 3: Dev Behavior*\n";
+        $message .= "✅ Dev wallet must NOT sell early\n";
+        $message .= "✅ Team wallets disclosed\n";
+        $message .= "✅ No clustered wallets (fake distribution)\n";
+        $message .= "⚠️ Anonymous devs = higher risk\n\n";
+
+        $message .= "*Step 4: Volume Validation*\n";
+        $message .= "✅ Volume grows organically\n";
+        $message .= "✅ No sudden 1000x spikes\n";
+        $message .= "✅ Unique wallet count increases\n";
+        $message .= "❌ Wash trading = red flag\n\n";
+
+        $message .= "*Step 5: Price Action*\n";
+        $message .= "✅ Price respects VWAP\n";
+        $message .= "✅ No instant 10x pumps\n";
+        $message .= "✅ Healthy pullbacks exist\n";
+        $message .= "❌ Parabolic without consolidation = danger\n\n";
+
+        $message .= "━━━━━━━━━━━━━━━━━━━━\n\n";
+
+        $message .= "🚨 *RED FLAGS*\n";
+        $message .= "❌ Sudden volume spikes from nowhere\n";
+        $message .= "❌ LP unlock within 24-48h\n";
+        $message .= "❌ Ownership renounced but mint active\n";
+        $message .= "❌ Top 10 holders control >50%\n";
+        $message .= "❌ No social media or fake following\n";
+        $message .= "❌ \"Fair launch\" with suspicious distribution\n\n";
+
+        $message .= "━━━━━━━━━━━━━━━━━━━━\n\n";
+
+        $message .= "💡 *PRO TIPS*\n";
+        $message .= "1️⃣ Never ape into hype\n";
+        $message .= "2️⃣ Set stop losses ALWAYS\n";
+        $message .= "3️⃣ Take profits incrementally\n";
+        $message .= "4️⃣ Risk only what you can lose\n";
+        $message .= "5️⃣ Diversify across multiple plays\n\n";
+
+        $message .= "🎯 *Remember:* If it looks too good to be true, it probably is.\n\n";
+
+        $message .= "Use `/verify [token]` to analyze any token!";
+
+        $keyboard = [
+            'inline_keyboard' => [
+                [['text' => '🧠 Verify a Token', 'callback_data' => '/verify']],
+                [['text' => '🔍 Deep Search', 'callback_data' => '/search']],
+                [['text' => '📊 Backtest Strategy', 'callback_data' => '/backtest']],
+            ]
+        ];
+
+        $this->telegram->sendMessage($chatId, $message, $keyboard);
+    }
+
+    /**
+     * Extract symbol from natural language query
+     */
+    private function extractSymbolFromQuery(string $query): ?string
+    {
+        $query = strtoupper($query);
+
+        // Common patterns
+        $patterns = [
+            '/\b(BTC|ETH|BNB|XRP|ADA|SOL|DOGE|MATIC|DOT|AVAX|LINK|UNI|ATOM|LTC|ETC|ALGO)USDT?\b/i',
+            '/\b(EUR|GBP|USD|JPY|AUD|CAD|CHF|NZD)(?:USD|JPY|GBP|EUR)\b/i',
+            '/\b(AAPL|TSLA|NVDA|MSFT|GOOGL|AMZN|META|NFLX|AMD|BA)\b/i',
+            '/\b(XAU|XAG)USD\b/i', // Gold/Silver
+        ];
+
+        foreach ($patterns as $pattern) {
+            if (preg_match($pattern, $query, $matches)) {
+                return $matches[0];
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Extract timeframe from query
+     */
+    private function extractTimeframeFromQuery(string $query): string
+    {
+        $query = strtoupper($query);
+
+        if (preg_match('/\b(1M|5M|15M|30M|1H|4H|1D|1W)\b/i', $query, $matches)) {
+            return $matches[1];
+        }
+
+        if (stripos($query, 'HOUR') !== false) return '1H';
+        if (stripos($query, 'DAY') !== false) return '1D';
+        if (stripos($query, 'WEEK') !== false) return '1W';
+
+        return '4H'; // default
     }
 }

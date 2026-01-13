@@ -109,11 +109,19 @@ class OpenAIService
     private function generateWithGemini(string $prompt, int $maxTokens): ?string
     {
         try {
+            Log::info('Attempting Gemini generation', ['max_tokens' => $maxTokens]);
             // Use gemini-2.5-flash (stable, latest, free tier)
             $response = $this->geminiClient
                 ->generativeModel(model: 'gemini-2.5-flash')
                 ->generateContent($prompt);
-            return $response->text() ?? null;
+
+            $text = $response->text() ?? null;
+            if ($text) {
+                Log::info('Gemini generation successful', ['response_length' => strlen($text)]);
+            } else {
+                Log::warning('Gemini returned empty response');
+            }
+            return $text;
         } catch (\Exception $e) {
             Log::warning('Gemini generation failed', ['error' => $e->getMessage()]);
             return null;
@@ -126,8 +134,8 @@ class OpenAIService
     private function generateWithGroq(string $prompt, int $maxTokens): ?string
     {
         try {
-            Log::info('Attempting Groq generation');
-            $response = Http::timeout(15)
+            Log::info('Attempting Groq generation', ['max_tokens' => $maxTokens]);
+            $response = Http::timeout(30) // Increased timeout for longer responses
                 ->withHeaders([
                     'Authorization' => 'Bearer ' . env('GROQ_API_KEY'),
                     'Content-Type' => 'application/json',
@@ -143,8 +151,15 @@ class OpenAIService
 
             if ($response->successful()) {
                 $data = $response->json();
-                Log::info('Groq generation successful');
+                Log::info('Groq generation successful', ['tokens' => strlen($data['choices'][0]['message']['content'] ?? '')]);
                 return $data['choices'][0]['message']['content'] ?? null;
+            }
+
+            // Check if rate limited
+            if ($response->status() === 429) {
+                Log::warning('Groq rate limit hit', ['retry_after' => $response->header('Retry-After')]);
+                // Don't return null, let it fall through to next provider
+                return null;
             }
 
             Log::warning('Groq returned non-successful response', [

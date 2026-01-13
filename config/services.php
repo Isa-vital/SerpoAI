@@ -83,4 +83,58 @@ return [
         'key' => env('POLYGON_API_KEY'),
     ],
 
+    // Elite Features - Premium Data Sources
+    'glassnode' => [
+        'api_key' => env('GLASSNODE_API_KEY'),
+        'api_url' => env('GLASSNODE_API_URL', 'https://api.glassnode.com/v1'),
+    ],
+
+    'cryptoquant' => [
+        'api_key' => env('CRYPTOQUANT_API_KEY'),
+        'api_url' => env('CRYPTOQUANT_API_URL', 'https://api.cryptoquant.com/v1'),
+    ],
+
+    'nansen' => [
+        'api_key' => env('NANSEN_API_KEY'),
+        'api_url' => env('NANSEN_API_URL', 'https://api.nansen.ai/v1'),
+    ],
+
+    'arkham' => [
+        'api_key' => env('ARKHAM_API_KEY'),
+        'api_url' => env('ARKHAM_API_URL', 'https://api.arkhamintelligence.com/v1'),
+    ],
+
+    'oanda' => [
+        'api_key' => env('OANDA_API_KEY'),
+        'account_id' => env('OANDA_ACCOUNT_ID'),
+        'api_url' => env('OANDA_API_URL', 'https://api-fxpractice.oanda.com/v3'),
+    ],
+
+    // Chain Explorers
+    'etherscan' => [
+        'api_key' => env('ETHERSCAN_API_KEY'),
+        'api_url' => env('ETHERSCAN_API_URL', 'https://api.etherscan.io/api'),
+    ],
+
+    'bscscan' => [
+        'api_key' => env('BSCSCAN_API_KEY'),
+        'api_url' => env('BSCSCAN_API_URL', 'https://api.bscscan.com/api'),
+    ],
+
+    'basescan' => [
+        'api_key' => env('BASESCAN_API_KEY'),
+        'api_url' => env('BASESCAN_API_URL', 'https://api.basescan.org/api'),
+    ],
+
+    'solscan' => [
+        'api_key' => env('SOLSCAN_API_KEY'),
+        'api_url' => env('SOLSCAN_API_URL', 'https://api.solscan.io'),
+    ],
+
+    // Vision AI (for screenshot backtesting)
+    'openai_vision' => [
+        'api_key' => env('OPENAI_API_KEY'),
+        'model' => env('OPENAI_VISION_MODEL', 'gpt-4-vision-preview'),
+    ],
+
 ];

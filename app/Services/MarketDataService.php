@@ -292,7 +292,7 @@ class MarketDataService
             $currentPrice = $this->getLatestMarketData($symbol);
             $currentPriceValue = $currentPrice ? (float) $currentPrice->price : null;
         }
-        
+
         $rsi = $this->calculateRSI($symbol);
         $macd = $this->calculateMACD($symbol);
 

@@ -14,7 +14,7 @@ class SentimentAnalysisService
     public function getCryptoSentiment(string $coin = 'bitcoin'): array
     {
         $cacheKey = "sentiment_{$coin}";
-        
+
         // Cache for 30 minutes
         return Cache::remember($cacheKey, 1800, function () use ($coin) {
             $sentiment = [
@@ -57,7 +57,7 @@ class SentimentAnalysisService
                 'Polygon' => 'MATIC',
                 'Polkadot' => 'DOT',
             ];
-            
+
             // For unknown coins like SERPO, fetch general crypto news
             $category = $categoryMap[$coin] ?? 'BTC,ETH';
             $url = "https://min-api.cryptocompare.com/data/v2/news/?categories={$category}";
@@ -108,7 +108,7 @@ class SentimentAnalysisService
 
             // Calculate sentiment score (0 to 100)
             $totalMentions = $positiveCount + $negativeCount;
-            
+
             if ($totalMentions > 0) {
                 // Convert to 0-100 scale where 50 is neutral
                 $ratio = $positiveCount / $totalMentions;

@@ -238,10 +238,10 @@ class MultiMarketDataService
         try {
             // Get ALL Binance data (not just USDT pairs)
             $binanceData = $this->binance->getAllTickers();
-            
+
             // Filter by volume to get most liquid pairs across all quote currencies
             usort($binanceData, fn($a, $b) => floatval($b['quoteVolume']) <=> floatval($a['quoteVolume']));
-            
+
             // Get top 2000 by volume (includes USDT, BTC, ETH, BUSD, BNB, etc.)
             $topPairs = array_slice($binanceData, 0, 2000);
 
@@ -293,16 +293,23 @@ class MultiMarketDataService
             // Optimized: Only fetch top pairs to avoid timeout
             $topPairs = [
                 // Major Pairs (most important)
-                'EURUSD', 'GBPUSD', 'USDJPY', 'USDCHF', 'AUDUSD', 'USDCAD',
-                
+                'EURUSD',
+                'GBPUSD',
+                'USDJPY',
+                'USDCHF',
+                'AUDUSD',
+                'USDCAD',
+
                 // Commodities (Important!)
                 'XAUUSD', // GOLD
                 'XAGUSD', // SILVER
-                
+
                 // Top Crosses
-                'EURGBP', 'EURJPY', 'GBPJPY',
+                'EURGBP',
+                'EURJPY',
+                'GBPJPY',
             ];
-            
+
             $data = [];
 
             foreach ($topPairs as $pair) {
@@ -336,9 +343,27 @@ class MultiMarketDataService
         }
 
         // Check if symbol already has a valid quote currency
-        $quoteAssets = ['USDT', 'BUSD', 'USDC', 'BTC', 'ETH', 'BNB', 'EUR', 'GBP', 'AUD', 'BRL', 
-                        'TRY', 'TUSD', 'PAX', 'DAI', 'FDUSD', 'TRX', 'XRP', 'DOGE'];
-        
+        $quoteAssets = [
+            'USDT',
+            'BUSD',
+            'USDC',
+            'BTC',
+            'ETH',
+            'BNB',
+            'EUR',
+            'GBP',
+            'AUD',
+            'BRL',
+            'TRY',
+            'TUSD',
+            'PAX',
+            'DAI',
+            'FDUSD',
+            'TRX',
+            'XRP',
+            'DOGE'
+        ];
+
         $hasQuote = false;
         foreach ($quoteAssets as $quote) {
             if (str_ends_with($symbol, $quote)) {

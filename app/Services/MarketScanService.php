@@ -260,7 +260,7 @@ class MarketScanService
             // Show Gold and Silver first if available
             $goldSilver = array_filter($forex['major_pairs'], fn($p) => in_array($p['pair'], ['XAUUSD', 'XAGUSD']));
             $majorPairs = array_filter($forex['major_pairs'], fn($p) => !in_array($p['pair'], ['XAUUSD', 'XAGUSD']));
-            
+
             if (!empty($goldSilver)) {
                 $message .= "🪙 Commodities\n";
                 foreach ($goldSilver as $idx => $pair) {
@@ -270,7 +270,7 @@ class MarketScanService
                 }
                 $message .= "\n";
             }
-            
+
             $message .= "💱 Top Pairs\n";
             foreach (array_slice($majorPairs, 0, 5) as $idx => $pair) {
                 $changeSymbol = $pair['change'] >= 0 ? '+' : '';

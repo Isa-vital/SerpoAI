@@ -23,31 +23,31 @@ class RealSentimentService
         // Check if at least one social media API is configured
         $hasTwitterApi = !empty(env('TWITTER_BEARER_TOKEN')) && env('TWITTER_BEARER_TOKEN') !== 'your_twitter_bearer_token';
         $hasRedditApi = !empty(env('REDDIT_CLIENT_ID')) && env('REDDIT_CLIENT_ID') !== 'your_reddit_client_id';
-        
+
         // If no APIs configured, show upgrade message
         if (!$hasTwitterApi && !$hasRedditApi) {
             return [
                 'error' => true,
                 'message' => "🔒 *Premium Feature*\n\n" .
-                           "Real-time social sentiment analysis is currently being upgraded to provide accurate data from Twitter, Reddit, and Telegram.\n\n" .
-                           "Meanwhile, try these commands:\n" .
-                           "• `/analyze {$symbol}` - Technical analysis\n" .
-                           "• `/predict {$symbol}` - AI price prediction\n" .
-                           "• `/trends` - Top trending coins"
+                    "Real-time social sentiment analysis is currently being upgraded to provide accurate data from Twitter, Reddit, and Telegram.\n\n" .
+                    "Meanwhile, try these commands:\n" .
+                    "• `/analyze {$symbol}` - Technical analysis\n" .
+                    "• `/predict {$symbol}` - AI price prediction\n" .
+                    "• `/trends` - Top trending coins"
             ];
         }
-        
+
         $sources = [];
-        
+
         // Fetch from available sources
         if ($hasTwitterApi) {
             $sources['twitter'] = $this->getTwitterSentiment($symbol);
         }
-        
+
         if ($hasRedditApi) {
             $sources['reddit'] = $this->getRedditSentiment($symbol);
         }
-        
+
         // Telegram doesn't require special API
         $sources['telegram'] = $this->getTelegramSentiment($symbol);
 
@@ -78,7 +78,7 @@ class RealSentimentService
     private function getTwitterSentiment(string $symbol): ?array
     {
         $bearerToken = env('TWITTER_BEARER_TOKEN');
-        
+
         if (empty($bearerToken)) {
             return null;
         }
@@ -86,7 +86,7 @@ class RealSentimentService
         try {
             // Search for tweets about the symbol
             $query = "{$symbol} OR #{$symbol} OR \${$symbol} -is:retweet lang:en";
-            
+
             $response = Http::withHeaders([
                 'Authorization' => "Bearer {$bearerToken}",
             ])->get('https://api.twitter.com/2/tweets/search/recent', [
