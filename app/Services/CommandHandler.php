@@ -163,6 +163,7 @@ class CommandHandler
             // Trade Ideas & Strategy
             '/trendcoins' => $this->handleTrendCoins($chatId),
             '/copy' => $this->handleCopyTrading($chatId),
+            '/trader' => $this->handleTrader($chatId, $params),
 
             // Charts, Heatmaps & Whales
             '/charts' => $this->handleCharts($chatId, $params),
@@ -2441,6 +2442,214 @@ class CommandHandler
             ];
             $this->telegram->sendMessage($chatId, "❌ Error loading copy trading info. Please try again.", $keyboard);
         }
+    }
+
+    /**
+     * Handle /trader command - AI Trading Assistant for all markets
+     */
+    private function handleTrader(int $chatId, array $params)
+    {
+        if (empty($params)) {
+            $message = "🤖 *AI TRADING ASSISTANT*\n";
+            $message .= "━━━━━━━━━━━━━━━━━━━━\n\n";
+            $message .= "Get AI-powered trading insights for ANY market:\n\n";
+            $message .= "📊 *Usage Examples:*\n";
+            $message .= "• `/trader BTCUSDT` - Crypto analysis\n";
+            $message .= "• `/trader AAPL` - Stock analysis\n";
+            $message .= "• `/trader EURUSD` - Forex analysis\n";
+            $message .= "• `/trader XAUUSD` - Gold analysis\n\n";
+            $message .= "💡 *What You Get:*\n";
+            $message .= "✓ Real-time market analysis\n";
+            $message .= "✓ Entry/Exit recommendations\n";
+            $message .= "✓ Risk management levels\n";
+            $message .= "✓ Technical & fundamental insights\n";
+            $message .= "✓ Multi-timeframe perspective\n";
+            $message .= "✓ Support for Crypto, Stocks, Forex\n\n";
+            $message .= "━━━━━━━━━━━━━━━━━━━━\n";
+            $message .= "📈 Ready to trade smarter? Add a symbol!";
+            
+            $this->telegram->sendMessage($chatId, $message);
+            return;
+        }
+
+        $symbol = strtoupper($params[0]);
+        
+        // Show typing indicator
+        $this->telegram->sendChatAction($chatId, 'typing');
+        $this->telegram->sendMessage($chatId, "🤖 AI Trader analyzing {$symbol}...");
+
+        try {
+            // Detect market type
+            $marketType = $this->multiMarket->detectMarketType($symbol);
+            
+            // Fetch market data based on type
+            $marketData = match($marketType) {
+                'crypto' => $this->multiMarket->analyzeCryptoPair($symbol),
+                'stock' => $this->multiMarket->analyzeStockPair($symbol),
+                'forex' => $this->multiMarket->analyzeForexPair($symbol),
+                default => ['error' => 'Unknown market type']
+            };
+            
+            if (isset($marketData['error'])) {
+                $this->telegram->sendMessage($chatId, "❌ {$marketData['error']}\n\nTry: `/trader BTCUSDT` (crypto), `/trader AAPL` (stock), or `/trader EURUSD` (forex)");
+                return;
+            }
+
+            // Generate AI trading insights
+            $aiAnalysis = $this->generateAITradingInsights($symbol, $marketType, $marketData);
+            
+            $message = $this->formatTraderAnalysis($symbol, $marketType, $marketData, $aiAnalysis);
+            
+            $keyboard = [
+                'inline_keyboard' => [
+                    [
+                        ['text' => '📊 Chart', 'callback_data' => "chart_{$symbol}"],
+                        ['text' => '🔔 Set Alert', 'callback_data' => "alert_{$symbol}"],
+                    ],
+                    [
+                        ['text' => '📈 Analyze', 'callback_data' => "analyze_{$symbol}"],
+                        ['text' => '💹 Signals', 'callback_data' => "signals_{$symbol}"],
+                    ]
+                ]
+            ];
+            
+            $this->telegram->sendMessage($chatId, $message, $keyboard);
+            
+        } catch (\Exception $e) {
+            Log::error('Trader command error', ['error' => $e->getMessage(), 'symbol' => $symbol]);
+            $this->telegram->sendMessage($chatId, "❌ Error analyzing {$symbol}. Please verify the symbol and try again.");
+        }
+    }
+
+    /**
+     * Generate AI trading insights using Gemini/Groq
+     */
+    private function generateAITradingInsights(string $symbol, string $marketType, array $marketData): string
+    {
+        $prompt = "You are an expert day trader analyzing {$symbol} ({$marketType} market).\n\n";
+        $prompt .= "Current Market Data:\n";
+        $prompt .= "- Price: {$marketData['price']}\n";
+        $prompt .= "- 24h Change: {$marketData['change_percent']}%\n";
+        
+        if (isset($marketData['indicators'])) {
+            $indicators = $marketData['indicators'];
+            $prompt .= "- RSI: " . ($indicators['rsi'] ?? 'N/A') . "\n";
+            $prompt .= "- Trend: " . ($indicators['trend'] ?? 'N/A') . "\n";
+            $prompt .= "- Volume: " . ($marketData['volume'] ?? 'N/A') . "\n";
+        }
+        
+        $prompt .= "\nProvide a concise trading recommendation including:\n";
+        $prompt .= "1. Market Bias (Bullish/Bearish/Neutral)\n";
+        $prompt .= "2. Entry Strategy (specific price levels)\n";
+        $prompt .= "3. Take Profit targets (2-3 levels)\n";
+        $prompt .= "4. Stop Loss (risk management)\n";
+        $prompt .= "5. Key resistance/support levels\n";
+        $prompt .= "6. Time horizon (scalp/day/swing)\n\n";
+        $prompt .= "Be specific, actionable, and risk-aware. Format with emojis for clarity.";
+
+        try {
+            $aiResponse = $this->ai->generateAnalysis($prompt);
+            return $aiResponse['analysis'] ?? 'AI analysis temporarily unavailable.';
+        } catch (\Exception $e) {
+            Log::error('AI trading insights error', ['error' => $e->getMessage()]);
+            return $this->generateFallbackTradingInsights($marketData);
+        }
+    }
+
+    /**
+     * Fallback trading insights if AI fails
+     */
+    private function generateFallbackTradingInsights(array $marketData): string
+    {
+        $change = $marketData['change_percent'] ?? 0;
+        $bias = $change > 2 ? 'Bullish 🟢' : ($change < -2 ? 'Bearish 🔴' : 'Neutral ⚪');
+        
+        $insights = "📊 *Market Bias:* {$bias}\n\n";
+        
+        if ($change > 0) {
+            $insights .= "✓ Price showing positive momentum\n";
+            $insights .= "✓ Consider buying on pullbacks\n";
+            $insights .= "⚠️ Watch for resistance at recent highs\n";
+        } else {
+            $insights .= "⚠️ Price under pressure\n";
+            $insights .= "⚠️ Wait for stabilization signals\n";
+            $insights .= "✓ Support levels may offer entries\n";
+        }
+        
+        return $insights;
+    }
+
+    /**
+     * Format trader analysis output
+     */
+    private function formatTraderAnalysis(string $symbol, string $marketType, array $marketData, string $aiAnalysis): string
+    {
+        $marketIcon = match($marketType) {
+            'crypto' => '₿',
+            'stock' => '📈',
+            'forex' => '💱',
+            default => '📊'
+        };
+        
+        $message = "{$marketIcon} *AI TRADER: {$symbol}*\n";
+        $message .= "━━━━━━━━━━━━━━━━━━━━\n\n";
+        
+        // Market Info
+        $message .= "📊 *Market Info*\n";
+        $message .= "• Type: " . ucfirst($marketType) . "\n";
+        $message .= "• Price: " . $this->formatPrice($marketData['price'], $marketType) . "\n";
+        
+        $changeSymbol = $marketData['change_percent'] >= 0 ? '+' : '';
+        $changeEmoji = $marketData['change_percent'] >= 0 ? '🟢' : '🔴';
+        $message .= "• 24h Change: {$changeEmoji} {$changeSymbol}" . number_format($marketData['change_percent'], 2) . "%\n";
+        
+        if (isset($marketData['volume'])) {
+            $message .= "• Volume: \$" . $this->formatNumber($marketData['volume']) . "\n";
+        }
+        
+        // Technical Indicators
+        if (isset($marketData['indicators'])) {
+            $indicators = $marketData['indicators'];
+            $message .= "\n📈 *Technical Indicators*\n";
+            
+            if (isset($indicators['rsi'])) {
+                $rsiStatus = $indicators['rsi'] > 70 ? 'Overbought ⚠️' : ($indicators['rsi'] < 30 ? 'Oversold 💚' : 'Neutral');
+                $message .= "• RSI: " . round($indicators['rsi'], 1) . " ({$rsiStatus})\n";
+            }
+            
+            if (isset($indicators['trend'])) {
+                $message .= "• Trend: {$indicators['trend']}\n";
+            }
+            
+            if (isset($indicators['support']) && isset($indicators['resistance'])) {
+                $message .= "• Support: " . $this->formatPrice($indicators['support'], $marketType) . "\n";
+                $message .= "• Resistance: " . $this->formatPrice($indicators['resistance'], $marketType) . "\n";
+            }
+        }
+        
+        // AI Trading Insights
+        $message .= "\n🤖 *AI TRADING INSIGHTS*\n";
+        $message .= "━━━━━━━━━━━━━━━━━━━━\n";
+        $message .= $aiAnalysis . "\n";
+        
+        $message .= "\n━━━━━━━━━━━━━━━━━━━━\n";
+        $message .= "⚠️ *Risk Warning:* Trading involves risk. Always use stop losses and proper position sizing.\n";
+        $message .= "\n💡 Use `/analyze {$symbol}` for detailed technical analysis";
+        
+        return $message;
+    }
+
+    /**
+     * Format price based on market type
+     */
+    private function formatPrice(float $price, string $marketType): string
+    {
+        return match($marketType) {
+            'forex' => number_format($price, 5),
+            'crypto' => $price < 1 ? number_format($price, 6) : number_format($price, 2),
+            'stock' => '$' . number_format($price, 2),
+            default => number_format($price, 2)
+        };
     }
 
     private function formatTrendLeaders(array $trends): string

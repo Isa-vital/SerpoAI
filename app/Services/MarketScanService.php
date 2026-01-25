@@ -199,7 +199,7 @@ class MarketScanService
         $message .= "💎 *CRYPTO MARKETS*\n";
         $message .= "━━━━━━━━━━━━━━━━━━━━\n";
         $message .= "📊 Market Overview\n";
-        $message .= "• Pairs: {$overview['total_pairs']}\n";
+        $message .= "• Total Pairs: {$overview['total_pairs']} (ALL Binance Markets)\n";
         $message .= "• Gainers: 🟢 {$overview['gainers']} | Losers: 🔴 {$overview['losers']}\n";
         $message .= "• Sentiment: {$this->getSentimentEmoji($overview['market_sentiment'])} {$overview['market_sentiment']}\n";
         $message .= "• 24h Volume: \${$overview['total_volume_24h']}\n";
@@ -243,8 +243,9 @@ class MarketScanService
                 $message .= ($idx + 1) . ". {$index['name']}: \${$index['price']} ({$index['change']})\n";
             }
         } else {
-            $message .= "• Data: Real-time stock data available via /analyze\n";
-            $message .= "• Supported: NYSE, NASDAQ, Major Indices\n";
+            $message .= "• Coverage: ALL NYSE, NASDAQ, AMEX stocks\n";
+            $message .= "• Indices: S&P 500, Dow Jones, NASDAQ\n";
+            $message .= "• Real-time data via `/analyze [SYMBOL]`\n";
         }
 
         // === FOREX MARKETS ===
@@ -252,34 +253,42 @@ class MarketScanService
         $message .= "\n\n💱 *FOREX & COMMODITIES*\n";
         $message .= "━━━━━━━━━━━━━━━━━━━━\n";
         $message .= "Status: {$forex['market_status']}\n";
-        $totalForex = $forex['total_pairs'] ?? 150;
-        $message .= "• Total Available: {$totalForex}+ pairs\n";
-        $message .= "• Includes: GOLD, SILVER, all major/exotic pairs\n\n";
+        $totalForex = $forex['total_pairs'] ?? 180;
+        $message .= "• Total Available: {$totalForex}+ pairs (All ISO currencies)\n";
+        $message .= "• Metals: GOLD, SILVER, PLATINUM, PALLADIUM\n";
+        $message .= "• Coverage: All major + exotic + commodity pairs\n\n";
 
         if (!empty($forex['major_pairs'])) {
-            // Show Gold and Silver first if available
-            $goldSilver = array_filter($forex['major_pairs'], fn($p) => in_array($p['pair'], ['XAUUSD', 'XAGUSD']));
-            $majorPairs = array_filter($forex['major_pairs'], fn($p) => !in_array($p['pair'], ['XAUUSD', 'XAGUSD']));
+            // Show commodities first if available
+            $commodities = array_filter($forex['major_pairs'], fn($p) => str_starts_with($p['pair'], 'X'));
+            $regularPairs = array_filter($forex['major_pairs'], fn($p) => !str_starts_with($p['pair'], 'X'));
 
-            if (!empty($goldSilver)) {
-                $message .= "🪙 Commodities\n";
-                foreach ($goldSilver as $idx => $pair) {
+            if (!empty($commodities)) {
+                $message .= "🪙 Precious Metals & Commodities\n";
+                foreach ($commodities as $idx => $pair) {
                     $changeSymbol = $pair['change'] >= 0 ? '+' : '';
-                    $name = $pair['pair'] === 'XAUUSD' ? 'GOLD' : 'SILVER';
+                    $name = match($pair['pair']) {
+                        'XAUUSD' => 'GOLD',
+                        'XAGUSD' => 'SILVER',
+                        'XPTUSD' => 'PLATINUM',
+                        'XPDUSD' => 'PALLADIUM',
+                        default => $pair['pair']
+                    };
                     $message .= "• `{$name}`: {$pair['price']} ({$changeSymbol}{$pair['change_percent']}%)\n";
                 }
                 $message .= "\n";
             }
 
-            $message .= "💱 Top Pairs\n";
-            foreach (array_slice($majorPairs, 0, 5) as $idx => $pair) {
+            $message .= "💱 Major Currency Pairs\n";
+            foreach (array_slice($regularPairs, 0, 8) as $idx => $pair) {
                 $changeSymbol = $pair['change'] >= 0 ? '+' : '';
                 $message .= ($idx + 1) . ". `{$pair['pair']}`: {$pair['price']} ({$changeSymbol}{$pair['change_percent']}%)\n";
             }
         } else {
-            $message .= "• Majors: EUR/USD, GBP/USD, USD/JPY\n";
-            $message .= "• Commodities: GOLD (XAUUSD), SILVER (XAGUSD)\n";
-            $message .= "• Use /analyze [pair] for any forex pair\n";
+            $message .= "• Majors: EUR/USD, GBP/USD, USD/JPY, AUD/USD, USD/CAD, NZD/USD\n";
+            $message .= "• Metals: GOLD (XAUUSD), SILVER (XAGUSD), PLATINUM, PALLADIUM\n";
+            $message .= "• Exotics: Available for all ISO currency pairs\n";
+            $message .= "• Use `/analyze [pair]` for real-time quotes\n";
         }
 
         $message .= "\n━━━━━━━━━━━━━━━━━━━━\n";

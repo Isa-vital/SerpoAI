@@ -236,21 +236,21 @@ class MultiMarketDataService
     public function getCryptoData(): array
     {
         try {
-            // Get ALL Binance data (not just USDT pairs)
+            // Get ALL Binance data (ALL PAIRS - no limits for full market coverage)
             $binanceData = $this->binance->getAllTickers();
 
-            // Filter by volume to get most liquid pairs across all quote currencies
-            usort($binanceData, fn($a, $b) => floatval($b['quoteVolume']) <=> floatval($a['quoteVolume']));
+            // Filter out zero volume pairs for cleaner data
+            $activePairs = array_filter($binanceData, fn($t) => floatval($t['quoteVolume']) > 0);
 
-            // Get top 2000 by volume (includes USDT, BTC, ETH, BUSD, BNB, etc.)
-            $topPairs = array_slice($binanceData, 0, 2000);
+            // Sort by volume to get most liquid pairs across all quote currencies
+            usort($activePairs, fn($a, $b) => floatval($b['quoteVolume']) <=> floatval($a['quoteVolume']));
 
             // Get top coins from CoinGecko for additional data
             $coingeckoData = $this->getCoinGeckoTrending();
 
             return [
-                'spot_markets' => $topPairs,
-                'total_pairs' => count($topPairs),
+                'spot_markets' => $activePairs, // ALL ACTIVE PAIRS (no limit)
+                'total_pairs' => count($activePairs),
                 'trending' => $coingeckoData['trending'] ?? [],
                 'total_market_cap' => $coingeckoData['market_cap'] ?? 0,
                 'btc_dominance' => $coingeckoData['btc_dominance'] ?? 0,
@@ -290,29 +290,43 @@ class MultiMarketDataService
     public function getForexData(): array
     {
         try {
-            // Optimized: Only fetch top pairs to avoid timeout
-            $topPairs = [
-                // Major Pairs (most important)
+            // Comprehensive forex pairs including commodities
+            $displayPairs = [
+                // Major Pairs (G7)
                 'EURUSD',
                 'GBPUSD',
                 'USDJPY',
                 'USDCHF',
                 'AUDUSD',
                 'USDCAD',
+                'NZDUSD',
 
-                // Commodities (Important!)
+                // Precious Metals & Commodities
                 'XAUUSD', // GOLD
                 'XAGUSD', // SILVER
+                'XPTUSD', // PLATINUM
+                'XPDUSD', // PALLADIUM
 
-                // Top Crosses
+                // Major Crosses
                 'EURGBP',
                 'EURJPY',
                 'GBPJPY',
+                'AUDJPY',
+                'EURAUD',
+                'GBPAUD',
+
+                // Exotic/Emerging
+                'USDTRY', // Turkish Lira
+                'USDZAR', // South African Rand
+                'USDMXN', // Mexican Peso
+                'USDBRL', // Brazilian Real
+                'USDRUB', // Russian Ruble
+                'USDCNH', // Chinese Yuan
             ];
 
             $data = [];
 
-            foreach ($topPairs as $pair) {
+            foreach ($displayPairs as $pair) {
                 $pairData = $this->getForexPairData($pair);
                 if (!isset($pairData['error'])) {
                     $data[] = $pairData;
@@ -321,7 +335,7 @@ class MultiMarketDataService
 
             return [
                 'major_pairs' => $data,
-                'total_pairs' => 150, // Total available via /analyze
+                'total_pairs' => 180, // Total available via /analyze (all ISO currency pairs)
                 'market_status' => $this->getForexMarketStatus(),
             ];
         } catch (\Exception $e) {
@@ -504,6 +518,130 @@ class MultiMarketDataService
         });
     }
 
+    /**
+     * Analyze stock symbol with technical indicators
+     */
+    public function analyzeStockPair(string $symbol): array
+    {
+        return Cache::remember("stock_analysis_{$symbol}", 300, function () use ($symbol) {
+            try {
+                // Get stock quote from Alpha Vantage
+                $quote = $this->getStockQuote($symbol);
+                if (isset($quote['error'])) {
+                    return $quote;
+                }
+
+                // Calculate technical indicators
+                $indicators = $this->getStockIndicators($symbol);
+
+                return [
+                    'market' => 'stock',
+                    'symbol' => $symbol,
+                    'price' => $quote['price'],
+                    'change' => $quote['change'],
+                    'change_percent' => $quote['change_percent'],
+                    'volume' => $quote['volume'] ?? 0,
+                    'indicators' => $indicators,
+                    'market_status' => $this->getMarketStatus(),
+                    'data_sources' => ['Alpha Vantage', 'Yahoo Finance'],
+                ];
+            } catch (\Exception $e) {
+                Log::error('Stock analysis error', ['symbol' => $symbol, 'error' => $e->getMessage()]);
+                return ['error' => "Unable to analyze {$symbol}. Verify symbol is correct (e.g., AAPL, TSLA, MSFT)"];
+            }
+        });
+    }
+
+    /**
+     * Get stock quote from Alpha Vantage
+     */
+    private function getStockQuote(string $symbol): array
+    {
+        try {
+            if (empty($this->alphaVantageKey)) {
+                return ['error' => 'Alpha Vantage API key not configured'];
+            }
+
+            $response = Http::timeout(10)->get('https://www.alphavantage.co/query', [
+                'function' => 'GLOBAL_QUOTE',
+                'symbol' => $symbol,
+                'apikey' => $this->alphaVantageKey
+            ]);
+
+            if ($response->successful()) {
+                $data = $response->json();
+                
+                if (isset($data['Global Quote']) && !empty($data['Global Quote'])) {
+                    $quote = $data['Global Quote'];
+                    return [
+                        'price' => floatval($quote['05. price'] ?? 0),
+                        'change' => floatval($quote['09. change'] ?? 0),
+                        'change_percent' => floatval(str_replace('%', '', $quote['10. change percent'] ?? '0')),
+                        'volume' => floatval($quote['06. volume'] ?? 0),
+                    ];
+                }
+                
+                return ['error' => "Stock symbol {$symbol} not found"];
+            }
+        } catch (\Exception $e) {
+            Log::error('Stock quote error', ['symbol' => $symbol, 'error' => $e->getMessage()]);
+        }
+        
+        return ['error' => "Unable to fetch quote for {$symbol}"];
+    }
+
+    /**
+     * Calculate stock technical indicators
+     */
+    private function getStockIndicators(string $symbol): array
+    {
+        try {
+            // Get daily data for indicators
+            $response = Http::timeout(10)->get('https://www.alphavantage.co/query', [
+                'function' => 'TIME_SERIES_DAILY',
+                'symbol' => $symbol,
+                'apikey' => $this->alphaVantageKey,
+                'outputsize' => 'compact'
+            ]);
+
+            if ($response->successful()) {
+                $data = $response->json();
+                $timeSeries = $data['Time Series (Daily)'] ?? [];
+                
+                if (empty($timeSeries)) {
+                    return [];
+                }
+
+                // Get recent prices for calculations
+                $prices = array_slice($timeSeries, 0, 20, true);
+                $closePrices = array_map(fn($day) => floatval($day['4. close']), $prices);
+                
+                // Calculate simple indicators
+                $currentPrice = $closePrices[0];
+                $sma20 = array_sum($closePrices) / count($closePrices);
+                
+                // Determine trend
+                $trend = $currentPrice > $sma20 ? 'Bullish 🟢' : 'Bearish 🔴';
+                
+                // Find support/resistance (simplified)
+                $high = max($closePrices);
+                $low = min($closePrices);
+                
+                return [
+                    'trend' => $trend,
+                    'sma_20' => round($sma20, 2),
+                    'support' => round($low, 2),
+                    'resistance' => round($high, 2),
+                    'volatility' => round((($high - $low) / $sma20) * 100, 2),
+                ];
+            }
+        } catch (\Exception $e) {
+            Log::error('Stock indicators error', ['symbol' => $symbol, 'error' => $e->getMessage()]);
+        }
+        
+        return [];
+    }
+
     // ===== PRIVATE HELPER METHODS =====
 
     private function getCoinGeckoTrending(): array
@@ -678,16 +816,6 @@ class MultiMarketDataService
         }
 
         return ['error' => "Unable to fetch {$symbol} quote"];
-    }
-
-    private function getStockIndicators(string $symbol): array
-    {
-        // Placeholder - implement with real data
-        return [
-            'rsi' => null,
-            'macd' => null,
-            'trend' => 'Neutral',
-        ];
     }
 
     private function getForexIndicators(string $pair): array
