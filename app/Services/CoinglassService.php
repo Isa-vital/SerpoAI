@@ -39,7 +39,7 @@ class CoinglassService
 
             if ($response->successful()) {
                 $data = $response->json();
-                
+
                 if ($data['success'] ?? false) {
                     return $this->parseLiquidationData($data['data'] ?? []);
                 }
@@ -49,7 +49,6 @@ class CoinglassService
                 'status' => $response->status(),
                 'body' => $response->body()
             ]);
-
         } catch (\Exception $e) {
             Log::error('Coinglass API error', ['error' => $e->getMessage(), 'symbol' => $symbol]);
         }
@@ -128,12 +127,11 @@ class CoinglassService
 
             if ($response->successful()) {
                 $data = $response->json();
-                
+
                 if ($data['success'] ?? false) {
                     return $data['data'] ?? [];
                 }
             }
-
         } catch (\Exception $e) {
             Log::error('Coinglass liquidation stats error', ['error' => $e->getMessage()]);
         }

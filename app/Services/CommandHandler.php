@@ -3401,7 +3401,7 @@ class CommandHandler
             $message .= "• Liquidity imbalance\n";
             $message .= "• Spoofing & absorption zones\n\n";
             $message .= "💡 *Pro Tip:* Large walls often indicate support/resistance levels.";
-            
+
             $this->telegram->sendMessage($chatId, $message);
             return;
         }
@@ -3419,7 +3419,7 @@ class CommandHandler
 
         try {
             $fetchTime = now()->format('H:i:s');
-            
+
             // Get order book from Binance
             $binance = app(\App\Services\BinanceAPIService::class);
             $depth = $binance->getOrderBookDepth($symbol, 100);
@@ -3449,11 +3449,11 @@ class CommandHandler
 
             // Format message
             $message = "📊 *ORDER BOOK DEPTH - {$symbol}*\n\n";
-            
+
             // Data source info
             $message .= "🔗 Source: Binance API | Updated: {$fetchTime} UTC\n";
             $message .= "📏 Depth: Top 100 levels | Spread: \$" . number_format($spread, 2) . " (" . number_format($spreadPercent, 3) . "%)\n\n";
-            
+
             // Liquidity Overview
             $message .= "📈 *Liquidity Overview*\n";
             $message .= "• Total Bid Volume: " . number_format($bidVolume, 2) . " {$baseAsset}\n";
@@ -3489,7 +3489,6 @@ class CommandHandler
             }
 
             $this->telegram->sendMessage($chatId, $message);
-
         } catch (\Exception $e) {
             Log::error('Order book error', ['error' => $e->getMessage()]);
             $this->telegram->sendMessage($chatId, "❌ Error fetching order book. Please try again.");
@@ -3522,7 +3521,7 @@ class CommandHandler
             $message .= "• High-risk liquidation zones\n";
             $message .= "• Open interest analysis\n\n";
             $message .= "💡 *Pro Tip:* Large liquidation clusters often act as magnets for price.";
-            
+
             $this->telegram->sendMessage($chatId, $message);
             return;
         }
@@ -3542,13 +3541,13 @@ class CommandHandler
         $cacheTTL = 300; // 5 minutes
 
         try {
-            $result = Cache::remember($cacheKey, $cacheTTL, function() use ($symbol, $timeframe) {
+            $result = Cache::remember($cacheKey, $cacheTTL, function () use ($symbol, $timeframe) {
                 $fetchTime = now()->format('H:i:s');
-                
+
                 // Get services
                 $binance = app(\App\Services\BinanceAPIService::class);
                 $coinglass = app(\App\Services\CoinglassService::class);
-                
+
                 // Try Binance Futures first (primary source)
                 $ticker = $binance->get24hTicker($symbol);
                 if (!$ticker) {
@@ -3556,11 +3555,11 @@ class CommandHandler
                 }
 
                 $currentPrice = (float) $ticker['lastPrice'];
-                
+
                 // Try Coinglass first if configured
                 if ($coinglass->isConfigured()) {
                     $coinglassData = $coinglass->getLiquidationHeatmap(str_replace('USDT', '', $symbol), $timeframe);
-                    
+
                     if ($coinglassData) {
                         // Use Coinglass data
                         $longLiqs = array_slice($coinglassData['longLiqs'], 0, 3);
@@ -3568,7 +3567,7 @@ class CommandHandler
                         $dataSource = 'Coinglass Premium';
                         $openInterest = $coinglassData['totalVolume'] ?? 0;
                         $longRatio = null;
-                        
+
                         Log::info('Using Coinglass liquidation data', [
                             'symbol' => $symbol,
                             'timeframe' => $timeframe
@@ -3579,7 +3578,7 @@ class CommandHandler
                         if (empty($zones)) {
                             return null;
                         }
-                        
+
                         $longLiqs = $zones['longLiqs'];
                         $shortLiqs = $zones['shortLiqs'];
                         $dataSource = $zones['dataSource'];
@@ -3592,7 +3591,7 @@ class CommandHandler
                     if (empty($zones)) {
                         return null;
                     }
-                    
+
                     $longLiqs = $zones['longLiqs'];
                     $shortLiqs = $zones['shortLiqs'];
                     $dataSource = $zones['dataSource'];
@@ -3609,7 +3608,7 @@ class CommandHandler
                 $nearestShort = $shortLiqs[0];
                 $nearestDistance = min(abs($nearestLong['distance']), abs($nearestShort['distance']));
                 $nearestIntensity = max($nearestLong['intensity'] ?? 0.5, $nearestShort['intensity'] ?? 0.5);
-                
+
                 // Dynamic risk thresholds based on real data
                 if ($nearestIntensity >= 0.7 && $nearestDistance <= 1.0) {
                     $riskLevel = 'Critical';
@@ -3665,17 +3664,17 @@ class CommandHandler
             $message .= "🔗 Source: {$result['dataSource']}\n";
             $message .= "⏰ Updated: {$result['fetchTime']} UTC | Timeframe: {$timeframe}\n";
             $message .= "💰 Current Price: \$" . number_format($result['currentPrice'], 2) . "\n";
-            
+
             if ($result['openInterest'] > 0) {
                 $message .= "📊 Open Interest: " . number_format($result['openInterest'], 0) . " contracts\n";
             }
-            
+
             if ($result['longRatio'] !== null) {
                 $longPct = $result['longRatio'] * 100;
                 $shortPct = (1 - $result['longRatio']) * 100;
                 $message .= "⚖️ Positions: " . number_format($longPct, 1) . "% Long / " . number_format($shortPct, 1) . "% Short\n";
             }
-            
+
             $message .= "\n";
 
             // Long liquidations (downside)
@@ -3683,17 +3682,17 @@ class CommandHandler
             foreach ($result['longLiqs'] as $liq) {
                 $distanceStr = number_format(abs($liq['distance']), 2);
                 $message .= "• \$" . number_format($liq['price'], 2);
-                
+
                 if (isset($liq['name'])) {
                     $message .= " ({$liq['name']} | -{$distanceStr}%)";
                 } else {
                     $message .= " (-{$distanceStr}%)";
                 }
-                
+
                 if (isset($liq['volume']) && $liq['volume'] > 0) {
                     $message .= " - " . number_format($liq['volume'], 0) . " contracts";
                 }
-                
+
                 $message .= "\n";
             }
             $message .= "\n";
@@ -3703,17 +3702,17 @@ class CommandHandler
             foreach ($result['shortLiqs'] as $liq) {
                 $distanceStr = number_format(abs($liq['distance']), 2);
                 $message .= "• \$" . number_format($liq['price'], 2);
-                
+
                 if (isset($liq['name'])) {
                     $message .= " ({$liq['name']} | +{$distanceStr}%)";
                 } else {
                     $message .= " (+{$distanceStr}%)";
                 }
-                
+
                 if (isset($liq['volume']) && $liq['volume'] > 0) {
                     $message .= " - " . number_format($liq['volume'], 0) . " contracts";
                 }
-                
+
                 $message .= "\n";
             }
 
@@ -3726,7 +3725,6 @@ class CommandHandler
             $message .= "• Updated every 5 minutes\n";
 
             $this->telegram->sendMessage($chatId, $message);
-
         } catch (\Exception $e) {
             Log::error('Liquidation analysis error', ['error' => $e->getMessage()]);
             $this->telegram->sendMessage($chatId, "❌ Error analyzing liquidations. Please try again.");
@@ -3751,7 +3749,7 @@ class CommandHandler
             $message .= "• Inflation pressure windows\n";
             $message .= "• Supply shock alerts\n\n";
             $message .= "💡 *Pro Tip:* Large unlocks often precede price dumps. Plan exits accordingly.";
-            
+
             $this->telegram->sendMessage($chatId, $message);
             return;
         }
@@ -3765,7 +3763,7 @@ class CommandHandler
         try {
             // In production, integrate with TokenUnlocks API or Messari
             // For now, show example structure
-            
+
             $message = "🔓 *TOKEN UNLOCK SCHEDULE - {$symbol}*\n\n";
             $message .= "📅 Period: " . ucfirst($period) . "\n\n";
 
@@ -3801,7 +3799,6 @@ class CommandHandler
             $message .= "Integrating with TokenUnlocks & Messari APIs for real-time vesting schedules.";
 
             $this->telegram->sendMessage($chatId, $message);
-
         } catch (\Exception $e) {
             Log::error('Unlock schedule error', ['error' => $e->getMessage()]);
             $this->telegram->sendMessage($chatId, "❌ Error fetching unlock schedule. Please try again.");
@@ -3826,7 +3823,7 @@ class CommandHandler
             $message .= "• Burn impact vs emissions\n";
             $message .= "• Net supply change\n\n";
             $message .= "💡 *Pro Tip:* Consistent burns > circulating supply = bullish long-term.";
-            
+
             $this->telegram->sendMessage($chatId, $message);
             return;
         }
@@ -3839,7 +3836,7 @@ class CommandHandler
 
         try {
             // In production, integrate with on-chain data (Etherscan, BscScan, etc.)
-            
+
             $message = "🔥 *TOKEN BURN TRACKER - {$symbol}*\n\n";
             $message .= "📅 Period: " . ucfirst($period) . "\n\n";
 
@@ -3880,7 +3877,6 @@ class CommandHandler
             $message .= "Integrating with Etherscan, BscScan, and project APIs for real-time burn tracking.";
 
             $this->telegram->sendMessage($chatId, $message);
-
         } catch (\Exception $e) {
             Log::error('Burn tracker error', ['error' => $e->getMessage()]);
             $this->telegram->sendMessage($chatId, "❌ Error fetching burn data. Please try again.");
@@ -3911,7 +3907,7 @@ class CommandHandler
             $message .= "• Confluence zones\n";
             $message .= "• Trend-aware anchoring\n\n";
             $message .= "💡 *Pro Tip:* 0.618 & 0.786 are the strongest support/resistance levels.";
-            
+
             $this->telegram->sendMessage($chatId, $message);
             return;
         }
@@ -3920,13 +3916,22 @@ class CommandHandler
         $timeframe = strtoupper($params[1] ?? '1D');
 
         // Detect market type and format symbol
-        $isForex = preg_match('/^[A-Z]{6}$/', $symbol) && !str_contains($symbol, 'USD');
+        $isForex = preg_match('/^[A-Z]{6}$/', $symbol) && !str_contains($symbol, 'USDT');
         $isStock = !str_contains($symbol, 'USDT') && !str_contains($symbol, 'BTC') && !$isForex && strlen($symbol) <= 5;
         $isCrypto = !$isForex && !$isStock;
 
-        if ($isCrypto && !str_contains($symbol, 'USDT')) {
+        // Only append USDT for crypto pairs
+        if ($isCrypto && !str_contains($symbol, 'USDT') && !str_contains($symbol, 'BTC')) {
             $symbol .= 'USDT';
         }
+
+        Log::info('Fibonacci market detection', [
+            'symbol' => $symbol,
+            'is_crypto' => $isCrypto,
+            'is_forex' => $isForex,
+            'is_stock' => $isStock,
+            'timeframe' => $timeframe
+        ]);
 
         $this->telegram->sendChatAction($chatId, 'typing');
         $this->telegram->sendMessage($chatId, "📐 Calculating Fibonacci levels for *{$symbol}*...");
@@ -3934,10 +3939,26 @@ class CommandHandler
         try {
             // Get historical data
             $candles = null;
-            
+
+            // Map timeframe to Binance intervals
+            $binanceInterval = match (strtolower($timeframe)) {
+                '1m' => '1m',
+                '5m' => '5m',
+                '15m' => '15m',
+                '30m' => '30m',
+                '1h' => '1h',
+                '2h' => '2h',
+                '4h' => '4h',
+                '6h' => '6h',
+                '1d' => '1d',
+                '1w' => '1w',
+                '1mo' => '1M',
+                default => '1d'
+            };
+
             if ($isCrypto) {
                 $binance = app(\App\Services\BinanceAPIService::class);
-                $candles = $binance->getKlines($symbol, $timeframe, 100);
+                $candles = $binance->getKlines($symbol, $binanceInterval, 100);
             } elseif ($isForex) {
                 // Use Alpha Vantage for forex
                 $candles = $this->getForexCandles($symbol, $timeframe, 100);
@@ -3947,19 +3968,41 @@ class CommandHandler
             }
 
             if (!$candles || count($candles) < 20) {
-                $this->telegram->sendMessage($chatId, "❌ Insufficient data for Fibonacci calculation");
+                Log::error('Fibonacci insufficient data', [
+                    'symbol' => $symbol,
+                    'candles_count' => count($candles ?? []),
+                    'is_crypto' => $isCrypto,
+                    'is_forex' => $isForex,
+                    'is_stock' => $isStock,
+                    'timeframe' => $timeframe
+                ]);
+
+                $errorMsg = "❌ Insufficient data for Fibonacci calculation";
+                if ($isForex && !config('services.alpha_vantage.key')) {
+                    $errorMsg .= "\n\n⚠️ Alpha Vantage API key required for forex data.";
+                } elseif ($isStock && !config('services.alpha_vantage.key')) {
+                    $errorMsg .= "\n\n⚠️ Alpha Vantage API key required for stock data.";
+                }
+
+                $this->telegram->sendMessage($chatId, $errorMsg);
                 return;
             }
+
+            Log::info('Fibonacci data fetched successfully', [
+                'symbol' => $symbol,
+                'candles_count' => count($candles),
+                'first_candle' => $candles[0] ?? null
+            ]);
 
             // Find swing high and swing low
             $highs = array_column($candles, 2); // high prices
             $lows = array_column($candles, 3);  // low prices
             $closes = array_column($candles, 4); // close prices
-            
+
             $swingHigh = max($highs);
             $swingLow = min($lows);
             $currentPrice = end($closes);
-            
+
             $range = $swingHigh - $swingLow;
             $isUptrend = $currentPrice > ($swingHigh + $swingLow) / 2;
 
@@ -3991,7 +4034,7 @@ class CommandHandler
             // Format message
             $trendEmoji = $isUptrend ? "📈" : "📉";
             $trendText = $isUptrend ? "Uptrend" : "Downtrend";
-            
+
             $message = "📐 *FIBONACCI RETRACEMENT - {$symbol}*\n\n";
             $message .= "⏰ Timeframe: {$timeframe}\n";
             $message .= "{$trendEmoji} Trend: {$trendText}\n";
@@ -4025,7 +4068,7 @@ class CommandHandler
             $nearest = collect($levels)->sortBy(fn($l) => abs($l['price'] - $currentPrice))->first();
             $distance = (($nearest['price'] - $currentPrice) / $currentPrice) * 100;
             $direction = $distance > 0 ? "above" : "below";
-            
+
             $message .= "📍 *Current Position*\n";
             $message .= "Price is " . number_format(abs($distance), 2) . "% {$direction} {$nearest['name']} level\n\n";
 
@@ -4041,7 +4084,6 @@ class CommandHandler
             }
 
             $this->telegram->sendMessage($chatId, $message);
-
         } catch (\Exception $e) {
             Log::error('Fibonacci calculation error', ['error' => $e->getMessage()]);
             $this->telegram->sendMessage($chatId, "❌ Error calculating Fibonacci levels. Please try again.");
@@ -4053,16 +4095,222 @@ class CommandHandler
      */
     private function getForexCandles(string $symbol, string $timeframe, int $limit): ?array
     {
-        // TODO: Implement Alpha Vantage forex data fetching
-        return null;
+        try {
+            $apiKey = config('services.alpha_vantage.key');
+            if (!$apiKey) {
+                Log::warning('Alpha Vantage API key not configured');
+                return null;
+            }
+
+            // Map timeframe to Alpha Vantage intervals
+            // Note: FX_INTRADAY is premium only, use daily/weekly/monthly for free tier
+            $intervalMap = [
+                '1M' => 'daily',
+                '5M' => 'daily',
+                '15M' => 'daily',
+                '30M' => 'daily',
+                '1H' => 'daily',
+                '4H' => 'daily',
+                '1D' => 'daily',
+                '1W' => 'weekly',
+                '1MO' => 'monthly'
+            ];
+
+            $interval = $intervalMap[$timeframe] ?? 'daily';
+            $function = $interval === 'weekly' ? 'FX_WEEKLY' : ($interval === 'monthly' ? 'FX_MONTHLY' : 'FX_DAILY');
+
+            $fromSymbol = substr($symbol, 0, 3);
+            $toSymbol = substr($symbol, 3, 3);
+
+            Log::info('Fetching forex data', [
+                'symbol' => $symbol,
+                'from' => $fromSymbol,
+                'to' => $toSymbol,
+                'function' => $function,
+                'interval' => $interval
+            ]);
+
+            $params = [
+                'function' => $function,
+                'from_symbol' => $fromSymbol,
+                'to_symbol' => $toSymbol,
+                'apikey' => $apiKey,
+                'outputsize' => 'full'
+            ];
+
+            $response = Http::timeout(15)->get('https://www.alphavantage.co/query', $params);
+
+            if (!$response->successful()) {
+                Log::error('Alpha Vantage forex API error', ['status' => $response->status()]);
+                return null;
+            }
+
+            $data = $response->json();
+
+            Log::info('Alpha Vantage response', [
+                'keys' => array_keys($data ?? []),
+                'has_error' => isset($data['Error Message']) || isset($data['Note'])
+            ]);
+
+            // Check for premium endpoint message (starts with "Thank you for using")
+            if (isset($data['Information']) && str_contains($data['Information'], 'premium')) {
+                Log::warning('Alpha Vantage premium endpoint', ['message' => $data['Information']]);
+                return null;
+            }
+
+            if (isset($data['Error Message'])) {
+                Log::error('Alpha Vantage error', ['error' => $data['Error Message']]);
+                return null;
+            }
+
+            if (isset($data['Note'])) {
+                Log::warning('Alpha Vantage rate limit', ['note' => $data['Note']]);
+                return null;
+            }
+
+            // Find the time series key
+            $timeSeriesKey = null;
+            foreach (array_keys($data) as $key) {
+                if (str_contains($key, 'Time Series')) {
+                    $timeSeriesKey = $key;
+                    break;
+                }
+            }
+
+            if (!$timeSeriesKey || !isset($data[$timeSeriesKey])) {
+                Log::error('No time series data found', ['available_keys' => array_keys($data)]);
+                return null;
+            }
+
+            $timeSeries = $data[$timeSeriesKey];
+            $candles = [];
+
+            foreach (array_slice($timeSeries, 0, $limit, true) as $timestamp => $values) {
+                $candles[] = [
+                    strtotime($timestamp) * 1000,
+                    floatval($values['1. open']),
+                    floatval($values['2. high']),
+                    floatval($values['3. low']),
+                    floatval($values['4. close']),
+                    0
+                ];
+            }
+
+            Log::info('Forex candles processed', ['count' => count($candles)]);
+
+            return array_reverse($candles);
+        } catch (\Exception $e) {
+            Log::error('Alpha Vantage forex error', ['error' => $e->getMessage(), 'symbol' => $symbol]);
+            return null;
+        }
     }
 
     /**
-     * Get stock candles (placeholder for Polygon.io integration)
+     * Get stock candles using Alpha Vantage (free alternative to Polygon)
      */
     private function getStockCandles(string $symbol, string $timeframe, int $limit): ?array
     {
-        // TODO: Implement Polygon.io stock data fetching
-        return null;
+        try {
+            $apiKey = config('services.alpha_vantage.key');
+            if (!$apiKey) {
+                Log::warning('Alpha Vantage API key not configured');
+                return null;
+            }
+
+            // Map timeframe to Alpha Vantage functions
+            // Note: TIME_SERIES_INTRADAY is premium only, use daily/weekly/monthly for free tier
+            $intervalMap = [
+                '1M' => 'daily',
+                '5M' => 'daily',
+                '15M' => 'daily',
+                '30M' => 'daily',
+                '1H' => 'daily',
+                '4H' => 'daily',
+                '1D' => 'daily',
+                '1W' => 'weekly',
+                '1MO' => 'monthly'
+            ];
+
+            $interval = $intervalMap[$timeframe] ?? 'daily';
+            $function = $interval === 'weekly' ? 'TIME_SERIES_WEEKLY' : ($interval === 'monthly' ? 'TIME_SERIES_MONTHLY' : 'TIME_SERIES_DAILY');
+
+            Log::info('Fetching stock data', [
+                'symbol' => $symbol,
+                'function' => $function,
+                'interval' => $interval
+            ]);
+
+            $params = [
+                'function' => $function,
+                'symbol' => $symbol,
+                'apikey' => $apiKey,
+                'outputsize' => 'full'
+            ];
+
+            $response = Http::timeout(15)->get('https://www.alphavantage.co/query', $params);
+
+            if (!$response->successful()) {
+                Log::error('Alpha Vantage stock API error', ['status' => $response->status()]);
+                return null;
+            }
+
+            $data = $response->json();
+
+            Log::info('Alpha Vantage stock response', [
+                'keys' => array_keys($data ?? []),
+                'has_error' => isset($data['Error Message']) || isset($data['Note'])
+            ]);
+
+            // Check for premium endpoint message
+            if (isset($data['Information']) && str_contains($data['Information'], 'premium')) {
+                Log::warning('Alpha Vantage premium endpoint', ['message' => $data['Information']]);
+                return null;
+            }
+
+            if (isset($data['Error Message'])) {
+                Log::error('Alpha Vantage stock error', ['error' => $data['Error Message']]);
+                return null;
+            }
+
+            if (isset($data['Note'])) {
+                Log::warning('Alpha Vantage rate limit', ['note' => $data['Note']]);
+                return null;
+            }
+
+            // Find the time series key
+            $timeSeriesKey = null;
+            foreach (array_keys($data) as $key) {
+                if (str_contains($key, 'Time Series')) {
+                    $timeSeriesKey = $key;
+                    break;
+                }
+            }
+
+            if (!$timeSeriesKey || !isset($data[$timeSeriesKey])) {
+                Log::error('No time series data found', ['available_keys' => array_keys($data)]);
+                return null;
+            }
+
+            $timeSeries = $data[$timeSeriesKey];
+            $candles = [];
+
+            foreach (array_slice($timeSeries, 0, $limit, true) as $timestamp => $values) {
+                $candles[] = [
+                    strtotime($timestamp) * 1000,
+                    floatval($values['1. open']),
+                    floatval($values['2. high']),
+                    floatval($values['3. low']),
+                    floatval($values['4. close']),
+                    floatval($values['5. volume'] ?? 0)
+                ];
+            }
+
+            Log::info('Stock candles processed', ['count' => count($candles)]);
+
+            return array_reverse($candles);
+        } catch (\Exception $e) {
+            Log::error('Alpha Vantage stock error', ['error' => $e->getMessage(), 'symbol' => $symbol]);
+            return null;
+        }
     }
 }

@@ -364,7 +364,7 @@ class BinanceAPIService
             $openInterest = $this->getFuturesOpenInterest($symbol);
             $longShortRatio = $this->getLongShortRatio($symbol, '5m');
             $topTraders = $this->getTopTraderRatio($symbol, '5m');
-            
+
             if (!$longShortRatio || empty($longShortRatio)) {
                 return [];
             }
@@ -391,7 +391,7 @@ class BinanceAPIService
                 // Long liquidations (downside) - weighted by short ratio
                 $longLiqPrice = $currentPrice * (1 - $level['multiplier']);
                 $longIntensity = $level['intensity'] * $shortRatio; // More shorts = more long liquidations
-                
+
                 $longLiqs[] = [
                     'price' => $longLiqPrice,
                     'name' => $level['name'],
@@ -403,7 +403,7 @@ class BinanceAPIService
                 // Short liquidations (upside) - weighted by long ratio
                 $shortLiqPrice = $currentPrice * (1 + $level['multiplier']);
                 $shortIntensity = $level['intensity'] * $longRatio; // More longs = more short liquidations
-                
+
                 $shortLiqs[] = [
                     'price' => $shortLiqPrice,
                     'name' => $level['name'],
@@ -425,11 +425,9 @@ class BinanceAPIService
                 'openInterest' => $openInterest['openInterest'] ?? 0,
                 'dataSource' => 'Binance Futures'
             ];
-
         } catch (\Exception $e) {
             Log::error('Calculate liquidation zones error', ['error' => $e->getMessage()]);
             return [];
         }
     }
 }
-
