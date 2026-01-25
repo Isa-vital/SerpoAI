@@ -65,6 +65,10 @@ return [
         'api_secret' => env('BINANCE_API_SECRET'),
     ],
 
+    'coinglass' => [
+        'api_key' => env('COINGLASS_API_KEY'),
+    ],
+
     'coingecko' => [
         'api_key' => env('COINGECKO_API_KEY'),
         'api_url' => env('COINGECKO_API_URL', 'https://api.coingecko.com/api/v3'),
