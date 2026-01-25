@@ -171,6 +171,18 @@ class MultiMarketDataService
             }
         }
 
+        // Commodity forex pairs (Gold, Silver, Oil, etc.)
+        $commodityPairs = [
+            'XAUUSD', 'XAGUSD', 'XPTUSD', 'XPDUSD',  // Precious metals
+            'XAUEUR', 'XAGEUR', 'XPTEUR', 'XPDEUR',
+            'XAUGBP', 'XAGJPY', 'XAUCHF', 'XAGCHF',
+            'BCOUSD', 'WTOUSD', 'NGAS',  // Energy
+        ];
+        
+        if (in_array(strtoupper($symbol), $commodityPairs)) {
+            return 'forex';
+        }
+
         // Crypto pairs - support ALL major quote currencies
         // USDT, BTC, ETH, BUSD, USDC, BNB, DAI, TUSD, FDUSD, EUR, GBP, AUD, TRY, etc.
         $cryptoSuffixes = [
@@ -361,6 +373,7 @@ class MultiMarketDataService
             'USDT',
             'BUSD',
             'USDC',
+            'USD',  // Added for pairs like BTCUSD
             'BTC',
             'ETH',
             'BNB',
@@ -386,8 +399,22 @@ class MultiMarketDataService
             }
         }
 
-        // Only add USDT if no quote currency detected
+        // Only add USDT if no quote currency detected AND not a forex commodity
         if (!$hasQuote) {
+            // Check if it might be a forex pair mistakenly sent here
+            $commodityPrefixes = ['XAU', 'XAG', 'XPT', 'XPD', 'BCO', 'WTO', 'NGAS'];
+            $isCommodity = false;
+            foreach ($commodityPrefixes as $prefix) {
+                if (str_starts_with(strtoupper($symbol), $prefix)) {
+                    $isCommodity = true;
+                    break;
+                }
+            }
+            
+            if ($isCommodity) {
+                return ['error' => "Invalid crypto symbol. {$symbol} appears to be a forex commodity. Use /trader {$symbol}USD instead."];
+            }
+            
             $symbol .= 'USDT';
         }
 
@@ -553,41 +580,113 @@ class MultiMarketDataService
     }
 
     /**
-     * Get stock quote from Alpha Vantage
+     * Get stock quote with multiple free API fallbacks
      */
     private function getStockQuote(string $symbol): array
     {
-        try {
-            if (empty($this->alphaVantageKey)) {
-                return ['error' => 'Alpha Vantage API key not configured'];
+        // Try Alpha Vantage first (best quality)
+        if (!empty($this->alphaVantageKey)) {
+            try {
+                $response = Http::timeout(10)->get('https://www.alphavantage.co/query', [
+                    'function' => 'GLOBAL_QUOTE',
+                    'symbol' => $symbol,
+                    'apikey' => $this->alphaVantageKey
+                ]);
+
+                if ($response->successful()) {
+                    $data = $response->json();
+                    
+                    // Check for API errors
+                    if (isset($data['Error Message'])) {
+                        Log::error('Alpha Vantage stock error', ['symbol' => $symbol, 'error' => $data['Error Message']]);
+                    } elseif (isset($data['Note'])) {
+                        Log::warning('Alpha Vantage rate limit', ['symbol' => $symbol, 'note' => $data['Note']]);
+                    } elseif (isset($data['Information'])) {
+                        Log::info('Alpha Vantage limitation, using fallback', ['symbol' => $symbol]);
+                    } elseif (isset($data['Global Quote']) && !empty($data['Global Quote'])) {
+                        // Success!
+                        $quote = $data['Global Quote'];
+                        return [
+                            'price' => floatval($quote['05. price'] ?? 0),
+                            'change' => floatval($quote['09. change'] ?? 0),
+                            'change_percent' => floatval(str_replace('%', '', $quote['10. change percent'] ?? '0')),
+                            'volume' => floatval($quote['06. volume'] ?? 0),
+                        ];
+                    }
+                }
+            } catch (\Exception $e) {
+                Log::warning('Alpha Vantage error, trying fallback', ['symbol' => $symbol, 'error' => $e->getMessage()]);
             }
-
-            $response = Http::timeout(10)->get('https://www.alphavantage.co/query', [
-                'function' => 'GLOBAL_QUOTE',
-                'symbol' => $symbol,
-                'apikey' => $this->alphaVantageKey
-            ]);
-
+        }
+        
+        // Fallback 1: Yahoo Finance API (FREE, no key needed)
+        try {
+            $response = Http::timeout(10)
+                ->withHeaders(['User-Agent' => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'])
+                ->get("https://query1.finance.yahoo.com/v8/finance/chart/{$symbol}", [
+                    'interval' => '1d',
+                    'range' => '1d'
+                ]);
+            
             if ($response->successful()) {
                 $data = $response->json();
                 
-                if (isset($data['Global Quote']) && !empty($data['Global Quote'])) {
-                    $quote = $data['Global Quote'];
+                if (isset($data['chart']['result'][0])) {
+                    $result = $data['chart']['result'][0];
+                    $meta = $result['meta'];
+                    
+                    $price = floatval($meta['regularMarketPrice'] ?? 0);
+                    $prevClose = floatval($meta['previousClose'] ?? $price);
+                    $change = $price - $prevClose;
+                    $changePercent = $prevClose > 0 ? ($change / $prevClose) * 100 : 0;
+                    
+                    Log::info('Using Yahoo Finance API', ['symbol' => $symbol, 'price' => $price]);
+                    
                     return [
-                        'price' => floatval($quote['05. price'] ?? 0),
-                        'change' => floatval($quote['09. change'] ?? 0),
-                        'change_percent' => floatval(str_replace('%', '', $quote['10. change percent'] ?? '0')),
-                        'volume' => floatval($quote['06. volume'] ?? 0),
+                        'price' => $price,
+                        'change' => $change,
+                        'change_percent' => $changePercent,
+                        'volume' => floatval($meta['regularMarketVolume'] ?? 0),
+                        'note' => 'Using Yahoo Finance (free API)'
                     ];
                 }
-                
-                return ['error' => "Stock symbol {$symbol} not found"];
             }
         } catch (\Exception $e) {
-            Log::error('Stock quote error', ['symbol' => $symbol, 'error' => $e->getMessage()]);
+            Log::info('Yahoo Finance failed, trying next fallback', ['symbol' => $symbol, 'error' => $e->getMessage()]);
         }
         
-        return ['error' => "Unable to fetch quote for {$symbol}"];
+        // Fallback 2: Finnhub API (FREE - 60 calls/minute, no key for demo endpoint)
+        try {
+            $response = Http::timeout(10)->get("https://finnhub.io/api/v1/quote", [
+                'symbol' => $symbol,
+                'token' => 'demo'  // Demo token works for major stocks
+            ]);
+            
+            if ($response->successful()) {
+                $data = $response->json();
+                
+                if (isset($data['c']) && $data['c'] > 0) {
+                    $current = floatval($data['c']);  // Current price
+                    $prevClose = floatval($data['pc'] ?? $current);  // Previous close
+                    $change = $current - $prevClose;
+                    $changePercent = $prevClose > 0 ? ($change / $prevClose) * 100 : 0;
+                    
+                    Log::info('Using Finnhub API', ['symbol' => $symbol, 'price' => $current]);
+                    
+                    return [
+                        'price' => $current,
+                        'change' => $change,
+                        'change_percent' => $changePercent,
+                        'volume' => 0,  // Demo endpoint doesn't provide volume
+                        'note' => 'Using Finnhub (free demo API)'
+                    ];
+                }
+            }
+        } catch (\Exception $e) {
+            Log::error('All stock API fallbacks failed', ['symbol' => $symbol, 'error' => $e->getMessage()]);
+        }
+        
+        return ['error' => "Stock symbol {$symbol} not found. Verify it's a valid US stock ticker (e.g., AAPL, MSFT, TSLA)"];
     }
 
     /**
@@ -710,38 +809,74 @@ class MultiMarketDataService
 
     private function getForexPairData(string $pair): array
     {
-        if (empty($this->alphaVantageKey)) {
-            return ['error' => 'Alpha Vantage API key not configured'];
+        // Try Alpha Vantage first (best quality)
+        if (!empty($this->alphaVantageKey)) {
+            try {
+                $from = substr($pair, 0, 3);
+                $to = substr($pair, 3, 3);
+
+                $response = Http::timeout(10)->get('https://www.alphavantage.co/query', [
+                    'function' => 'CURRENCY_EXCHANGE_RATE',
+                    'from_currency' => $from,
+                    'to_currency' => $to,
+                    'apikey' => $this->alphaVantageKey,
+                ]);
+
+                if ($response->successful()) {
+                    $data = $response->json();
+                    
+                    // Check for API errors
+                    if (isset($data['Error Message'])) {
+                        Log::error('Alpha Vantage forex error', ['pair' => $pair, 'error' => $data['Error Message']]);
+                    } elseif (isset($data['Note'])) {
+                        Log::warning('Alpha Vantage rate limit', ['pair' => $pair, 'note' => $data['Note']]);
+                    } elseif (isset($data['Information'])) {
+                        Log::info('Alpha Vantage limitation, using fallback', ['pair' => $pair]);
+                    } elseif (isset($data['Realtime Currency Exchange Rate'])) {
+                        // Success!
+                        $rate = $data['Realtime Currency Exchange Rate'];
+                        return [
+                            'pair' => $pair,
+                            'price' => floatval($rate['5. Exchange Rate']),
+                            'change' => floatval($rate['9. Change'] ?? 0),
+                            'change_percent' => floatval($rate['10. Change Pct'] ?? 0),
+                        ];
+                    }
+                }
+            } catch (\Exception $e) {
+                Log::warning('Alpha Vantage error, trying fallback', ['pair' => $pair, 'error' => $e->getMessage()]);
+            }
         }
 
+        // Fallback: FREE API (exchangerate-api.com - 1500 requests/month, no key needed)
         try {
             $from = substr($pair, 0, 3);
             $to = substr($pair, 3, 3);
-
-            $response = Http::timeout(10)->get('https://www.alphavantage.co/query', [
-                'function' => 'CURRENCY_EXCHANGE_RATE',
-                'from_currency' => $from,
-                'to_currency' => $to,
-                'apikey' => $this->alphaVantageKey,
-            ]);
-
+            
+            $response = Http::timeout(10)->get("https://api.exchangerate-api.com/v4/latest/{$from}");
+            
             if ($response->successful()) {
                 $data = $response->json();
-                if (isset($data['Realtime Currency Exchange Rate'])) {
-                    $rate = $data['Realtime Currency Exchange Rate'];
+                
+                if (isset($data['rates'][$to])) {
+                    $rate = floatval($data['rates'][$to]);
+                    
+                    Log::info('Using free forex API', ['pair' => $pair, 'rate' => $rate]);
+                    
                     return [
                         'pair' => $pair,
-                        'price' => floatval($rate['5. Exchange Rate']),
-                        'change' => floatval($rate['9. Change'] ?? 0),
-                        'change_percent' => floatval($rate['10. Change Pct'] ?? 0),
+                        'price' => $rate,
+                        'change' => 0, // Free API doesn't provide 24h change
+                        'change_percent' => 0,
+                        'note' => 'Using free API (no 24h change data)'
                     ];
                 }
             }
         } catch (\Exception $e) {
-            Log::error('Forex pair data error', ['pair' => $pair, 'error' => $e->getMessage()]);
+            Log::error('Forex fallback API failed', ['pair' => $pair, 'error' => $e->getMessage()]);
         }
 
-        return ['error' => "Unable to fetch {$pair} data"];
+        return ['error' => "Unable to fetch {$pair} data. Verify pair format (e.g., EURUSD, GBPJPY, XAUUSD)"];
     }
 
     private function getForexMarketStatus(): string

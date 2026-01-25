@@ -34,6 +34,7 @@ class CommandHandler
     private SuperChartService $superChart;
     private HeatmapService $heatmap;
     private WhaleAlertService $whaleAlert;
+    private MultiMarketDataService $multiMarket;
 
     public function __construct(
         TelegramBotService $telegram,
@@ -58,7 +59,8 @@ class CommandHandler
         ChartService $chartService,
         SuperChartService $superChart,
         HeatmapService $heatmap,
-        WhaleAlertService $whaleAlert
+        WhaleAlertService $whaleAlert,
+        MultiMarketDataService $multiMarket
     ) {
         $this->telegram = $telegram;
         $this->marketData = $marketData;
@@ -83,6 +85,7 @@ class CommandHandler
         $this->superChart = $superChart;
         $this->heatmap = $heatmap;
         $this->whaleAlert = $whaleAlert;
+        $this->multiMarket = $multiMarket;
     }
 
     /**
@@ -268,6 +271,10 @@ class CommandHandler
         $message .= "/sentiment [symbol] - Market sentiment\n\n";
 
         $message .= "*🚀 ELITE FEATURES*\n";
+        $message .= "🔥 `/trader [symbol]` - AI Trading Assistant\n";
+        $message .= "  • Works with Crypto, Stocks & Forex\n";
+        $message .= "  • Entry/exit recommendations\n";
+        $message .= "  • Real-time technical analysis\n";
         $message .= "🔥 `/search` - Natural language market search\n";
         $message .= "🔥 `/backtest` - Strategy backtesting (text/image)\n";
         $message .= "🔥 `/verify` - Professional token verification\n";
@@ -315,6 +322,9 @@ class CommandHandler
         $message .= "━━━━━━━━━━━━━━━━━━━━\n";
         $message .= "💡 *Quick Examples:*\n";
         $message .= "• `/scan` - Full market overview\n";
+        $message .= "• `/trader BTCUSDT` - AI trade analysis\n";
+        $message .= "• `/trader AAPL` - Stock trade setup\n";
+        $message .= "• `/trader EURUSD` - Forex signals\n";
         $message .= "• `/sr BTCUSDT` - S/R analysis\n";
         $message .= "• `/rsi ETHUSDT` - RSI heatmap\n";
         $message .= "• `/analyze AAPL` - Stock analysis\n";
@@ -2491,7 +2501,17 @@ class CommandHandler
             };
             
             if (isset($marketData['error'])) {
-                $this->telegram->sendMessage($chatId, "❌ {$marketData['error']}\n\nTry: `/trader BTCUSDT` (crypto), `/trader AAPL` (stock), or `/trader EURUSD` (forex)");
+                $errorMsg = $marketData['error'];
+                // Make error message more helpful
+                if (str_contains($errorMsg, 'not found') || str_contains($errorMsg, 'Unable to fetch')) {
+                    $this->telegram->sendMessage($chatId, "❌ {$errorMsg}\n\n💡 *Tips:*\n" .
+                        "• Crypto: Try `/trader ETHUSDT` or `/trader BNBUSDT`\n" .
+                        "• Stocks: Try `/trader MSFT` or `/trader GOOGL`\n" .
+                        "• Forex: Try `/trader GBPUSD` or `/trader USDJPY`\n" .
+                        "• Gold: `/trader XAUUSD`");
+                } else {
+                    $this->telegram->sendMessage($chatId, "❌ {$errorMsg}");
+                }
                 return;
             }
 
@@ -2548,8 +2568,8 @@ class CommandHandler
         $prompt .= "Be specific, actionable, and risk-aware. Format with emojis for clarity.";
 
         try {
-            $aiResponse = $this->ai->generateAnalysis($prompt);
-            return $aiResponse['analysis'] ?? 'AI analysis temporarily unavailable.';
+            $aiResponse = $this->openai->generateCompletion($prompt, 500);
+            return $aiResponse ?? $this->generateFallbackTradingInsights($marketData);
         } catch (\Exception $e) {
             Log::error('AI trading insights error', ['error' => $e->getMessage()]);
             return $this->generateFallbackTradingInsights($marketData);
@@ -2597,32 +2617,82 @@ class CommandHandler
         // Market Info
         $message .= "📊 *Market Info*\n";
         $message .= "• Type: " . ucfirst($marketType) . "\n";
-        $message .= "• Price: " . $this->formatPrice($marketData['price'], $marketType) . "\n";
         
-        $changeSymbol = $marketData['change_percent'] >= 0 ? '+' : '';
-        $changeEmoji = $marketData['change_percent'] >= 0 ? '🟢' : '🔴';
-        $message .= "• 24h Change: {$changeEmoji} {$changeSymbol}" . number_format($marketData['change_percent'], 2) . "%\n";
+        // Ensure price is numeric
+        $price = is_numeric($marketData['price']) ? $marketData['price'] : 0;
+        $message .= "• Price: " . $this->formatPrice($price, $marketType) . "\n";
         
-        if (isset($marketData['volume'])) {
+        $changePercent = is_numeric($marketData['change_percent']) ? $marketData['change_percent'] : 0;
+        $changeSymbol = $changePercent >= 0 ? '+' : '';
+        $changeEmoji = $changePercent >= 0 ? '🟢' : '🔴';
+        $message .= "• 24h Change: {$changeEmoji} {$changeSymbol}" . number_format($changePercent, 2) . "%\n";
+        
+        if (isset($marketData['volume']) && is_numeric($marketData['volume'])) {
             $message .= "• Volume: \$" . $this->formatNumber($marketData['volume']) . "\n";
         }
         
         // Technical Indicators
-        if (isset($marketData['indicators'])) {
+        if (isset($marketData['indicators']) && is_array($marketData['indicators'])) {
             $indicators = $marketData['indicators'];
             $message .= "\n📈 *Technical Indicators*\n";
             
+            // Handle RSI (can be array or single value)
             if (isset($indicators['rsi'])) {
-                $rsiStatus = $indicators['rsi'] > 70 ? 'Overbought ⚠️' : ($indicators['rsi'] < 30 ? 'Oversold 💚' : 'Neutral');
-                $message .= "• RSI: " . round($indicators['rsi'], 1) . " ({$rsiStatus})\n";
+                $rsi = $indicators['rsi'];
+                if (is_array($rsi)) {
+                    // Multi-timeframe RSI (crypto)
+                    $rsi1h = $rsi['1h'] ?? null;
+                    $rsi4h = $rsi['4h'] ?? null;
+                    if ($rsi4h && is_numeric($rsi4h)) {
+                        $rsiStatus = $rsi4h > 70 ? 'Overbought ⚠️' : ($rsi4h < 30 ? 'Oversold 💚' : 'Neutral');
+                        $message .= "• RSI (4h): " . round($rsi4h, 1) . " ({$rsiStatus})\n";
+                    }
+                    if ($rsi1h && is_numeric($rsi1h)) {
+                        $message .= "• RSI (1h): " . round($rsi1h, 1) . "\n";
+                    }
+                } elseif (is_numeric($rsi)) {
+                    // Single RSI value (stock/forex)
+                    $rsiStatus = $rsi > 70 ? 'Overbought ⚠️' : ($rsi < 30 ? 'Oversold 💚' : 'Neutral');
+                    $message .= "• RSI: " . round($rsi, 1) . " ({$rsiStatus})\n";
+                }
             }
             
             if (isset($indicators['trend'])) {
                 $message .= "• Trend: {$indicators['trend']}\n";
             }
             
-            if (isset($indicators['support']) && isset($indicators['resistance'])) {
+            // Moving averages (crypto)
+            if (isset($indicators['ma20']) && is_numeric($indicators['ma20']) && 
+                isset($indicators['ma50']) && is_numeric($indicators['ma50'])) {
+                $message .= "• MA20: " . $this->formatPrice($indicators['ma20'], $marketType) . "\n";
+                $message .= "• MA50: " . $this->formatPrice($indicators['ma50'], $marketType) . "\n";
+            }
+            
+            // SMA for stocks
+            if (isset($indicators['sma_20']) && is_numeric($indicators['sma_20'])) {
+                $message .= "• SMA20: " . $this->formatPrice($indicators['sma_20'], $marketType) . "\n";
+            }
+        }
+        
+        // Support/Resistance (separate from indicators for crypto)
+        if (isset($marketData['support_resistance']) && is_array($marketData['support_resistance'])) {
+            $sr = $marketData['support_resistance'];
+            if (isset($sr['support']) && is_array($sr['support']) && !empty($sr['support']) && is_numeric($sr['support'][0])) {
+                $supportLevel = $sr['support'][0]; // Get first support level
+                $message .= "• Support: " . $this->formatPrice($supportLevel, $marketType) . "\n";
+            }
+            if (isset($sr['resistance']) && is_array($sr['resistance']) && !empty($sr['resistance']) && is_numeric($sr['resistance'][0])) {
+                $resistanceLevel = $sr['resistance'][0]; // Get first resistance level
+                $message .= "• Resistance: " . $this->formatPrice($resistanceLevel, $marketType) . "\n";
+            }
+        }
+        // Or if support/resistance are in indicators (forex/stock)
+        elseif (isset($marketData['indicators']) && is_array($marketData['indicators'])) {
+            $indicators = $marketData['indicators'];
+            if (isset($indicators['support']) && is_numeric($indicators['support'])) {
                 $message .= "• Support: " . $this->formatPrice($indicators['support'], $marketType) . "\n";
+            }
+            if (isset($indicators['resistance']) && is_numeric($indicators['resistance'])) {
                 $message .= "• Resistance: " . $this->formatPrice($indicators['resistance'], $marketType) . "\n";
             }
         }
