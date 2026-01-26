@@ -267,7 +267,7 @@ class MarketScanService
                 $message .= "🪙 Precious Metals & Commodities\n";
                 foreach ($commodities as $idx => $pair) {
                     $changeSymbol = $pair['change'] >= 0 ? '+' : '';
-                    $name = match($pair['pair']) {
+                    $name = match ($pair['pair']) {
                         'XAUUSD' => 'GOLD',
                         'XAGUSD' => 'SILVER',
                         'XPTUSD' => 'PLATINUM',

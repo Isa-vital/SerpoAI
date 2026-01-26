@@ -43,8 +43,9 @@ class TechnicalStructureService
 
                 // Calculate support/resistance for each timeframe
                 $levels = [];
-                foreach (['1h', '4h', '1d'] as $tf) {
-                    if (isset($klines[$tf])) {
+                $timeframes = ['30m', '1h', '4h', '1d', '1w'];
+                foreach ($timeframes as $tf) {
+                    if (isset($klines[$tf]) && !empty($klines[$tf])) {
                         $levels[$tf] = $this->calculateSRLevels($klines[$tf]);
                     }
                 }
@@ -63,9 +64,11 @@ class TechnicalStructureService
 
                 return [
                     'symbol' => $symbol,
+                    'market_type' => $marketType,
                     'current_price' => $currentPrice,
                     'support_levels' => $confluentLevels['support'],
                     'resistance_levels' => $confluentLevels['resistance'],
+                    'timeframe_levels' => $levels, // All levels by timeframe
                     'liquidity_zones' => $liquidityZones,
                     'key_levels' => $this->identifyKeyLevels($confluentLevels, $currentPrice),
                     'ai_insight' => $aiAnalysis,
@@ -78,48 +81,92 @@ class TechnicalStructureService
     }
 
     /**
-     * RSI Heatmap (Multi-timeframe)
+     * RSI Analysis (Multi-Timeframe) - Real calculations with transparent logic
+     * Calculates RSI(14) for 4 key timeframes and provides weighted overall assessment
      */
     public function getRSIHeatmap(string $symbol): array
     {
         $marketType = $this->multiMarket->detectMarketType($symbol);
-        $cacheKey = "rsi_heatmap_{$symbol}";
+        $cacheKey = "rsi_analysis_{$symbol}";
 
         return Cache::remember($cacheKey, 180, function () use ($symbol, $marketType) {
             try {
-                $klines = $this->getKlineData($symbol, $marketType);
-
-                if (isset($klines['error'])) {
-                    return $klines;
-                }
+                // Define 4 key timeframes for trading
+                $timeframes = [
+                    '5m' => ['label' => 'Short-term', 'weight' => 0.10, 'emoji' => '⚡'],
+                    '1h' => ['label' => 'Intraday', 'weight' => 0.20, 'emoji' => '📈'],
+                    '4h' => ['label' => 'Swing', 'weight' => 0.30, 'emoji' => '📊'],
+                    '1d' => ['label' => 'Long-term', 'weight' => 0.40, 'emoji' => '🎯'],
+                ];
 
                 $rsiData = [];
-                $timeframes = ['15m', '1h', '4h', '1d', '1w'];
+                $rsiValues = [];
+                $failedTimeframes = [];
 
-                foreach ($timeframes as $tf) {
-                    $tfKlines = $this->getKlineDataForTimeframe($symbol, $tf, $marketType);
-                    if ($tfKlines) {
-                        $rsi = $this->binance->calculateRSI($tfKlines);
+                // Calculate RSI for each timeframe
+                foreach ($timeframes as $tf => $config) {
+                    $rsi = $this->calculateRealRSI($symbol, $tf, $marketType);
+
+                    if ($rsi !== null) {
+                        $status = $this->classifyRSI($rsi);
+                        $emoji = $this->getRSIEmoji($status);
+
                         $rsiData[$tf] = [
-                            'value' => $rsi,
-                            'status' => $this->getRSIStatus($rsi),
-                            'signal' => $this->getRSISignal($rsi),
+                            'label' => $config['label'],
+                            'emoji' => $config['emoji'],
+                            'value' => round($rsi, 1),
+                            'status' => $status,
+                            'status_emoji' => $emoji,
+                            'weight' => $config['weight'],
                         ];
+
+                        // Store for weighted calculation
+                        $rsiValues[$tf] = [
+                            'value' => $rsi,
+                            'weight' => $config['weight'],
+                        ];
+                    } else {
+                        $failedTimeframes[] = strtoupper($tf);
                     }
                 }
 
+                // Check if we have any RSI data
+                if (empty($rsiData)) {
+                    $errorMsg = "Unable to calculate RSI for {$symbol}.";
+                    if ($marketType === 'crypto') {
+                        $errorMsg .= " Ensure the symbol is valid and has sufficient trading history (e.g., BTCUSDT, ETHUSDT).";
+                    } else {
+                        $errorMsg .= " {$marketType} RSI analysis requires historical data integration. Currently optimized for crypto pairs.";
+                    }
+                    return ['error' => $errorMsg];
+                }
+
+                // Calculate weighted overall RSI
+                $overallData = $this->calculateWeightedRSI($rsiValues, $rsiData);
+
+                // Get current price
                 $currentPrice = $this->getCurrentPrice($symbol, $marketType);
 
-                return [
+                $result = [
                     'symbol' => $symbol,
+                    'market_type' => $marketType,
                     'current_price' => $currentPrice,
                     'rsi_data' => $rsiData,
-                    'overall_sentiment' => $this->calculateOverallRSISentiment($rsiData),
-                    'recommendation' => $this->getRSIRecommendation($rsiData),
+                    'overall_rsi' => $overallData['value'],
+                    'overall_status' => $overallData['status'],
+                    'overall_explanation' => $overallData['explanation'],
+                    'insight' => $this->generateRSIInsight($rsiData, $overallData),
                 ];
+
+                // Add warning if some timeframes failed
+                if (!empty($failedTimeframes)) {
+                    $result['warning'] = "Note: " . implode(', ', $failedTimeframes) . " data unavailable. Analysis based on available timeframes.";
+                }
+
+                return $result;
             } catch (\Exception $e) {
-                Log::error('RSI Heatmap error', ['symbol' => $symbol, 'error' => $e->getMessage()]);
-                return ['error' => "Unable to generate RSI heatmap for {$symbol}"];
+                Log::error('RSI Analysis error', ['symbol' => $symbol, 'error' => $e->getMessage(), 'trace' => $e->getTraceAsString()]);
+                return ['error' => "Unable to generate RSI analysis for {$symbol}. Error: " . $e->getMessage()];
             }
         });
     }
@@ -220,20 +267,34 @@ class TechnicalStructureService
 
     private function getKlineData(string $symbol, string $marketType): array
     {
-        if ($marketType !== 'crypto') {
-            return ['error' => 'Currently only crypto pairs are supported for this analysis'];
-        }
-
         $symbol = strtoupper(str_replace(['/', '-'], '', $symbol));
-        if (!str_ends_with($symbol, 'USDT') && !str_ends_with($symbol, 'BTC')) {
-            $symbol .= 'USDT';
+
+        if ($marketType === 'crypto') {
+            // Check if symbol already has quote currency
+            $quoteAssets = ['USDT', 'BUSD', 'USDC', 'USD', 'BTC', 'ETH', 'BNB'];
+            $hasQuote = false;
+            foreach ($quoteAssets as $quote) {
+                if (str_ends_with($symbol, $quote)) {
+                    $hasQuote = true;
+                    break;
+                }
+            }
+            if (!$hasQuote) {
+                $symbol .= 'USDT';
+            }
+
+            return [
+                '30m' => $this->binance->getKlines($symbol, '30m', 200),
+                '1h' => $this->binance->getKlines($symbol, '1h', 200),
+                '4h' => $this->binance->getKlines($symbol, '4h', 200),
+                '1d' => $this->binance->getKlines($symbol, '1d', 200),
+                '1w' => $this->binance->getKlines($symbol, '1w', 100),
+            ];
         }
 
-        return [
-            '1h' => $this->binance->getKlines($symbol, '1h', 200),
-            '4h' => $this->binance->getKlines($symbol, '4h', 200),
-            '1d' => $this->binance->getKlines($symbol, '1d', 200),
-        ];
+        // For forex/stocks, use historical data from multimarket service
+        // Return simulated klines based on current data
+        return ['error' => 'Forex and Stock S/R analysis coming soon. Currently supports all crypto pairs.'];
     }
 
     private function getKlineDataForTimeframe(string $symbol, string $timeframe, string $marketType): ?array
@@ -243,7 +304,17 @@ class TechnicalStructureService
         }
 
         $symbol = strtoupper(str_replace(['/', '-'], '', $symbol));
-        if (!str_ends_with($symbol, 'USDT') && !str_ends_with($symbol, 'BTC')) {
+
+        // Check if symbol already has quote currency
+        $quoteAssets = ['USDT', 'BUSD', 'USDC', 'USD', 'BTC', 'ETH', 'BNB'];
+        $hasQuote = false;
+        foreach ($quoteAssets as $quote) {
+            if (str_ends_with($symbol, $quote)) {
+                $hasQuote = true;
+                break;
+            }
+        }
+        if (!$hasQuote) {
             $symbol .= 'USDT';
         }
 
@@ -416,15 +487,247 @@ class TechnicalStructureService
 
     private function getCurrentPrice(string $symbol, string $marketType): float
     {
+        $symbol = strtoupper(str_replace(['/', '-'], '', $symbol));
+
         if ($marketType === 'crypto') {
-            $symbol = strtoupper(str_replace(['/', '-'], '', $symbol));
-            if (!str_ends_with($symbol, 'USDT') && !str_ends_with($symbol, 'BTC')) {
+            // Check if already has quote currency
+            $quoteAssets = ['USDT', 'BUSD', 'USDC', 'USD', 'BTC', 'ETH', 'BNB'];
+            $hasQuote = false;
+            foreach ($quoteAssets as $quote) {
+                if (str_ends_with($symbol, $quote)) {
+                    $hasQuote = true;
+                    break;
+                }
+            }
+            if (!$hasQuote) {
                 $symbol .= 'USDT';
             }
             $ticker = $this->binance->get24hTicker($symbol);
             return $ticker ? floatval($ticker['lastPrice']) : 0;
         }
+
+        // For forex/stocks, use multimarket service
+        try {
+            if ($marketType === 'forex') {
+                $data = $this->multiMarket->analyzeForexPair($symbol);
+                return isset($data['price']) ? floatval($data['price']) : 0;
+            } elseif ($marketType === 'stock') {
+                $data = $this->multiMarket->analyzeStockPair($symbol);
+                return isset($data['price']) ? floatval($data['price']) : 0;
+            }
+        } catch (\Exception $e) {
+            Log::warning('Price fetch error', ['symbol' => $symbol, 'market' => $marketType]);
+        }
+
         return 0;
+    }
+
+    /**
+     * Calculate real RSI(14) from actual OHLCV data
+     * 
+     * @param string $symbol Symbol to analyze
+     * @param string $timeframe Timeframe (5m, 1h, 4h, 1d)
+     * @param string $marketType Market type (crypto, forex, stock)
+     * @return float|null RSI value or null if data unavailable
+     */
+    private function calculateRealRSI(string $symbol, string $timeframe, string $marketType): ?float
+    {
+        try {
+            if ($marketType === 'crypto') {
+                // Use Binance for crypto
+                $klines = $this->getKlineDataForTimeframe($symbol, $timeframe, $marketType);
+
+                if (!$klines) {
+                    Log::debug("No klines returned for {$symbol} {$timeframe}");
+                    return null;
+                }
+
+                if (count($klines) < 15) {
+                    Log::debug("Insufficient klines for RSI calculation", [
+                        'symbol' => $symbol,
+                        'timeframe' => $timeframe,
+                        'count' => count($klines),
+                        'needed' => 15
+                    ]);
+                    return null;
+                }
+
+                // Calculate RSI
+                $rsi = $this->binance->calculateRSI($klines);
+
+                if ($rsi && is_numeric($rsi)) {
+                    return floatval($rsi);
+                }
+
+                Log::debug("RSI calculation returned invalid value", [
+                    'symbol' => $symbol,
+                    'timeframe' => $timeframe,
+                    'rsi' => $rsi
+                ]);
+                return null;
+            } else {
+                // For forex/stocks, try to get RSI from multimarket analysis
+                // This is a limitation - ideally we'd fetch historical data from Polygon/OANDA
+                // For now, return calculated RSI if available from indicators
+                if ($marketType === 'forex') {
+                    $data = $this->multiMarket->analyzeForexPair($symbol);
+                } else {
+                    $data = $this->multiMarket->analyzeStockPair($symbol);
+                }
+
+                if (isset($data['indicators']['rsi'])) {
+                    $rsi = $data['indicators']['rsi'];
+                    if (is_array($rsi)) {
+                        // Multi-timeframe RSI, try to match timeframe
+                        return $rsi[$timeframe] ?? $rsi['1h'] ?? null;
+                    } elseif (is_numeric($rsi)) {
+                        // Single RSI value, use for all timeframes
+                        return floatval($rsi);
+                    }
+                }
+            }
+        } catch (\Exception $e) {
+            Log::warning('RSI calculation failed', [
+                'symbol' => $symbol,
+                'timeframe' => $timeframe,
+                'market' => $marketType,
+                'error' => $e->getMessage()
+            ]);
+        }
+
+        return null;
+    }
+
+    /**
+     * Classify RSI value into status
+     * 
+     * @param float $rsi RSI value (0-100)
+     * @return string Status (Oversold, Neutral, Overbought)
+     */
+    private function classifyRSI(float $rsi): string
+    {
+        if ($rsi < 30) {
+            return 'Oversold';
+        } elseif ($rsi > 70) {
+            return 'Overbought';
+        } else {
+            return 'Neutral';
+        }
+    }
+
+    /**
+     * Get emoji for RSI status
+     * 
+     * @param string $status RSI status
+     * @return string Emoji
+     */
+    private function getRSIEmoji(string $status): string
+    {
+        return match ($status) {
+            'Oversold' => '🟢',
+            'Overbought' => '🔴',
+            'Neutral' => '🟡',
+            default => '⚪'
+        };
+    }
+
+    /**
+     * Calculate weighted overall RSI
+     * Weights: 1D (40%), 4H (30%), 1H (20%), 5M (10%)
+     * 
+     * @param array $rsiValues RSI values with weights
+     * @param array $rsiData Full RSI data
+     * @return array Overall RSI data with explanation
+     */
+    private function calculateWeightedRSI(array $rsiValues, array $rsiData): array
+    {
+        if (empty($rsiValues)) {
+            return [
+                'value' => null,
+                'status' => 'Unknown',
+                'explanation' => 'Insufficient data to calculate overall RSI.'
+            ];
+        }
+
+        // Calculate weighted average
+        $totalWeight = 0;
+        $weightedSum = 0;
+
+        foreach ($rsiValues as $tf => $data) {
+            $weightedSum += $data['value'] * $data['weight'];
+            $totalWeight += $data['weight'];
+        }
+
+        $overallRSI = $totalWeight > 0 ? $weightedSum / $totalWeight : null;
+
+        if ($overallRSI === null) {
+            return [
+                'value' => null,
+                'status' => 'Unknown',
+                'explanation' => 'Unable to calculate weighted RSI.'
+            ];
+        }
+
+        $status = $this->classifyRSI($overallRSI);
+
+        // Generate explanation
+        $explanation = $this->explainWeightedRSI($overallRSI, $rsiData);
+
+        return [
+            'value' => round($overallRSI, 1),
+            'status' => $status,
+            'explanation' => $explanation
+        ];
+    }
+
+    /**
+     * Generate human-readable explanation of weighted RSI
+     */
+    private function explainWeightedRSI(float $overallRSI, array $rsiData): string
+    {
+        // Analyze RSI distribution
+        $oversoldCount = 0;
+        $overboughtCount = 0;
+        $neutralCount = 0;
+        $minRSI = 100;
+        $maxRSI = 0;
+
+        foreach ($rsiData as $data) {
+            $rsi = $data['value'];
+            if ($rsi < 30) $oversoldCount++;
+            elseif ($rsi > 70) $overboughtCount++;
+            else $neutralCount++;
+
+            $minRSI = min($minRSI, $rsi);
+            $maxRSI = max($maxRSI, $rsi);
+        }
+
+        // Build explanation
+        if ($oversoldCount >= 3) {
+            return "Most timeframes show oversold conditions (RSI < 30), suggesting potential downside exhaustion. Long-term RSI weighted at 40% is key.";
+        } elseif ($overboughtCount >= 3) {
+            return "Most timeframes show overbought conditions (RSI > 70), suggesting potential upside exhaustion. Long-term RSI weighted at 40% is key.";
+        } elseif ($maxRSI - $minRSI > 30) {
+            return "RSI values are divergent across timeframes (range: {$minRSI}-{$maxRSI}), indicating mixed momentum. Higher timeframes carry more weight.";
+        } else {
+            return "RSI values are clustered between {$minRSI}-{$maxRSI} across all major timeframes, indicating balanced momentum with no extreme conditions.";
+        }
+    }
+
+    /**
+     * Generate actionable insight based on RSI analysis
+     */
+    private function generateRSIInsight(array $rsiData, array $overallData): string
+    {
+        $status = $overallData['status'];
+
+        if ($status === 'Oversold') {
+            return "RSI suggests potential oversold conditions, but RSI alone is not a buy signal. Wait for price confirmation, divergence patterns, or confluence with key support levels before taking action.";
+        } elseif ($status === 'Overbought') {
+            return "RSI suggests potential overbought conditions, but RSI alone is not a sell signal. Wait for price confirmation, divergence patterns, or confluence with key resistance levels before taking action.";
+        } else {
+            return "RSI alone shows no clear momentum edge. Consider waiting for divergence signals, trend confirmation, or confluence with key support/resistance levels for better trade setups.";
+        }
     }
 
     private function getRSIStatus(float $rsi): string

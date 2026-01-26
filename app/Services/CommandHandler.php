@@ -35,6 +35,7 @@ class CommandHandler
     private HeatmapService $heatmap;
     private WhaleAlertService $whaleAlert;
     private MultiMarketDataService $multiMarket;
+    private BinanceAPIService $binance;
 
     public function __construct(
         TelegramBotService $telegram,
@@ -60,7 +61,8 @@ class CommandHandler
         SuperChartService $superChart,
         HeatmapService $heatmap,
         WhaleAlertService $whaleAlert,
-        MultiMarketDataService $multiMarket
+        MultiMarketDataService $multiMarket,
+        BinanceAPIService $binance
     ) {
         $this->telegram = $telegram;
         $this->marketData = $marketData;
@@ -86,6 +88,7 @@ class CommandHandler
         $this->heatmap = $heatmap;
         $this->whaleAlert = $whaleAlert;
         $this->multiMarket = $multiMarket;
+        $this->binance = $binance;
     }
 
     /**
@@ -266,7 +269,7 @@ class CommandHandler
 
         $message .= "*�📈 Market Intelligence*\n";
         $message .= "/price [symbol] - Current price\n";
-        $message .= "/chart [symbol] - Price chart\n";
+        $message .= "/chart [symbol] [timeframe] - TradingView charts (all markets)\n";
         $message .= "/signals - Trading signals\n";
         $message .= "/sentiment [symbol] - Market sentiment\n\n";
 
@@ -386,59 +389,71 @@ class CommandHandler
     }
 
     /**
-     * Handle /chart command
+     * Handle /chart command - TradingView charts for all pairs and markets
+     * Usage: /chart [symbol] [timeframe]
+     * Example: /chart BTC 1H, /chart AAPL 4H, /chart EURUSD 15M
+     * Default timeframe: 1H
      */
     private function handleChart(int $chatId, array $params)
     {
-        $symbol = !empty($params) ? strtoupper($params[0]) : 'SERPO';
+        // Parse parameters
+        if (empty($params)) {
+            $message = "📊 *Live TradingView Charts*\n\n";
+            $message .= "Usage: `/chart [symbol] [timeframe]`\n\n";
+            $message .= "📈 *Supported Markets:*\n";
+            $message .= "• Crypto: BTC, ETH, SOL, etc.\n";
+            $message .= "• Stocks: AAPL, TSLA, GOOGL\n";
+            $message .= "• Forex: EURUSD, GBPJPY\n";
+            $message .= "• SERPO: Special DEX integration\n\n";
+            $message .= "⏱ *Timeframes:*\n";
+            $message .= "• 1M, 5M, 15M, 30M\n";
+            $message .= "• 1H (default), 2H, 4H\n";
+            $message .= "• 1D, 1W\n\n";
+            $message .= "📝 *Examples:*\n";
+            $message .= "• `/chart BTC` (defaults to 1H)\n";
+            $message .= "• `/chart SERPO 1H`\n";
+            $message .= "• `/chart AAPL 4H`\n";
+            $message .= "• `/chart EURUSD 15M`";
 
-        if ($symbol === 'SERPO') {
-            // Show typing indicator while loading chart
-            $this->telegram->sendChatAction($chatId, 'upload_photo');
-
-            // Get SERPO data for the chart link
-            $data = $this->marketData->getSerpoPriceFromDex();
-
-            if (!$data) {
-                $this->telegram->sendMessage($chatId, "❌ Unable to fetch SERPO data. Please try again later.");
-                return;
-            }
-
-            // Get the pair address from config
-            $pairAddress = config('serpo.dex_pair_address') ?: 'EQCPeUzKknneMlA1UbivELxd8lFUA_oaOX9m9PPc4d6lHQyw';
-            $chartUrl = "https://dexscreener.com/ton/{$pairAddress}";
-
-            // Build caption with current stats
-            $caption = "📊 *SERPO Live Chart*\n\n";
-            $caption .= "💰 Price: $" . $this->telegram->formatPrice($data['price']) . "\n";
-            $caption .= "📈 24h Change: " . $this->telegram->formatPercentage($data['price_change_24h']) . "\n";
-            $caption .= "💧 Volume: $" . number_format($data['volume_24h'], 0) . "\n";
-            $caption .= "🏊 Liquidity: $" . number_format($data['liquidity'], 0) . "\n\n";
-            $caption .= "🔴 Click below for LIVE interactive chart with real-time updates!";
-
-            // Create inline keyboard with chart button
             $keyboard = [
                 'inline_keyboard' => [
                     [
-                        ['text' => '📊 Open Live Chart', 'url' => $chartUrl]
+                        ['text' => '📈 BTC 1H', 'callback_data' => '/chart BTC 1H'],
+                        ['text' => '📊 ETH 4H', 'callback_data' => '/chart ETH 4H'],
                     ],
                     [
-                        ['text' => '🔄 Refresh Price', 'callback_data' => 'refresh_price']
-                    ]
+                        ['text' => '🪙 SERPO 1H', 'callback_data' => '/chart SERPO 1H'],
+                        ['text' => '📉 SOL 15M', 'callback_data' => '/chart SOL 15M'],
+                    ],
+                    [
+                        ['text' => '🔙 Back to Menu', 'callback_data' => '/help'],
+                    ],
                 ]
             ];
-
-            // Try to send chart screenshot with buttons
-            $screenshotUrl = $this->getDexScreenerChartImage($pairAddress);
-            if ($screenshotUrl) {
-                $this->telegram->sendPhoto($chatId, $screenshotUrl, $caption, $keyboard);
-            } else {
-                // Fallback: send text message with buttons if no image available
-                $this->telegram->sendMessage($chatId, $caption, $keyboard);
-            }
-        } else {
-            $this->telegram->sendMessage($chatId, "💡 Currently only SERPO charts are available.\n\nFor other coins, you can use:\n• `/analyze {$symbol}` - Get technical analysis\n• External charts: TradingView, DexScreener");
+            $this->telegram->sendMessage($chatId, $message, $keyboard);
+            return;
         }
+
+        $symbol = strtoupper($params[0]);
+        $timeframe = isset($params[1]) ? strtoupper($params[1]) : '1H';
+
+        // Validate and normalize timeframe
+        $timeframe = $this->normalizeTimeframe($timeframe);
+        if (!$timeframe) {
+            $this->telegram->sendMessage($chatId, "❌ Invalid timeframe. Use: 1M, 5M, 15M, 30M, 1H, 2H, 4H, 1D, 1W");
+            return;
+        }
+
+        $this->telegram->sendChatAction($chatId, 'upload_photo');
+
+        // Special handling for SERPO (uses DEX)
+        if ($symbol === 'SERPO') {
+            $this->sendSerpoChart($chatId, $symbol, $timeframe);
+            return;
+        }
+
+        // All other pairs - use TradingView
+        $this->sendTradingViewChart($chatId, $symbol, $timeframe);
     }
 
     /**
@@ -2058,34 +2073,90 @@ class CommandHandler
             return "❌ " . $analysis['error'];
         }
 
+        $currentPrice = $analysis['current_price'];
+        $marketType = $analysis['market_type'] ?? 'crypto';
+
         $message = "🎯 *SMART SUPPORT & RESISTANCE*\n";
         $message .= "━━━━━━━━━━━━━━━━━━━━\n\n";
         $message .= "Symbol: `{$analysis['symbol']}`\n";
-        $message .= "Current Price: \${$analysis['current_price']}\n\n";
+        $message .= "Price: " . $this->formatPriceAdaptive($currentPrice, $marketType) . "\n\n";
 
-        $message .= "🔺 *Resistance Levels*\n";
-        foreach ($analysis['resistance_levels'] as $idx => $level) {
-            $dist = (($level - $analysis['current_price']) / $analysis['current_price']) * 100;
-            $message .= ($idx + 1) . ". \${$level} (+" . round($dist, 2) . "%)\n";
+        // Show levels by timeframe
+        if (isset($analysis['timeframe_levels']) && !empty($analysis['timeframe_levels'])) {
+            $message .= "📊 *Levels by Timeframe*\n\n";
+
+            $tfLabels = [
+                '30m' => '30M',
+                '1h' => '1H',
+                '4h' => '4H',
+                '1d' => '1D',
+                '1w' => '1W'
+            ];
+
+            foreach ($analysis['timeframe_levels'] as $tf => $levels) {
+                $label = $tfLabels[$tf] ?? strtoupper($tf);
+                $message .= "*{$label}:*\n";
+
+                // Show top 3 resistance
+                if (!empty($levels['resistance'])) {
+                    $message .= "  🔺 R: ";
+                    $topR = array_slice($levels['resistance'], 0, 3);
+                    $rFormatted = array_map(fn($r) => $this->formatPriceAdaptive($r, $marketType), $topR);
+                    $message .= implode(' | ', $rFormatted) . "\n";
+                }
+
+                // Show top 3 support
+                if (!empty($levels['support'])) {
+                    $message .= "  🔻 S: ";
+                    $topS = array_slice($levels['support'], 0, 3);
+                    $sFormatted = array_map(fn($s) => $this->formatPriceAdaptive($s, $marketType), $topS);
+                    $message .= implode(' | ', $sFormatted) . "\n";
+                }
+
+                $message .= "\n";
+            }
         }
 
-        $message .= "\n🔻 *Support Levels*\n";
-        foreach ($analysis['support_levels'] as $idx => $level) {
-            $dist = (($analysis['current_price'] - $level) / $analysis['current_price']) * 100;
-            $message .= ($idx + 1) . ". \${$level} (-" . round($dist, 2) . "%)\n";
+        // Key confluent levels
+        if (!empty($analysis['resistance_levels']) || !empty($analysis['support_levels'])) {
+            $message .= "⭐ *Key Confluent Levels*\n\n";
+
+            if (!empty($analysis['resistance_levels'])) {
+                $message .= "🔺 *Resistance:*\n";
+                foreach (array_slice($analysis['resistance_levels'], 0, 3) as $idx => $level) {
+                    $dist = (($level - $currentPrice) / $currentPrice) * 100;
+                    $formatted = $this->formatPriceAdaptive($level, $marketType);
+                    $message .= ($idx + 1) . ". {$formatted} (+" . round($dist, 2) . "%)\n";
+                }
+                $message .= "\n";
+            }
+
+            if (!empty($analysis['support_levels'])) {
+                $message .= "🔻 *Support:*\n";
+                foreach (array_slice($analysis['support_levels'], 0, 3) as $idx => $level) {
+                    $dist = (($currentPrice - $level) / $currentPrice) * 100;
+                    $formatted = $this->formatPriceAdaptive($level, $marketType);
+                    $message .= ($idx + 1) . ". {$formatted} (-" . round($dist, 2) . "%)\n";
+                }
+                $message .= "\n";
+            }
         }
 
-        if (!empty($analysis['key_levels']['resistance']) || !empty($analysis['key_levels']['support'])) {
-            $message .= "\n⭐ *Key Levels*\n";
+        // Nearest levels
+        if (isset($analysis['key_levels']) && (!empty($analysis['key_levels']['resistance']) || !empty($analysis['key_levels']['support']))) {
+            $message .= "🎯 *Nearest Levels*\n";
             if ($analysis['key_levels']['support']) {
-                $message .= "Nearest Support: \${$analysis['key_levels']['support']}\n";
+                $formatted = $this->formatPriceAdaptive($analysis['key_levels']['support'], $marketType);
+                $message .= "Support: {$formatted}\n";
             }
             if ($analysis['key_levels']['resistance']) {
-                $message .= "Nearest Resistance: \${$analysis['key_levels']['resistance']}\n";
+                $formatted = $this->formatPriceAdaptive($analysis['key_levels']['resistance'], $marketType);
+                $message .= "Resistance: {$formatted}\n";
             }
+            $message .= "\n";
         }
 
-        $message .= "\n💡 *AI Insight*\n";
+        $message .= "💡 *AI Insight*\n";
         $message .= $analysis['ai_insight'];
 
         return $message;
@@ -2097,30 +2168,88 @@ class CommandHandler
             return "❌ " . $analysis['error'];
         }
 
-        $message = "📊 *RSI HEATMAP*\n";
+        $marketType = $analysis['market_type'] ?? 'crypto';
+        $currentPrice = $analysis['current_price'];
+
+        // Header
+        $message = "📊 *RSI ANALYSIS — MULTI-TIMEFRAME*\n";
         $message .= "━━━━━━━━━━━━━━━━━━━━\n\n";
+
+        // Symbol info
         $message .= "Symbol: `{$analysis['symbol']}`\n";
-        $message .= "Price: \${$analysis['current_price']}\n\n";
+        $message .= "Price: " . $this->formatPriceAdaptive($currentPrice, $marketType) . "\n";
+        $message .= "Market: " . ucfirst($marketType) . "\n";
 
-        foreach ($analysis['rsi_data'] as $tf => $data) {
-            $emoji = match ($data['status']) {
-                'Overbought' => '🔴',
-                'Oversold' => '🟢',
-                'Strong' => '🟡',
-                'Weak' => '🟠',
-                default => '⚪'
-            };
-
-            $message .= "{$emoji} *{$tf}*: {$data['value']} - {$data['status']}\n";
-            $message .= "   {$data['signal']}\n\n";
+        // Show warning if any
+        if (isset($analysis['warning'])) {
+            $message .= "\n⚠️ " . $analysis['warning'] . "\n";
         }
 
+        $message .= "\n";
+
+        // RSI values for each timeframe
+        if (isset($analysis['rsi_data']) && !empty($analysis['rsi_data'])) {
+            foreach ($analysis['rsi_data'] as $tf => $data) {
+                $tfLabel = strtoupper($tf);
+                $emoji = $data['emoji'];
+                $statusEmoji = $data['status_emoji'];
+                $label = $data['label'];
+                $value = $data['value'];
+
+                $message .= "{$emoji} *{$label} ({$tfLabel})*: RSI {$value} {$statusEmoji}\n";
+            }
+        } else {
+            $message .= "⚠️ No RSI data available. This could be due to:\n";
+            $message .= "• Invalid or newly listed symbol\n";
+            $message .= "• Insufficient trading history\n";
+            $message .= "• API connectivity issues\n\n";
+            $message .= "Try a major pair like BTCUSDT or ETHUSDT.\n";
+            return $message;
+        }
+
+        // Overall assessment
+        $message .= "\n━━━━━━━━━━━━━━━━━━━━\n";
+
+        if (isset($analysis['overall_rsi']) && $analysis['overall_rsi'] !== null) {
+            $overallRSI = $analysis['overall_rsi'];
+            $overallStatus = $analysis['overall_status'];
+            $overallEmoji = $this->getRSIEmoji($overallStatus);
+
+            $message .= "📈 *Overall*: {$overallStatus} (RSI {$overallRSI}) {$overallEmoji}\n\n";
+
+            // Explanation
+            if (isset($analysis['overall_explanation'])) {
+                $message .= "*Reason:*\n";
+                $message .= $analysis['overall_explanation'] . "\n\n";
+            }
+        } else {
+            $message .= "📈 *Overall*: Unable to calculate\n\n";
+        }
+
+        // Insight
+        if (isset($analysis['insight'])) {
+            $message .= "💡 *Insight:*\n";
+            $message .= $analysis['insight'] . "\n\n";
+        }
+
+        // Disclaimer
         $message .= "━━━━━━━━━━━━━━━━━━━━\n";
-        $message .= "📈 Overall: *{$analysis['overall_sentiment']}*\n\n";
-        $message .= "💡 *Recommendation*\n";
-        $message .= $analysis['recommendation'];
+        $message .= "_Analysis only. Not financial advice._";
 
         return $message;
+    }
+
+    /**
+     * Get emoji for RSI status (used in formatting)
+     */
+    private function getRSIEmoji(string $status): string
+    {
+        return match ($status) {
+            'Oversold' => '🟢',
+            'Overbought' => '🔴',
+            'Neutral' => '🟡',
+            default => '⚪'
+        };
     }
 
     private function formatDivergenceAnalysis(array $analysis): string
@@ -2477,13 +2606,13 @@ class CommandHandler
             $message .= "✓ Support for Crypto, Stocks, Forex\n\n";
             $message .= "━━━━━━━━━━━━━━━━━━━━\n";
             $message .= "📈 Ready to trade smarter? Add a symbol!";
-            
+
             $this->telegram->sendMessage($chatId, $message);
             return;
         }
 
         $symbol = strtoupper($params[0]);
-        
+
         // Show typing indicator
         $this->telegram->sendChatAction($chatId, 'typing');
         $this->telegram->sendMessage($chatId, "🤖 AI Trader analyzing {$symbol}...");
@@ -2491,15 +2620,15 @@ class CommandHandler
         try {
             // Detect market type
             $marketType = $this->multiMarket->detectMarketType($symbol);
-            
+
             // Fetch market data based on type
-            $marketData = match($marketType) {
+            $marketData = match ($marketType) {
                 'crypto' => $this->multiMarket->analyzeCryptoPair($symbol),
                 'stock' => $this->multiMarket->analyzeStockPair($symbol),
                 'forex' => $this->multiMarket->analyzeForexPair($symbol),
                 default => ['error' => 'Unknown market type']
             };
-            
+
             if (isset($marketData['error'])) {
                 $errorMsg = $marketData['error'];
                 // Make error message more helpful
@@ -2517,9 +2646,9 @@ class CommandHandler
 
             // Generate AI trading insights
             $aiAnalysis = $this->generateAITradingInsights($symbol, $marketType, $marketData);
-            
+
             $message = $this->formatTraderAnalysis($symbol, $marketType, $marketData, $aiAnalysis);
-            
+
             $keyboard = [
                 'inline_keyboard' => [
                     [
@@ -2532,9 +2661,8 @@ class CommandHandler
                     ]
                 ]
             ];
-            
+
             $this->telegram->sendMessage($chatId, $message, $keyboard);
-            
         } catch (\Exception $e) {
             Log::error('Trader command error', ['error' => $e->getMessage(), 'symbol' => $symbol]);
             $this->telegram->sendMessage($chatId, "❌ Error analyzing {$symbol}. Please verify the symbol and try again.");
@@ -2550,14 +2678,14 @@ class CommandHandler
         $prompt .= "Current Market Data:\n";
         $prompt .= "- Price: {$marketData['price']}\n";
         $prompt .= "- 24h Change: {$marketData['change_percent']}%\n";
-        
+
         if (isset($marketData['indicators'])) {
             $indicators = $marketData['indicators'];
             $prompt .= "- RSI: " . ($indicators['rsi'] ?? 'N/A') . "\n";
             $prompt .= "- Trend: " . ($indicators['trend'] ?? 'N/A') . "\n";
             $prompt .= "- Volume: " . ($marketData['volume'] ?? 'N/A') . "\n";
         }
-        
+
         $prompt .= "\nProvide a concise trading recommendation including:\n";
         $prompt .= "1. Market Bias (Bullish/Bearish/Neutral)\n";
         $prompt .= "2. Entry Strategy (specific price levels)\n";
@@ -2583,9 +2711,9 @@ class CommandHandler
     {
         $change = $marketData['change_percent'] ?? 0;
         $bias = $change > 2 ? 'Bullish 🟢' : ($change < -2 ? 'Bearish 🔴' : 'Neutral ⚪');
-        
+
         $insights = "📊 *Market Bias:* {$bias}\n\n";
-        
+
         if ($change > 0) {
             $insights .= "✓ Price showing positive momentum\n";
             $insights .= "✓ Consider buying on pullbacks\n";
@@ -2595,7 +2723,7 @@ class CommandHandler
             $insights .= "⚠️ Wait for stabilization signals\n";
             $insights .= "✓ Support levels may offer entries\n";
         }
-        
+
         return $insights;
     }
 
@@ -2604,38 +2732,38 @@ class CommandHandler
      */
     private function formatTraderAnalysis(string $symbol, string $marketType, array $marketData, string $aiAnalysis): string
     {
-        $marketIcon = match($marketType) {
+        $marketIcon = match ($marketType) {
             'crypto' => '₿',
             'stock' => '📈',
             'forex' => '💱',
             default => '📊'
         };
-        
+
         $message = "{$marketIcon} *AI TRADER: {$symbol}*\n";
         $message .= "━━━━━━━━━━━━━━━━━━━━\n\n";
-        
+
         // Market Info
         $message .= "📊 *Market Info*\n";
         $message .= "• Type: " . ucfirst($marketType) . "\n";
-        
+
         // Ensure price is numeric
         $price = is_numeric($marketData['price']) ? $marketData['price'] : 0;
         $message .= "• Price: " . $this->formatPrice($price, $marketType) . "\n";
-        
+
         $changePercent = is_numeric($marketData['change_percent']) ? $marketData['change_percent'] : 0;
         $changeSymbol = $changePercent >= 0 ? '+' : '';
         $changeEmoji = $changePercent >= 0 ? '🟢' : '🔴';
         $message .= "• 24h Change: {$changeEmoji} {$changeSymbol}" . number_format($changePercent, 2) . "%\n";
-        
+
         if (isset($marketData['volume']) && is_numeric($marketData['volume'])) {
             $message .= "• Volume: \$" . $this->formatNumber($marketData['volume']) . "\n";
         }
-        
+
         // Technical Indicators
         if (isset($marketData['indicators']) && is_array($marketData['indicators'])) {
             $indicators = $marketData['indicators'];
             $message .= "\n📈 *Technical Indicators*\n";
-            
+
             // Handle RSI (can be array or single value)
             if (isset($indicators['rsi'])) {
                 $rsi = $indicators['rsi'];
@@ -2656,24 +2784,26 @@ class CommandHandler
                     $message .= "• RSI: " . round($rsi, 1) . " ({$rsiStatus})\n";
                 }
             }
-            
+
             if (isset($indicators['trend'])) {
                 $message .= "• Trend: {$indicators['trend']}\n";
             }
-            
+
             // Moving averages (crypto)
-            if (isset($indicators['ma20']) && is_numeric($indicators['ma20']) && 
-                isset($indicators['ma50']) && is_numeric($indicators['ma50'])) {
+            if (
+                isset($indicators['ma20']) && is_numeric($indicators['ma20']) &&
+                isset($indicators['ma50']) && is_numeric($indicators['ma50'])
+            ) {
                 $message .= "• MA20: " . $this->formatPrice($indicators['ma20'], $marketType) . "\n";
                 $message .= "• MA50: " . $this->formatPrice($indicators['ma50'], $marketType) . "\n";
             }
-            
+
             // SMA for stocks
             if (isset($indicators['sma_20']) && is_numeric($indicators['sma_20'])) {
                 $message .= "• SMA20: " . $this->formatPrice($indicators['sma_20'], $marketType) . "\n";
             }
         }
-        
+
         // Support/Resistance (separate from indicators for crypto)
         if (isset($marketData['support_resistance']) && is_array($marketData['support_resistance'])) {
             $sr = $marketData['support_resistance'];
@@ -2696,16 +2826,16 @@ class CommandHandler
                 $message .= "• Resistance: " . $this->formatPrice($indicators['resistance'], $marketType) . "\n";
             }
         }
-        
+
         // AI Trading Insights
         $message .= "\n🤖 *AI TRADING INSIGHTS*\n";
         $message .= "━━━━━━━━━━━━━━━━━━━━\n";
         $message .= $aiAnalysis . "\n";
-        
+
         $message .= "\n━━━━━━━━━━━━━━━━━━━━\n";
         $message .= "⚠️ *Risk Warning:* Trading involves risk. Always use stop losses and proper position sizing.\n";
         $message .= "\n💡 Use `/analyze {$symbol}` for detailed technical analysis";
-        
+
         return $message;
     }
 
@@ -2714,12 +2844,41 @@ class CommandHandler
      */
     private function formatPrice(float $price, string $marketType): string
     {
-        return match($marketType) {
+        return match ($marketType) {
             'forex' => number_format($price, 5),
             'crypto' => $price < 1 ? number_format($price, 6) : number_format($price, 2),
             'stock' => '$' . number_format($price, 2),
             default => number_format($price, 2)
         };
+    }
+
+    /**
+     * Adaptive price formatting based on price magnitude
+     */
+    private function formatPriceAdaptive(float $price, string $marketType): string
+    {
+        if ($marketType === 'forex') {
+            return number_format($price, 5);
+        }
+
+        if ($marketType === 'stock') {
+            return '$' . number_format($price, 2);
+        }
+
+        // Adaptive crypto formatting
+        if ($price >= 1000) {
+            return '$' . number_format($price, 0); // BTC: $95,234
+        } elseif ($price >= 10) {
+            return '$' . number_format($price, 2); // ETH: $3,456.78
+        } elseif ($price >= 1) {
+            return '$' . number_format($price, 3); // BNB: $612.345
+        } elseif ($price >= 0.01) {
+            return '$' . number_format($price, 4); // DOGE: $0.0823
+        } elseif ($price >= 0.0001) {
+            return '$' . number_format($price, 6); // SHIB: $0.000032
+        } else {
+            return '$' . number_format($price, 8); // Small caps: $0.00000145
+        }
     }
 
     private function formatTrendLeaders(array $trends): string
@@ -2844,6 +3003,695 @@ class CommandHandler
             return number_format($num, 8);
         }
         return number_format($num, 2);
+    }
+
+    /**
+     * Normalize timeframe to TradingView format
+     * Returns interval in minutes or null if invalid
+     */
+    private function normalizeTimeframe(string $timeframe): ?string
+    {
+        $timeframe = strtoupper($timeframe);
+
+        $timeframeMap = [
+            '1M' => '1',
+            '1' => '1',
+            '5M' => '5',
+            '5' => '5',
+            '15M' => '15',
+            '15' => '15',
+            '30M' => '30',
+            '30' => '30',
+            '1H' => '60',
+            '60' => '60',
+            '2H' => '120',
+            '120' => '120',
+            '4H' => '240',
+            '240' => '240',
+            '1D' => 'D',
+            'D' => 'D',
+            '1W' => 'W',
+            'W' => 'W',
+        ];
+
+        return $timeframeMap[$timeframe] ?? null;
+    }
+
+    /**
+     * Denormalize timeframe from TradingView format back to standard
+     */
+    private function denormalizeTimeframe(string $tvTimeframe): string
+    {
+        $reverseMap = [
+            '1' => '1M',
+            '5' => '5M',
+            '15' => '15M',
+            '30' => '30M',
+            '60' => '1H',
+            '120' => '2H',
+            '240' => '4H',
+            'D' => '1D',
+            'W' => '1W',
+        ];
+
+        return $reverseMap[$tvTimeframe] ?? $tvTimeframe;
+    }
+
+    /**
+     * Send SERPO chart from DEX
+     */
+    private function sendSerpoChart(int $chatId, string $symbol, string $timeframe): void
+    {
+        // Get SERPO data
+        $data = $this->marketData->getSerpoPriceFromDex();
+
+        if (!$data) {
+            $this->telegram->sendMessage($chatId, "❌ Unable to fetch SERPO data. Please try again later.");
+            return;
+        }
+
+        // Get the pair address from config
+        $pairAddress = config('serpo.dex_pair_address') ?: 'EQCPeUzKknneMlA1UbivELxd8lFUA_oaOX9m9PPc4d6lHQyw';
+        $chartUrl = "https://dexscreener.com/ton/{$pairAddress}";
+
+        // Build caption
+        $caption = "📊 *SERPO/TON Chart ({$timeframe})*\n\n";
+        $caption .= "💰 *Price:* $" . $this->telegram->formatPrice($data['price']) . "\n";
+
+        $changeEmoji = $data['price_change_24h'] >= 0 ? '📈' : '📉';
+        $caption .= "{$changeEmoji} *24h Change:* " . $this->telegram->formatPercentage($data['price_change_24h']) . "\n";
+        $caption .= "💧 *Volume:* $" . number_format($data['volume_24h'], 0) . "\n";
+        $caption .= "🏊 *Liquidity:* $" . number_format($data['liquidity'], 0) . "\n\n";
+
+        // Add quick price visualization
+        $caption .= $this->generatePriceBar($data['price_change_24h']) . "\n\n";
+        $caption .= "🔴 Open link for live interactive chart!";
+
+        // Create inline keyboard
+        $keyboard = [
+            'inline_keyboard' => [
+                [
+                    ['text' => '📊 Open DEX Chart', 'url' => $chartUrl]
+                ],
+                [
+                    ['text' => '⚡ 5M', 'callback_data' => '/chart SERPO 5M'],
+                    ['text' => '📈 1H', 'callback_data' => '/chart SERPO 1H'],
+                    ['text' => '📊 4H', 'callback_data' => '/chart SERPO 4H'],
+                ],
+                [
+                    ['text' => '📈 Analyze', 'callback_data' => '/analyze SERPO'],
+                    ['text' => '🔄 Refresh', 'callback_data' => '/chart SERPO ' . $timeframe],
+                ]
+            ]
+        ];
+
+        // Try to generate chart image
+        $chartImage = $this->generateDexScreenerChart($pairAddress);
+        
+        if ($chartImage) {
+            $this->telegram->sendPhoto($chatId, $chartImage, $caption, $keyboard);
+        } else {
+            $this->telegram->sendMessage($chatId, $caption, $keyboard);
+        }
+    }
+
+    /**
+     * Send TradingView chart for any symbol
+     */
+    private function sendTradingViewChart(int $chatId, string $symbol, string $timeframe): void
+    {
+        // Detect market type
+        $marketType = $this->multiMarket->detectMarketType($symbol);
+
+        // Format symbol for TradingView
+        $tvSymbol = $this->formatSymbolForTradingView($symbol, $marketType);
+
+        // Get interval in TradingView format
+        $interval = $this->normalizeTimeframe($timeframe);
+
+        // Generate TradingView chart URL
+        $chartUrl = "https://www.tradingview.com/chart/?symbol={$tvSymbol}&interval={$interval}";
+
+        // Try to get market data for current stats
+        $marketData = null;
+        try {
+            switch ($marketType) {
+                case 'crypto':
+                    $marketData = $this->multiMarket->analyzeCryptoPair($symbol);
+                    break;
+                case 'stock':
+                    $marketData = $this->multiMarket->analyzeStockPair($symbol);
+                    break;
+                case 'forex':
+                    $marketData = $this->multiMarket->analyzeForexPair($symbol);
+                    break;
+            }
+        } catch (\Exception $e) {
+            Log::debug('Error fetching market data for chart', ['symbol' => $symbol, 'error' => $e->getMessage()]);
+        }
+
+        // Build caption
+        $caption = "📊 *{$symbol} Chart ({$timeframe})*\n\n";
+        $caption .= "📈 *Market:* " . ucfirst($marketType) . "\n";
+        $caption .= "⏱ *Timeframe:* {$timeframe}\n\n";
+
+        if ($marketData && !isset($marketData['error']) && isset($marketData['price'])) {
+            $price = $marketData['price'];
+            $change = $marketData['price_change_24h'] ?? 0;
+
+            $caption .= "💰 *Price:* " . $this->formatPriceAdaptive($price, $marketType) . "\n";
+            if ($change != 0) {
+                $emoji = $change > 0 ? '📈' : '📉';
+                $caption .= "{$emoji} *24h Change:* " . ($change > 0 ? '+' : '') . number_format($change, 2) . "%\n";
+                $caption .= $this->generatePriceBar($change) . "\n";
+            }
+
+            // Add volume if available
+            if (isset($marketData['volume_24h']) && $marketData['volume_24h'] > 0) {
+                $caption .= "💧 *Volume:* $" . $this->formatLargeNumber($marketData['volume_24h']) . "\n";
+            }
+            $caption .= "\n";
+        }
+
+        $caption .= "🔴 Open link for live interactive chart!";
+
+        // Create inline keyboard with timeframe options
+        $keyboard = [
+            'inline_keyboard' => [
+                [
+                    ['text' => '📊 Open TradingView', 'url' => $chartUrl]
+                ],
+                [
+                    ['text' => '⚡ 5M', 'callback_data' => "/chart {$symbol} 5M"],
+                    ['text' => '📈 15M', 'callback_data' => "/chart {$symbol} 15M"],
+                    ['text' => '📊 1H', 'callback_data' => "/chart {$symbol} 1H"],
+                ],
+                [
+                    ['text' => '⏰ 4H', 'callback_data' => "/chart {$symbol} 4H"],
+                    ['text' => '📅 1D', 'callback_data' => "/chart {$symbol} 1D"],
+                    ['text' => '📆 1W', 'callback_data' => "/chart {$symbol} 1W"],
+                ],
+                [
+                    ['text' => '📈 Analyze', 'callback_data' => "/analyze {$symbol}"],
+                    ['text' => '📊 RSI', 'callback_data' => "/rsi {$symbol}"],
+                ],
+            ]
+        ];
+
+        // Try to generate chart image
+        $chartImage = null;
+        if ($marketType === 'crypto') {
+            Log::info('Attempting to generate crypto chart', ['symbol' => $symbol, 'timeframe' => $timeframe]);
+            $chartImage = $this->generateCryptoChart($symbol, $timeframe);
+            Log::info('Chart generation result', ['has_image' => $chartImage !== null, 'url' => $chartImage ? substr($chartImage, 0, 100) . '...' : 'null']);
+        } else {
+            // For stocks/forex, try TradingView widget screenshot
+            Log::info('Attempting TradingView widget', ['symbol' => $tvSymbol]);
+            $chartImage = $this->generateTradingViewWidget($tvSymbol, $interval);
+        }
+        
+        if ($chartImage) {
+            Log::info('Sending photo to Telegram', ['chat_id' => $chatId, 'url_length' => strlen($chartImage)]);
+            try {
+                $result = $this->telegram->sendPhoto($chatId, $chartImage, $caption, $keyboard);
+                Log::info('Telegram sendPhoto result', ['success' => true]);
+            } catch (\Exception $e) {
+                Log::error('Telegram sendPhoto failed', ['error' => $e->getMessage()]);
+                // Fallback to text
+                $this->telegram->sendMessage($chatId, $caption, $keyboard);
+            }
+        } else {
+            Log::info('No chart image generated, sending text only');
+            $this->telegram->sendMessage($chatId, $caption, $keyboard);
+        }
+    }
+
+    /**
+     * Generate DEX chart image for SERPO
+     */
+    private function generateDexScreenerChart(string $pairAddress): ?string
+    {
+        try {
+            // Using thum.io for screenshot (free tier, reliable)
+            $url = "https://image.thum.io/get/width/1200/crop/800/noanimate/https://dexscreener.com/ton/{$pairAddress}";
+            return $url;
+        } catch (\Exception $e) {
+            Log::debug('DEX chart generation failed', ['error' => $e->getMessage()]);
+            return null;
+        }
+    }
+
+    /**
+     * Generate crypto chart using Binance data
+     */
+    private function generateCryptoChart(string $symbol, string $timeframeInput): ?string
+    {
+        try {
+            // Ensure symbol has USDT
+            $quoteAssets = ['USDT', 'BUSD', 'USDC', 'USD', 'BTC', 'ETH', 'BNB'];
+            $hasQuote = false;
+            foreach ($quoteAssets as $quote) {
+                if (strlen($symbol) > strlen($quote) && str_ends_with($symbol, $quote)) {
+                    $hasQuote = true;
+                    break;
+                }
+            }
+            if (!$hasQuote) {
+                $symbol .= 'USDT';
+            }
+            
+            // Convert timeframe back to standard format for Binance
+            $timeframe = $this->denormalizeTimeframe($timeframeInput);
+            
+            Log::info('Generating crypto chart', ['symbol' => $symbol, 'timeframe' => $timeframe, 'input' => $timeframeInput]);
+            
+            // Get klines from Binance
+            $binanceInterval = $this->timeframeToBinanceInterval($timeframe);
+            if (!$binanceInterval) {
+                Log::warning('Invalid timeframe for Binance', ['timeframe' => $timeframe]);
+                return null;
+            }
+            
+            $klines = $this->binance->getKlines($symbol, $binanceInterval, 100);
+            
+            if (!$klines || count($klines) < 10) {
+                Log::warning('Not enough klines for chart', ['symbol' => $symbol, 'count' => count($klines)]);
+                return null;
+            }
+            
+            Log::info('Got klines, generating chart', ['klines_count' => count($klines)]);
+            
+            // Try chart generation methods in order - Image-Charts is most reliable
+            $chartUrl = $this->generateImageChart($symbol, $klines, $timeframe);
+            if ($chartUrl) {
+                Log::info('Using Image-Chart');
+                return $chartUrl;
+            }
+            
+            $chartUrl = $this->generateQuickChartLine($symbol, $klines, $timeframe);
+            if ($chartUrl) {
+                Log::info('Using QuickChart');
+                return $chartUrl;
+            }
+            
+            $chartUrl = $this->generateGoogleChart($symbol, $klines, $timeframe);
+            if ($chartUrl) {
+                Log::info('Using Google Chart');
+                return $chartUrl;
+            }
+            
+            Log::warning('All chart generation methods failed');
+            return null;
+            
+        } catch (\Exception $e) {
+            Log::error('Crypto chart generation failed', ['symbol' => $symbol, 'error' => $e->getMessage(), 'trace' => $e->getTraceAsString()]);
+            return null;
+        }
+    }
+
+    /**
+     * Convert timeframe to Binance interval
+     */
+    private function timeframeToBinanceInterval(string $timeframe): ?string
+    {
+        $map = [
+            '1M' => '1m', '5M' => '5m', '15M' => '15m', '30M' => '30m',
+            '1H' => '1h', '2H' => '2h', '4H' => '4h', '1D' => '1d', '1W' => '1w',
+        ];
+        return $map[$timeframe] ?? null;
+    }
+
+    /**
+     * Generate chart using Google Charts API
+     */
+    private function generateGoogleChart(string $symbol, array $klines, string $timeframe): ?string
+    {
+        try {
+            $prices = [];
+            $step = max(1, (int)(count($klines) / 40)); // 40 data points max
+            
+            for ($i = 0; $i < count($klines); $i += $step) {
+                $prices[] = floatval($klines[$i][4]);
+            }
+            
+            if (count($prices) < 5) return null;
+            
+            $minPrice = min($prices);
+            $maxPrice = max($prices);
+            $priceRange = $maxPrice - $minPrice;
+            
+            // Normalize to 0-100
+            $normalized = array_map(function($p) use ($minPrice, $priceRange) {
+                return $priceRange > 0 ? round((($p - $minPrice) / $priceRange) * 100, 1) : 50;
+            }, $prices);
+            
+            $chartData = implode(',', $normalized);
+            $color = $prices[count($prices)-1] >= $prices[0] ? '00CC00' : 'CC0000';
+            
+            // Build simple, reliable Google Charts URL
+            $url = "https://chart.googleapis.com/chart?";
+            $url .= "cht=lc"; // Line chart
+            $url .= "&chs=700x350"; // Size
+            $url .= "&chd=t:{$chartData}"; // Data
+            $url .= "&chco={$color}"; // Color
+            $url .= "&chls=3"; // Line style
+            $url .= "&chf=bg,s,1a1a1a"; // Dark background
+            $url .= "&chxt=y"; // Y axis only
+            $url .= "&chxl=0:|" . number_format($minPrice, 0) . "|" . number_format($maxPrice, 0);
+            $url .= "&chxs=0,FFFFFF,12"; // White axis labels
+            $url .= "&chtt=" . urlencode("{$symbol} {$timeframe}");
+            $url .= "&chts=FFFFFF,14"; // White title
+            
+            Log::info('Generated Google Chart', ['url_length' => strlen($url)]);
+            return $url;
+        } catch (\Exception $e) {
+            Log::error('Google Chart generation failed', ['error' => $e->getMessage()]);
+            return null;
+        }
+    }
+
+    /**
+     * Generate line chart using QuickChart.io
+     */
+    private function generateQuickChartLine(string $symbol, array $klines, string $timeframe): ?string
+    {
+        try {
+            $prices = [];
+            $labels = [];
+            $step = max(1, (int)(count($klines) / 50));
+            
+            for ($i = 0; $i < count($klines); $i += $step) {
+                $prices[] = floatval($klines[$i][4]);
+                $labels[] = date('M d H:i', $klines[$i][0] / 1000);
+            }
+            
+            if (count($prices) < 5) return null;
+            
+            $color = $prices[count($prices)-1] >= $prices[0] ? 'rgb(0, 255, 0)' : 'rgb(255, 0, 0)';
+            
+            $config = [
+                'type' => 'line',
+                'data' => [
+                    'labels' => $labels,
+                    'datasets' => [['label' => $symbol, 'data' => $prices, 'borderColor' => $color,
+                        'backgroundColor' => 'rgba(0,0,0,0)', 'borderWidth' => 3, 'pointRadius' => 0]]
+                ],
+                'options' => [
+                    'plugins' => ['title' => ['display' => true, 'text' => "{$symbol} ({$timeframe})",
+                        'color' => '#fff', 'font' => ['size' => 18]], 'legend' => ['display' => false]],
+                    'scales' => ['x' => ['display' => false],
+                        'y' => ['ticks' => ['color' => '#fff'], 'grid' => ['color' => 'rgba(255,255,255,0.1)']]]
+                ]
+            ];
+            
+            $encoded = urlencode(json_encode($config));
+            return "https://quickchart.io/chart?width=800&height=400&backgroundColor=black&c={$encoded}";
+        } catch (\Exception $e) {
+            Log::debug('QuickChart failed', ['error' => $e->getMessage()]);
+            return null;
+        }
+    }
+
+    /**
+     * Generate chart using Image-Charts.com
+     */
+    private function generateImageChart(string $symbol, array $klines, string $timeframe): ?string
+    {
+        try {
+            $prices = [];
+            $step = max(1, (int)(count($klines) / 40));
+            
+            for ($i = 0; $i < count($klines); $i += $step) {
+                $prices[] = floatval($klines[$i][4]);
+            }
+            
+            if (count($prices) < 5) return null;
+            
+            $minPrice = min($prices);
+            $maxPrice = max($prices);
+            $priceRange = $maxPrice - $minPrice;
+            
+            $normalized = array_map(function($p) use ($minPrice, $priceRange) {
+                return $priceRange > 0 ? round((($p - $minPrice) / $priceRange) * 100, 1) : 50;
+            }, $prices);
+            
+            $chartData = implode(',', $normalized);
+            $color = $prices[count($prices)-1] >= $prices[0] ? '00CC00' : 'CC0000';
+            
+            $url = "https://image-charts.com/chart?";
+            $url .= "cht=lc";
+            $url .= "&chs=700x350";
+            $url .= "&chd=t:{$chartData}";
+            $url .= "&chco={$color}";
+            $url .= "&chls=3";
+            $url .= "&chf=bg,s,1a1a1a";
+            $url .= "&chxt=y";
+            $url .= "&chxl=0:|" . number_format($minPrice, 0) . "|" . number_format($maxPrice, 0);
+            $url .= "&chxs=0,FFFFFF,12";
+            $url .= "&chtt=" . urlencode("{$symbol} {$timeframe}");
+            $url .= "&chts=FFFFFF,14";
+            
+            Log::info('Generated Image-Chart', ['url_length' => strlen($url)]);
+            return $url;
+        } catch (\Exception $e) {
+            Log::error('Image-Charts generation failed', ['error' => $e->getMessage()]);
+            return null;
+        }
+    }
+
+    /**
+     * Generate TradingView widget screenshot
+     */
+    private function generateTradingViewWidget(string $tvSymbol, string $interval): ?string
+    {
+        try {
+            $widgetUrl = "https://www.tradingview.com/chart/?symbol={$tvSymbol}&interval={$interval}";
+            return "https://image.thum.io/get/width/1200/crop/800/noanimate/{$widgetUrl}";
+        } catch (\Exception $e) {
+            Log::debug('TradingView widget failed', ['error' => $e->getMessage()]);
+            return null;
+        }
+    }
+
+    /**
+     * Generate visual price bar for percentage changes
+     */
+    private function generatePriceBar(float $changePercent): string
+    {
+        $absChange = abs($changePercent);
+        $isPositive = $changePercent >= 0;
+
+        // Calculate bar length (max 10 blocks)
+        $barLength = min(10, (int)($absChange / 2)); // 2% = 1 block
+
+        if ($barLength === 0 && $absChange > 0) {
+            $barLength = 1; // Show at least 1 block for any change
+        }
+
+        $emptyLength = 10 - $barLength;
+
+        if ($isPositive) {
+            // Green bars for positive
+            $bar = str_repeat('🟩', $barLength) . str_repeat('⬜', $emptyLength);
+            return "📊 " . $bar . " +" . number_format($changePercent, 2) . "%";
+        } else {
+            // Red bars for negative
+            $bar = str_repeat('🟥', $barLength) . str_repeat('⬜', $emptyLength);
+            return "📊 " . $bar . " " . number_format($changePercent, 2) . "%";
+        }
+    }
+
+    /**
+     * Format large numbers with K/M/B suffixes
+     */
+    private function formatLargeNumber(float $number): string
+    {
+        if ($number >= 1000000000) {
+            return number_format($number / 1000000000, 2) . 'B';
+        } elseif ($number >= 1000000) {
+            return number_format($number / 1000000, 2) . 'M';
+        } elseif ($number >= 1000) {
+            return number_format($number / 1000, 2) . 'K';
+        }
+        return number_format($number, 2);
+    }
+
+    /**
+     * Format symbol for TradingView
+     */
+    private function formatSymbolForTradingView(string $symbol, string $marketType): string
+    {
+        $symbol = strtoupper($symbol);
+
+        switch ($marketType) {
+            case 'crypto':
+                // Check if symbol already has a quote currency
+                $quoteAssets = ['USDT', 'BUSD', 'USDC', 'USD', 'BTC', 'ETH', 'BNB'];
+                $hasQuote = false;
+
+                // Only match if it's actually a suffix (not the base currency itself)
+                foreach ($quoteAssets as $quote) {
+                    if (strlen($symbol) > strlen($quote) && str_ends_with($symbol, $quote)) {
+                        $hasQuote = true;
+                        break;
+                    }
+                }
+
+                // Add USDT if no quote currency
+                if (!$hasQuote) {
+                    $symbol .= 'USDT';
+                }
+                return 'BINANCE:' . $symbol;
+
+            case 'stock':
+                // Default to NASDAQ (can be enhanced)
+                return 'NASDAQ:' . str_replace('USD', '', $symbol);
+
+            case 'forex':
+                return 'FX:' . str_replace('/', '', $symbol);
+
+            default:
+                return $symbol;
+        }
+    }
+
+    /**
+     * Generate chart image using chart API
+     */
+    private function generateChartImage(string $symbol, string $marketType, string $interval): ?string
+    {
+        try {
+            // Get OHLCV data for chart
+            $klines = null;
+
+            if ($marketType === 'crypto') {
+                // Ensure symbol has quote currency
+                $quoteAssets = ['USDT', 'BUSD', 'USDC', 'USD', 'BTC', 'ETH', 'BNB'];
+                $hasQuote = false;
+                foreach ($quoteAssets as $quote) {
+                    if (str_ends_with($symbol, $quote)) {
+                        $hasQuote = true;
+                        break;
+                    }
+                }
+                if (!$hasQuote) {
+                    $symbol .= 'USDT';
+                }
+
+                // Convert interval to Binance format
+                $binanceInterval = $this->intervalToBinanceFormat($interval);
+                if ($binanceInterval) {
+                    $klines = $this->binance->getKlines($symbol, $binanceInterval, 100);
+                }
+            }
+
+            if (!$klines || empty($klines)) {
+                return null;
+            }
+
+            // Use QuickChart to generate candlestick chart
+            return $this->generateQuickChart($symbol, $klines, $interval);
+        } catch (\Exception $e) {
+            Log::debug('Chart image generation failed', ['symbol' => $symbol, 'error' => $e->getMessage()]);
+            return null;
+        }
+    }
+
+    /**
+     * Convert TradingView interval to Binance format
+     */
+    private function intervalToBinanceFormat(string $interval): ?string
+    {
+        $map = [
+            '1' => '1m',
+            '5' => '5m',
+            '15' => '15m',
+            '30' => '30m',
+            '60' => '1h',
+            '120' => '2h',
+            '240' => '4h',
+            'D' => '1d',
+            'W' => '1w',
+        ];
+
+        return $map[$interval] ?? null;
+    }
+
+    /**
+     * Generate QuickChart candlestick image
+     */
+    private function generateQuickChart(string $symbol, array $klines, string $interval): ?string
+    {
+        try {
+            // Extract OHLC data
+            $labels = [];
+            $data = [];
+
+            foreach ($klines as $kline) {
+                $timestamp = $kline[0];
+                $open = floatval($kline[1]);
+                $high = floatval($kline[2]);
+                $low = floatval($kline[3]);
+                $close = floatval($kline[4]);
+
+                $labels[] = date('M d H:i', $timestamp / 1000);
+                $data[] = [
+                    'x' => count($data),
+                    'o' => $open,
+                    'h' => $high,
+                    'l' => $low,
+                    'c' => $close,
+                ];
+            }
+
+            // Take last 50 candles for readability
+            $labels = array_slice($labels, -50);
+            $data = array_slice($data, -50);
+
+            // Create Chart.js config
+            $chartConfig = [
+                'type' => 'candlestick',
+                'data' => [
+                    'labels' => $labels,
+                    'datasets' => [[
+                        'label' => $symbol,
+                        'data' => $data,
+                    ]]
+                ],
+                'options' => [
+                    'title' => [
+                        'display' => true,
+                        'text' => "{$symbol} ({$interval})",
+                        'fontColor' => '#ffffff',
+                        'fontSize' => 16,
+                    ],
+                    'scales' => [
+                        'xAxes' => [[
+                            'display' => false,
+                        ]],
+                        'yAxes' => [[
+                            'ticks' => [
+                                'fontColor' => '#ffffff',
+                            ],
+                            'gridLines' => [
+                                'color' => 'rgba(255, 255, 255, 0.1)',
+                            ],
+                        ]],
+                    ],
+                    'plugins' => [
+                        'datalabels' => [
+                            'display' => false,
+                        ],
+                    ],
+                ],
+            ];
+
+            $encodedChart = urlencode(json_encode($chartConfig));
+            return "https://quickchart.io/chart?w=800&h=400&bkg=black&c={$encodedChart}";
+        } catch (\Exception $e) {
+            Log::debug('QuickChart generation failed', ['error' => $e->getMessage()]);
+            return null;
+        }
     }
 
     /**
@@ -4417,7 +5265,7 @@ class CommandHandler
                 'outputsize' => 'full'
             ];
 
-            $response = Http::timeout(15)->get('https://www.alphavantage.co/query', $params);
+            $response = Http::timeout(5)->get('https://www.alphavantage.co/query', $params);
 
             if (!$response->successful()) {
                 Log::error('Alpha Vantage forex API error', ['status' => $response->status()]);
@@ -4526,7 +5374,7 @@ class CommandHandler
                 'outputsize' => 'full'
             ];
 
-            $response = Http::timeout(15)->get('https://www.alphavantage.co/query', $params);
+            $response = Http::timeout(5)->get('https://www.alphavantage.co/query', $params);
 
             if (!$response->successful()) {
                 Log::error('Alpha Vantage stock API error', ['status' => $response->status()]);

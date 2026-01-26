@@ -173,12 +173,23 @@ class MultiMarketDataService
 
         // Commodity forex pairs (Gold, Silver, Oil, etc.)
         $commodityPairs = [
-            'XAUUSD', 'XAGUSD', 'XPTUSD', 'XPDUSD',  // Precious metals
-            'XAUEUR', 'XAGEUR', 'XPTEUR', 'XPDEUR',
-            'XAUGBP', 'XAGJPY', 'XAUCHF', 'XAGCHF',
-            'BCOUSD', 'WTOUSD', 'NGAS',  // Energy
+            'XAUUSD',
+            'XAGUSD',
+            'XPTUSD',
+            'XPDUSD',  // Precious metals
+            'XAUEUR',
+            'XAGEUR',
+            'XPTEUR',
+            'XPDEUR',
+            'XAUGBP',
+            'XAGJPY',
+            'XAUCHF',
+            'XAGCHF',
+            'BCOUSD',
+            'WTOUSD',
+            'NGAS',  // Energy
         ];
-        
+
         if (in_array(strtoupper($symbol), $commodityPairs)) {
             return 'forex';
         }
@@ -342,6 +353,9 @@ class MultiMarketDataService
                 $pairData = $this->getForexPairData($pair);
                 if (!isset($pairData['error'])) {
                     $data[] = $pairData;
+                } else {
+                    // Log but don't stop execution - skip failed pairs
+                    Log::warning("Forex pair failed, skipping", ['pair' => $pair]);
                 }
             }
 
@@ -410,11 +424,11 @@ class MultiMarketDataService
                     break;
                 }
             }
-            
+
             if ($isCommodity) {
                 return ['error' => "Invalid crypto symbol. {$symbol} appears to be a forex commodity. Use /trader {$symbol}USD instead."];
             }
-            
+
             $symbol .= 'USDT';
         }
 
@@ -587,7 +601,7 @@ class MultiMarketDataService
         // Try Alpha Vantage first (best quality)
         if (!empty($this->alphaVantageKey)) {
             try {
-                $response = Http::timeout(10)->get('https://www.alphavantage.co/query', [
+                $response = Http::timeout(5)->get('https://www.alphavantage.co/query', [
                     'function' => 'GLOBAL_QUOTE',
                     'symbol' => $symbol,
                     'apikey' => $this->alphaVantageKey
@@ -595,7 +609,7 @@ class MultiMarketDataService
 
                 if ($response->successful()) {
                     $data = $response->json();
-                    
+
                     // Check for API errors
                     if (isset($data['Error Message'])) {
                         Log::error('Alpha Vantage stock error', ['symbol' => $symbol, 'error' => $data['Error Message']]);
@@ -618,30 +632,30 @@ class MultiMarketDataService
                 Log::warning('Alpha Vantage error, trying fallback', ['symbol' => $symbol, 'error' => $e->getMessage()]);
             }
         }
-        
+
         // Fallback 1: Yahoo Finance API (FREE, no key needed)
         try {
-            $response = Http::timeout(10)
+            $response = Http::timeout(5)
                 ->withHeaders(['User-Agent' => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'])
                 ->get("https://query1.finance.yahoo.com/v8/finance/chart/{$symbol}", [
                     'interval' => '1d',
                     'range' => '1d'
                 ]);
-            
+
             if ($response->successful()) {
                 $data = $response->json();
-                
+
                 if (isset($data['chart']['result'][0])) {
                     $result = $data['chart']['result'][0];
                     $meta = $result['meta'];
-                    
+
                     $price = floatval($meta['regularMarketPrice'] ?? 0);
                     $prevClose = floatval($meta['previousClose'] ?? $price);
                     $change = $price - $prevClose;
                     $changePercent = $prevClose > 0 ? ($change / $prevClose) * 100 : 0;
-                    
+
                     Log::info('Using Yahoo Finance API', ['symbol' => $symbol, 'price' => $price]);
-                    
+
                     return [
                         'price' => $price,
                         'change' => $change,
@@ -654,25 +668,25 @@ class MultiMarketDataService
         } catch (\Exception $e) {
             Log::info('Yahoo Finance failed, trying next fallback', ['symbol' => $symbol, 'error' => $e->getMessage()]);
         }
-        
+
         // Fallback 2: Finnhub API (FREE - 60 calls/minute, no key for demo endpoint)
         try {
-            $response = Http::timeout(10)->get("https://finnhub.io/api/v1/quote", [
+            $response = Http::timeout(5)->get("https://finnhub.io/api/v1/quote", [
                 'symbol' => $symbol,
                 'token' => 'demo'  // Demo token works for major stocks
             ]);
-            
+
             if ($response->successful()) {
                 $data = $response->json();
-                
+
                 if (isset($data['c']) && $data['c'] > 0) {
                     $current = floatval($data['c']);  // Current price
                     $prevClose = floatval($data['pc'] ?? $current);  // Previous close
                     $change = $current - $prevClose;
                     $changePercent = $prevClose > 0 ? ($change / $prevClose) * 100 : 0;
-                    
+
                     Log::info('Using Finnhub API', ['symbol' => $symbol, 'price' => $current]);
-                    
+
                     return [
                         'price' => $current,
                         'change' => $change,
@@ -685,7 +699,7 @@ class MultiMarketDataService
         } catch (\Exception $e) {
             Log::error('All stock API fallbacks failed', ['symbol' => $symbol, 'error' => $e->getMessage()]);
         }
-        
+
         return ['error' => "Stock symbol {$symbol} not found. Verify it's a valid US stock ticker (e.g., AAPL, MSFT, TSLA)"];
     }
 
@@ -696,7 +710,7 @@ class MultiMarketDataService
     {
         try {
             // Get daily data for indicators
-            $response = Http::timeout(10)->get('https://www.alphavantage.co/query', [
+            $response = Http::timeout(5)->get('https://www.alphavantage.co/query', [
                 'function' => 'TIME_SERIES_DAILY',
                 'symbol' => $symbol,
                 'apikey' => $this->alphaVantageKey,
@@ -706,7 +720,7 @@ class MultiMarketDataService
             if ($response->successful()) {
                 $data = $response->json();
                 $timeSeries = $data['Time Series (Daily)'] ?? [];
-                
+
                 if (empty($timeSeries)) {
                     return [];
                 }
@@ -714,18 +728,18 @@ class MultiMarketDataService
                 // Get recent prices for calculations
                 $prices = array_slice($timeSeries, 0, 20, true);
                 $closePrices = array_map(fn($day) => floatval($day['4. close']), $prices);
-                
+
                 // Calculate simple indicators
                 $currentPrice = $closePrices[0];
                 $sma20 = array_sum($closePrices) / count($closePrices);
-                
+
                 // Determine trend
                 $trend = $currentPrice > $sma20 ? 'Bullish 🟢' : 'Bearish 🔴';
-                
+
                 // Find support/resistance (simplified)
                 $high = max($closePrices);
                 $low = min($closePrices);
-                
+
                 return [
                     'trend' => $trend,
                     'sma_20' => round($sma20, 2),
@@ -737,7 +751,7 @@ class MultiMarketDataService
         } catch (\Exception $e) {
             Log::error('Stock indicators error', ['symbol' => $symbol, 'error' => $e->getMessage()]);
         }
-        
+
         return [];
     }
 
@@ -746,7 +760,7 @@ class MultiMarketDataService
     private function getCoinGeckoTrending(): array
     {
         try {
-            $response = Http::timeout(10)->get('https://api.coingecko.com/api/v3/global');
+            $response = Http::timeout(5)->get('https://api.coingecko.com/api/v3/global');
             if ($response->successful()) {
                 $data = $response->json();
                 return [
@@ -763,7 +777,7 @@ class MultiMarketDataService
     private function getFearGreedIndex(): ?int
     {
         try {
-            $response = Http::timeout(10)->get('https://api.alternative.me/fng/');
+            $response = Http::timeout(5)->get('https://api.alternative.me/fng/');
             if ($response->successful()) {
                 $data = $response->json();
                 return intval($data['data'][0]['value'] ?? null);
@@ -815,7 +829,7 @@ class MultiMarketDataService
                 $from = substr($pair, 0, 3);
                 $to = substr($pair, 3, 3);
 
-                $response = Http::timeout(10)->get('https://www.alphavantage.co/query', [
+                $response = Http::timeout(3)->get('https://www.alphavantage.co/query', [
                     'function' => 'CURRENCY_EXCHANGE_RATE',
                     'from_currency' => $from,
                     'to_currency' => $to,
@@ -824,7 +838,7 @@ class MultiMarketDataService
 
                 if ($response->successful()) {
                     $data = $response->json();
-                    
+
                     // Check for API errors
                     if (isset($data['Error Message'])) {
                         Log::error('Alpha Vantage forex error', ['pair' => $pair, 'error' => $data['Error Message']]);
@@ -852,17 +866,17 @@ class MultiMarketDataService
         try {
             $from = substr($pair, 0, 3);
             $to = substr($pair, 3, 3);
-            
-            $response = Http::timeout(10)->get("https://api.exchangerate-api.com/v4/latest/{$from}");
-            
+
+            $response = Http::timeout(3)->get("https://api.exchangerate-api.com/v4/latest/{$from}");
+
             if ($response->successful()) {
                 $data = $response->json();
-                
+
                 if (isset($data['rates'][$to])) {
                     $rate = floatval($data['rates'][$to]);
-                    
+
                     Log::info('Using free forex API', ['pair' => $pair, 'rate' => $rate]);
-                    
+
                     return [
                         'pair' => $pair,
                         'price' => $rate,
@@ -928,7 +942,7 @@ class MultiMarketDataService
         }
 
         try {
-            $response = Http::timeout(10)->get('https://www.alphavantage.co/query', [
+            $response = Http::timeout(5)->get('https://www.alphavantage.co/query', [
                 'function' => 'GLOBAL_QUOTE',
                 'symbol' => $symbol,
                 'apikey' => $this->alphaVantageKey,
