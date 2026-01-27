@@ -26,6 +26,9 @@ class TelegramWebhookController extends Controller
      */
     public function webhook(Request $request)
     {
+        // Increase execution time for slow API calls
+        set_time_limit(120);
+        
         try {
             $update = $request->all();
 

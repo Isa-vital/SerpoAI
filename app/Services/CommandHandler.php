@@ -844,9 +844,17 @@ class CommandHandler
     private function handleSentiment(int $chatId, array $params = [])
     {
         // Get symbol from params or default to BTC
-        $symbol = !empty($params) ? strtoupper($params[0]) : 'BTC';
+        if (empty($params)) {
+            $this->telegram->sendMessage($chatId, "Please specify a cryptocurrency symbol.\n\nExample: `/sentiment BTC` or `/sentiment ETH`");
+            return;
+        }
 
-        // Map common symbols to full names for API
+        $symbol = strtoupper($params[0]);
+        
+        // Remove USDT/BUSD suffix if present
+        $symbol = preg_replace('/(USDT|BUSD|USD)$/i', '', $symbol);
+
+        // Expanded symbol map for better API mapping
         $symbolMap = [
             'BTC' => 'Bitcoin',
             'ETH' => 'Ethereum',
@@ -858,50 +866,98 @@ class CommandHandler
             'DOGE' => 'Dogecoin',
             'MATIC' => 'Polygon',
             'DOT' => 'Polkadot',
+            'AVAX' => 'Avalanche',
+            'LINK' => 'Chainlink',
+            'UNI' => 'Uniswap',
+            'ATOM' => 'Cosmos',
+            'LTC' => 'Litecoin',
+            'BCH' => 'Bitcoin Cash',
+            'NEAR' => 'NEAR Protocol',
+            'APT' => 'Aptos',
+            'ARB' => 'Arbitrum',
+            'OP' => 'Optimism',
+            'PEPE' => 'Pepe',
+            'SHIB' => 'Shiba Inu',
+            'TRX' => 'TRON',
+            'TON' => 'Toncoin',
+            'WIF' => 'dogwifhat',
+            'BONK' => 'Bonk',
+            'FLOKI' => 'Floki',
         ];
 
         $coinName = $symbolMap[$symbol] ?? $symbol;
 
         $this->telegram->sendMessage($chatId, "🔍 Analyzing {$symbol} sentiment...");
 
-        $sentiment = $this->sentiment->getCryptoSentiment($coinName);
+        $sentiment = $this->sentiment->getCryptoSentiment($coinName, $symbol);
 
-        $message = "📊 *{$symbol} SENTIMENT*\n";
-        $message .= "Based on {$coinName} news & social media\n\n";
-        $message .= $sentiment['emoji'] . " *" . $sentiment['label'] . "*\n";
-        $message .= "Overall Score: *" . $sentiment['score'] . "/100*\n\n";
+        $message = "📊 *{$symbol} SENTIMENT ANALYSIS*\n";
+        $message .= "━━━━━━━━━━━━━━━━━━━━\n\n";
+        $message .= "*Sentiment:* {$sentiment['emoji']} {$sentiment['label']}\n";
+        $message .= "*Score:* {$sentiment['score']} / 100\n";
+        $message .= "*Confidence:* {$sentiment['confidence']}\n\n";
 
-        $message .= "📈 *Market Mood*\n";
-        if (!empty($sentiment['positive_mentions']) || !empty($sentiment['negative_mentions'])) {
-            $positive = $sentiment['positive_mentions'] ?? 0;
-            $negative = $sentiment['negative_mentions'] ?? 0;
-            $total = $sentiment['total_mentions'] ?? ($positive + $negative);
+        // Market Data
+        if ($sentiment['market_data']) {
+            $md = $sentiment['market_data'];
+            $priceFormatted = $md['price'] < 1 ? number_format($md['price'], 6) : number_format($md['price'], 2);
+            $changeEmoji = $md['price_change_24h'] > 0 ? '🟢' : ($md['price_change_24h'] < 0 ? '🔴' : '⚪');
+            
+            $message .= "💰 *Price:* \${$priceFormatted} ({$changeEmoji} " . ($md['price_change_24h'] > 0 ? '+' : '') . "{$md['price_change_24h']}% 24h)\n";
+            
+            if (isset($md['rsi'])) {
+                $rsiLabel = $md['rsi'] > 70 ? 'Overbought' : ($md['rsi'] < 30 ? 'Oversold' : 'Neutral');
+                $message .= "📈 *RSI:* " . round($md['rsi'], 1) . " ({$rsiLabel})\n";
+            }
+            
+            $trendEmoji = match($md['trend']) {
+                'Bullish' => '📈',
+                'Bearish' => '📉',
+                default => '➡️'
+            };
+            $message .= "*Trend:* {$trendEmoji} {$md['trend']}\n\n";
+        }
 
-            $message .= "✅ Positive signals: {$positive}\n";
-            $message .= "❌ Negative signals: {$negative}\n";
+        // Sentiment Breakdown
+        $message .= "🧠 *Sentiment Breakdown*\n";
+        $socialPercent = round($sentiment['social_sentiment']);
+        $newsPercent = round($sentiment['news_sentiment']);
+        $message .= "• Social: {$socialPercent}% " . ($socialPercent > 50 ? 'Positive' : ($socialPercent < 50 ? 'Negative' : 'Neutral')) . "\n";
+        $message .= "• News: {$newsPercent}% " . ($newsPercent > 50 ? 'Positive' : ($newsPercent < 50 ? 'Negative' : 'Neutral')) . "\n\n";
 
-            if ($total > 0) {
-                $positivePercent = round(($positive / $total) * 100);
-                $message .= "📊 Optimism: {$positivePercent}%\n";
+        // Signals
+        if (!empty($sentiment['signals'])) {
+            $message .= "📡 *Signals*\n";
+            foreach (array_slice($sentiment['signals'], 0, 3) as $signal) {
+                $message .= "• {$signal}\n";
             }
             $message .= "\n";
         }
 
-        if (!empty($sentiment['sources'])) {
-            $message .= "📰 *Latest News:*\n";
-            foreach ($sentiment['sources'] as $source) {
-                $title = strlen($source['title']) > 65 ? substr($source['title'], 0, 65) . '...' : $source['title'];
-                $url = $source['url'] ?? '#';
-                $sourceName = $source['source'] ?? 'Source';
-                $message .= "• [{$title}]({$url})\n  _via {$sourceName}_\n";
-            }
-            $message .= "\n";
+        // Trader Insight
+        if (!empty($sentiment['trader_insight'])) {
+            $message .= "🧭 *Trader Insight*\n";
+            $message .= "_" . $sentiment['trader_insight'] . "_\n\n";
         }
 
-        $message .= "_Sentiment updates every 30 minutes from crypto news sources_";
+        $message .= "━━━━━━━━━━━━━━━━━━━━\n";
+        $message .= "📡 *Sources:* CryptoCompare";
+        if ($sentiment['market_data']) {
+            $message .= ", Binance";
+        }
+        $message .= "\n_Updates: 30m_";
 
         $keyboard = [
-            'inline_keyboard' => $this->getContextualKeyboard('sentiment')
+            'inline_keyboard' => [
+                [
+                    ['text' => '📊 Analyze ' . $symbol, 'callback_data' => '/analyze ' . $symbol],
+                    ['text' => '📈 Chart', 'callback_data' => '/chart ' . $symbol]
+                ],
+                [
+                    ['text' => '🔄 Refresh', 'callback_data' => '/sentiment ' . $symbol],
+                    ['text' => '🎯 Signals', 'callback_data' => '/signals ' . $symbol]
+                ]
+            ]
         ];
 
         $this->telegram->sendMessage($chatId, $message, $keyboard);
@@ -2629,10 +2685,10 @@ class CommandHandler
                 default => ['error' => 'Unknown market type']
             };
 
-            if (isset($marketData['error'])) {
-                $errorMsg = $marketData['error'];
+            if (isset($marketData['error']) || !isset($marketData['price'])) {
+                $errorMsg = $marketData['error'] ?? 'Unable to fetch market data - network timeout';
                 // Make error message more helpful
-                if (str_contains($errorMsg, 'not found') || str_contains($errorMsg, 'Unable to fetch')) {
+                if (str_contains($errorMsg, 'not found') || str_contains($errorMsg, 'Unable to fetch') || str_contains($errorMsg, 'timeout')) {
                     $this->telegram->sendMessage($chatId, "❌ {$errorMsg}\n\n💡 *Tips:*\n" .
                         "• Crypto: Try `/trader ETHUSDT` or `/trader BNBUSDT`\n" .
                         "• Stocks: Try `/trader MSFT` or `/trader GOOGL`\n" .

@@ -57,7 +57,7 @@ class PairAnalyticsService
         $changeEmoji = $changePercent > 0 ? '🟢' : ($changePercent < 0 ? '🔴' : '⚪');
 
         $message .= "💰 *Price Action*\n";
-        $message .= "Current: \${$price}\n";
+        $message .= "Current: \$" . $this->formatPrice($price) . "\n";
         $message .= "24h Change: {$changeEmoji} ";
 
         // Format the change properly
@@ -68,7 +68,7 @@ class PairAnalyticsService
             // Only show absolute change if it's not zero and makes sense
             if ($market === 'CRYPTO' && $change != 0) {
                 $changeSign = $change > 0 ? '+' : '';
-                $message .= " (\${$changeSign}{$change})";
+                $message .= " (\${$changeSign}" . $this->formatPrice($change) . ")";
             }
         } else {
             $message .= "0%";
@@ -127,8 +127,8 @@ class PairAnalyticsService
             }
 
             if (isset($indicators['ma20']) && isset($indicators['ma50'])) {
-                $message .= "MA20: \${$indicators['ma20']}\n";
-                $message .= "MA50: \${$indicators['ma50']}\n";
+                $message .= "MA20: \$" . $this->formatPrice($indicators['ma20']) . "\n";
+                $message .= "MA50: \$" . $this->formatPrice($indicators['ma50']) . "\n";
             }
 
             // Special SERPO indicators
@@ -147,10 +147,10 @@ class PairAnalyticsService
             $sr = $analysis['support_resistance'];
             $message .= "🎯 *Key Levels*\n";
             if (isset($sr['nearest_support']) && $sr['nearest_support']) {
-                $message .= "Support: \${$sr['nearest_support']}\n";
+                $message .= "Support: \$" . $this->formatPrice($sr['nearest_support']) . "\n";
             }
             if (isset($sr['nearest_resistance']) && $sr['nearest_resistance']) {
-                $message .= "Resistance: \${$sr['nearest_resistance']}\n";
+                $message .= "Resistance: \$" . $this->formatPrice($sr['nearest_resistance']) . "\n";
             }
             $message .= "\n";
         }
@@ -183,5 +183,26 @@ class PairAnalyticsService
             return round($num / 1_000, 2) . 'K';
         }
         return (string) round($num, 2);
+    }
+
+    /**
+     * Format price properly - avoid scientific notation
+     */
+    private function formatPrice($price): string
+    {
+        $price = floatval($price);
+        
+        // For very small numbers (< 0.0001), use appropriate decimal places
+        if ($price < 0.0001 && $price > 0) {
+            return rtrim(rtrim(number_format($price, 8, '.', ''), '0'), '.');
+        }
+        // For numbers < 1, show 4 decimal places
+        elseif ($price < 1 && $price > 0) {
+            return rtrim(rtrim(number_format($price, 4, '.', ''), '0'), '.');
+        }
+        // For numbers >= 1, show 2 decimal places with thousands separator
+        else {
+            return number_format($price, 2, '.', ',');
+        }
     }
 }
