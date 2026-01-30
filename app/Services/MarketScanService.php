@@ -21,7 +21,12 @@ class MarketScanService
      */
     public function performDeepScan(): array
     {
-        return MarketCache::remember('market_deep_scan_v2', 'scan', 300, function () {
+        $cacheTtl = 60; // 60 seconds cache
+        $cacheKey = 'market_deep_scan_v3';
+
+        $result = MarketCache::remember($cacheKey, 'scan', $cacheTtl, function () use ($cacheTtl) {
+            $startTime = microtime(true);
+
             // Get data from all markets
             $cryptoData = $this->multiMarket->getCryptoData();
             $stockData = $this->multiMarket->getStockData();
@@ -32,8 +37,9 @@ class MarketScanService
             $usdtPairs = array_filter($tickers, fn($t) => str_ends_with($t['symbol'], 'USDT'));
             usort($usdtPairs, fn($a, $b) => floatval($b['quoteVolume']) <=> floatval($a['quoteVolume']));
 
-            return [
+            $scanData = [
                 'timestamp' => now()->toIso8601String(),
+                'cache_ttl' => $cacheTtl,
                 'crypto' => [
                     'market_overview' => $this->getMarketOverview($usdtPairs),
                     'top_gainers' => $this->getTopMovers($usdtPairs, 'gainers', 10),
@@ -55,7 +61,25 @@ class MarketScanService
                     'market_status' => $forexData['market_status'] ?? 'Unknown',
                 ],
             ];
+
+            $executionTime = round((microtime(true) - $startTime) * 1000, 2);
+
+            // Structured logging
+            Log::info('Market scan completed', [
+                'cache_miss' => true, // Always true inside callback
+                'execution_time_ms' => $executionTime,
+                'crypto_pairs_scanned' => count($usdtPairs),
+                'forex_pairs_scanned' => count($forexData['major_pairs'] ?? []),
+                'stock_indices' => count($stockData['indices'] ?? []),
+                'gainers' => $scanData['crypto']['market_overview']['gainers'] ?? 0,
+                'losers' => $scanData['crypto']['market_overview']['losers'] ?? 0,
+                'market_sentiment' => $scanData['crypto']['market_overview']['market_sentiment'] ?? 'Unknown',
+            ]);
+
+            return $scanData;
         });
+
+        return $result;
     }
 
     private function getMarketOverview(array $tickers): array
@@ -68,18 +92,32 @@ class MarketScanService
 
         $totalVolume = array_sum(array_map(fn($t) => floatval($t['quoteVolume']), $tickers));
 
+        // Calculate sentiment from market breadth (gainers vs losers ratio)
+        $breadthRatio = $gainers > 0 ? $losers / $gainers : 999;
+        if ($breadthRatio >= 2.0) {
+            $sentiment = 'Bearish';
+            $sentimentReason = "({$gainers} gainers vs {$losers} losers)";
+        } elseif ($gainers > 0 && ($gainers / max($losers, 1)) >= 2.0) {
+            $sentiment = 'Bullish';
+            $sentimentReason = "({$gainers} gainers vs {$losers} losers)";
+        } else {
+            $sentiment = 'Neutral';
+            $sentimentReason = "({$gainers} gainers vs {$losers} losers)";
+        }
+
         return [
             'total_pairs' => $totalCoins,
             'gainers' => $gainers,
             'losers' => $losers,
             'neutral' => $totalCoins - $gainers - $losers,
-            'market_sentiment' => $avgChange > 2 ? 'Bullish' : ($avgChange < -2 ? 'Bearish' : 'Neutral'),
+            'market_sentiment' => $sentiment,
+            'sentiment_reason' => $sentimentReason,
             'avg_change_percent' => round($avgChange, 2),
             'total_volume_24h' => $this->formatLargeNumber($totalVolume),
         ];
     }
 
-    private function getTopMovers(array $tickers, string $type, int $limit): array
+    private function getTopMovers(array $tickers, string $type, int $limit, float $minVolume = 1000000): array
     {
         $sorted = $tickers;
 
@@ -89,14 +127,31 @@ class MarketScanService
             usort($sorted, fn($a, $b) => floatval($a['priceChangePercent']) <=> floatval($b['priceChangePercent']));
         }
 
-        return array_slice(array_map(function ($t) {
-            return [
+        // Separate by volume
+        $highVolume = [];
+        $lowVolume = [];
+
+        foreach ($sorted as $t) {
+            $volume = floatval($t['quoteVolume']);
+            $item = [
                 'symbol' => $t['symbol'],
                 'price' => floatval($t['lastPrice']),
                 'change_percent' => floatval($t['priceChangePercent']),
-                'volume' => $this->formatLargeNumber(floatval($t['quoteVolume'])),
+                'volume' => $this->formatLargeNumber($volume),
+                'volume_raw' => $volume,
             ];
-        }, $sorted), 0, $limit);
+
+            if ($volume >= $minVolume) {
+                $highVolume[] = $item;
+            } else {
+                $lowVolume[] = $item;
+            }
+        }
+
+        return [
+            'high_volume' => array_slice($highVolume, 0, $limit),
+            'low_volume' => array_slice($lowVolume, 0, $limit),
+        ];
     }
 
     private function getVolumeLeaders(array $tickers, int $limit): array
@@ -189,7 +244,13 @@ class MarketScanService
             return "❌ " . $scan['error'];
         }
 
+        $timestamp = isset($scan['timestamp']) ? \Carbon\Carbon::parse($scan['timestamp'])->format('Y-m-d H:i:s') . ' UTC' : 'N/A';
+        $cacheTtl = $scan['cache_ttl'] ?? 60;
+
         $message = "🌍 *FULL MARKET DEEP SCAN*\n";
+        $message .= "━━━━━━━━━━━━━━━━━━━━\n";
+        $message .= "⏰ Snapshot: {$timestamp}\n";
+        $message .= "🗂 Cache: {$cacheTtl}s\n";
         $message .= "━━━━━━━━━━━━━━━━━━━━\n\n";
 
         // === CRYPTO MARKETS ===
@@ -199,9 +260,9 @@ class MarketScanService
         $message .= "💎 *CRYPTO MARKETS*\n";
         $message .= "━━━━━━━━━━━━━━━━━━━━\n";
         $message .= "📊 Market Overview\n";
-        $message .= "• Total Pairs: {$overview['total_pairs']} (ALL Binance Markets)\n";
+        $message .= "• Total Pairs Scanned: {$overview['total_pairs']} (Binance Spot)\n";
         $message .= "• Gainers: 🟢 {$overview['gainers']} | Losers: 🔴 {$overview['losers']}\n";
-        $message .= "• Sentiment: {$this->getSentimentEmoji($overview['market_sentiment'])} {$overview['market_sentiment']}\n";
+        $message .= "• Sentiment: {$this->getSentimentEmoji($overview['market_sentiment'])} {$overview['market_sentiment']} {$overview['sentiment_reason']}\n";
         $message .= "• 24h Volume: \${$overview['total_volume_24h']}\n";
 
         if (isset($crypto['fear_greed'])) {
@@ -214,16 +275,35 @@ class MarketScanService
             $message .= "• BTC Dominance: " . round($crypto['btc_dominance'], 2) . "%\n";
         }
 
-        $message .= "\n🚀 Top Gainers (24h)\n";
-        foreach (array_slice($crypto['top_gainers'], 0, 5) as $idx => $coin) {
-            $message .= ($idx + 1) . ". `{$coin['symbol']}` +{$coin['change_percent']}%\n";
-            $message .= "   💰 \${$coin['price']} | Vol: \${$coin['volume']}\n";
+        // High-volume gainers
+        $gainersHigh = $crypto['top_gainers']['high_volume'] ?? [];
+        if (!empty($gainersHigh)) {
+            $message .= "\n🚀 Top Gainers (Vol ≥ \$1M)\n";
+            foreach (array_slice($gainersHigh, 0, 5) as $idx => $coin) {
+                $message .= ($idx + 1) . ". `{$coin['symbol']}` +{$coin['change_percent']}%\n";
+                $message .= "   💰 \${$coin['price']} | Vol: \${$coin['volume']}\n";
+            }
         }
 
-        $message .= "\n📉 Top Losers\n";
-        foreach (array_slice($crypto['top_losers'], 0, 5) as $idx => $coin) {
-            $message .= ($idx + 1) . ". `{$coin['symbol']}` {$coin['change_percent']}%\n";
-            $message .= "   💰 \${$coin['price']} | Vol: \${$coin['volume']}\n";
+        // Low-volume gainers with warning
+        $gainersLow = $crypto['top_gainers']['low_volume'] ?? [];
+        if (!empty($gainersLow)) {
+            $message .= "\n⚠️ Low-Liquidity Gainers (Vol < \$1M)\n";
+            foreach (array_slice($gainersLow, 0, 3) as $idx => $coin) {
+                $message .= ($idx + 1) . ". `{$coin['symbol']}` +{$coin['change_percent']}%\n";
+                $message .= "   💰 \${$coin['price']} | Vol: \${$coin['volume']}\n";
+            }
+            $message .= "_⚠️ Low liquidity = higher manipulation risk_\n";
+        }
+
+        // High-volume losers
+        $losersHigh = $crypto['top_losers']['high_volume'] ?? [];
+        if (!empty($losersHigh)) {
+            $message .= "\n📉 Top Losers (Vol ≥ \$1M)\n";
+            foreach (array_slice($losersHigh, 0, 5) as $idx => $coin) {
+                $message .= ($idx + 1) . ". `{$coin['symbol']}` {$coin['change_percent']}%\n";
+                $message .= "   💰 \${$coin['price']} | Vol: \${$coin['volume']}\n";
+            }
         }
 
         $message .= "\n💰 Volume Leaders\n";
@@ -235,7 +315,12 @@ class MarketScanService
         $stocks = $scan['stocks'];
         $message .= "\n\n📈 *STOCK MARKETS*\n";
         $message .= "━━━━━━━━━━━━━━━━━━━━\n";
-        $message .= "Status: {$stocks['market_status']}\n\n";
+        $message .= "Status: {$stocks['market_status']}\n";
+        if ($stocks['market_status'] === 'Closed') {
+            $sessionDate = \Carbon\Carbon::now('America/New_York')->subDay()->format('Y-m-d');
+            $message .= "Session: Previous Close | As of: {$sessionDate}\n";
+        }
+        $message .= "\n";
 
         if (!empty($stocks['indices'])) {
             $message .= "📊 Major Indices\n";
@@ -253,6 +338,8 @@ class MarketScanService
         $message .= "\n\n💱 *FOREX & COMMODITIES*\n";
         $message .= "━━━━━━━━━━━━━━━━━━━━\n";
         $message .= "Status: {$forex['market_status']}\n";
+        $forexTimestamp = \Carbon\Carbon::now('UTC')->format('Y-m-d H:i:s') . ' UTC';
+        $message .= "As of: {$forexTimestamp}\n";
         $totalForex = $forex['total_pairs'] ?? 180;
         $message .= "• Total Available: {$totalForex}+ pairs (All ISO currencies)\n";
         $message .= "• Metals: GOLD, SILVER, PLATINUM, PALLADIUM\n";
@@ -281,8 +368,9 @@ class MarketScanService
 
             $message .= "💱 Major Currency Pairs\n";
             foreach (array_slice($regularPairs, 0, 8) as $idx => $pair) {
-                $changeSymbol = $pair['change'] >= 0 ? '+' : '';
-                $message .= ($idx + 1) . ". `{$pair['pair']}`: {$pair['price']} ({$changeSymbol}{$pair['change_percent']}%)\n";
+                $changePercent = number_format($pair['change_percent'], 2);
+                $changeSymbol = $pair['change_percent'] >= 0 ? '+' : '';
+                $message .= ($idx + 1) . ". `{$pair['pair']}`: {$pair['price']} ({$changeSymbol}{$changePercent}%)\n";
             }
         } else {
             $message .= "• Majors: EUR/USD, GBP/USD, USD/JPY, AUD/USD, USD/CAD, NZD/USD\n";
@@ -292,11 +380,13 @@ class MarketScanService
         }
 
         $message .= "\n━━━━━━━━━━━━━━━━━━━━\n";
-        $message .= "📡 Data Sources:\n";
-        $message .= "• Crypto: Binance, CoinGecko\n";
-        $message .= "• Stocks: Alpha Vantage, Yahoo\n";
-        $message .= "• Forex: Alpha Vantage, OANDA\n";
-        $message .= "\n💡 Use `/analyze [symbol]` for detailed analysis";
+        $message .= "📡 *Data Sources:*\n";
+        $message .= "• Crypto: Binance (primary), CoinGecko (fallback)\n";
+        $message .= "• Stocks: Alpha Vantage (primary), Yahoo Finance (fallback)\n";
+        $message .= "• Forex: Alpha Vantage (primary), ExchangeRate-API (fallback)\n";
+        $message .= "\n💡 *How to use:*\n";
+        $message .= "• Use `/analyze <symbol>` for detailed analysis\n";
+        $message .= "• Data updates every {$cacheTtl}s\n";
 
         return $message;
     }

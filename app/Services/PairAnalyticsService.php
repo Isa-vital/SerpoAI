@@ -191,7 +191,7 @@ class PairAnalyticsService
     private function formatPrice($price): string
     {
         $price = floatval($price);
-        
+
         // For very small numbers (< 0.0001), use appropriate decimal places
         if ($price < 0.0001 && $price > 0) {
             return rtrim(rtrim(number_format($price, 8, '.', ''), '0'), '.');

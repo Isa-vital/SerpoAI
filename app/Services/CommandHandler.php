@@ -850,7 +850,7 @@ class CommandHandler
         }
 
         $symbol = strtoupper($params[0]);
-        
+
         // Remove USDT/BUSD suffix if present
         $symbol = preg_replace('/(USDT|BUSD|USD)$/i', '', $symbol);
 
@@ -902,15 +902,15 @@ class CommandHandler
             $md = $sentiment['market_data'];
             $priceFormatted = $md['price'] < 1 ? number_format($md['price'], 6) : number_format($md['price'], 2);
             $changeEmoji = $md['price_change_24h'] > 0 ? '🟢' : ($md['price_change_24h'] < 0 ? '🔴' : '⚪');
-            
+
             $message .= "💰 *Price:* \${$priceFormatted} ({$changeEmoji} " . ($md['price_change_24h'] > 0 ? '+' : '') . "{$md['price_change_24h']}% 24h)\n";
-            
+
             if (isset($md['rsi'])) {
                 $rsiLabel = $md['rsi'] > 70 ? 'Overbought' : ($md['rsi'] < 30 ? 'Oversold' : 'Neutral');
                 $message .= "📈 *RSI:* " . round($md['rsi'], 1) . " ({$rsiLabel})\n";
             }
-            
-            $trendEmoji = match($md['trend']) {
+
+            $trendEmoji = match ($md['trend']) {
                 'Bullish' => '📈',
                 'Bearish' => '📉',
                 default => '➡️'
@@ -1246,12 +1246,20 @@ class CommandHandler
      */
     private function handleScan(int $chatId, User $user)
     {
-        // Show typing indicator
+        // Show typing indicator and single progress message
         $this->telegram->sendChatAction($chatId, 'typing');
-        $this->telegram->sendMessage($chatId, "🔍 Performing deep market scan...");
+        $progressMsg = $this->telegram->sendMessage($chatId, "🔍 Performing deep market scan...");
 
         try {
             $scan = $this->marketScan->performDeepScan();
+
+            // Log user request
+            Log::info('Scan command executed', [
+                'user_id' => $user->id,
+                'chat_id' => $chatId,
+                'snapshot_time' => $scan['timestamp'] ?? null,
+            ]);
+
             $message = $this->marketScan->formatScanResults($scan);
             $keyboard = [
                 'inline_keyboard' => $this->getContextualKeyboard('scan')
@@ -1261,11 +1269,16 @@ class CommandHandler
             // Log scan history
             \App\Models\ScanHistory::logScan($user->id, 'market_scan', null, [], $scan);
         } catch (\Exception $e) {
-            Log::error('Scan command error', ['error' => $e->getMessage()]);
+            Log::error('Scan command error', [
+                'user_id' => $user->id,
+                'chat_id' => $chatId,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
             $keyboard = [
                 'inline_keyboard' => $this->getContextualKeyboard('scan')
             ];
-            $this->telegram->sendMessage($chatId, "❌ Error performing market scan. Please try again later.", $keyboard);
+            $this->telegram->sendMessage($chatId, "❌ Error performing market scan. Please try again later.\n\n_If this persists, some data sources may be temporarily unavailable._", $keyboard);
         }
     }
 
@@ -3163,7 +3176,7 @@ class CommandHandler
 
         // Try to generate chart image
         $chartImage = $this->generateDexScreenerChart($pairAddress);
-        
+
         if ($chartImage) {
             $this->telegram->sendPhoto($chatId, $chartImage, $caption, $keyboard);
         } else {
@@ -3265,7 +3278,7 @@ class CommandHandler
             Log::info('Attempting TradingView widget', ['symbol' => $tvSymbol]);
             $chartImage = $this->generateTradingViewWidget($tvSymbol, $interval);
         }
-        
+
         if ($chartImage) {
             Log::info('Sending photo to Telegram', ['chat_id' => $chatId, 'url_length' => strlen($chartImage)]);
             try {
@@ -3315,50 +3328,49 @@ class CommandHandler
             if (!$hasQuote) {
                 $symbol .= 'USDT';
             }
-            
+
             // Convert timeframe back to standard format for Binance
             $timeframe = $this->denormalizeTimeframe($timeframeInput);
-            
+
             Log::info('Generating crypto chart', ['symbol' => $symbol, 'timeframe' => $timeframe, 'input' => $timeframeInput]);
-            
+
             // Get klines from Binance
             $binanceInterval = $this->timeframeToBinanceInterval($timeframe);
             if (!$binanceInterval) {
                 Log::warning('Invalid timeframe for Binance', ['timeframe' => $timeframe]);
                 return null;
             }
-            
+
             $klines = $this->binance->getKlines($symbol, $binanceInterval, 100);
-            
+
             if (!$klines || count($klines) < 10) {
                 Log::warning('Not enough klines for chart', ['symbol' => $symbol, 'count' => count($klines)]);
                 return null;
             }
-            
+
             Log::info('Got klines, generating chart', ['klines_count' => count($klines)]);
-            
+
             // Try chart generation methods in order - Image-Charts is most reliable
             $chartUrl = $this->generateImageChart($symbol, $klines, $timeframe);
             if ($chartUrl) {
                 Log::info('Using Image-Chart');
                 return $chartUrl;
             }
-            
+
             $chartUrl = $this->generateQuickChartLine($symbol, $klines, $timeframe);
             if ($chartUrl) {
                 Log::info('Using QuickChart');
                 return $chartUrl;
             }
-            
+
             $chartUrl = $this->generateGoogleChart($symbol, $klines, $timeframe);
             if ($chartUrl) {
                 Log::info('Using Google Chart');
                 return $chartUrl;
             }
-            
+
             Log::warning('All chart generation methods failed');
             return null;
-            
         } catch (\Exception $e) {
             Log::error('Crypto chart generation failed', ['symbol' => $symbol, 'error' => $e->getMessage(), 'trace' => $e->getTraceAsString()]);
             return null;
@@ -3371,8 +3383,15 @@ class CommandHandler
     private function timeframeToBinanceInterval(string $timeframe): ?string
     {
         $map = [
-            '1M' => '1m', '5M' => '5m', '15M' => '15m', '30M' => '30m',
-            '1H' => '1h', '2H' => '2h', '4H' => '4h', '1D' => '1d', '1W' => '1w',
+            '1M' => '1m',
+            '5M' => '5m',
+            '15M' => '15m',
+            '30M' => '30m',
+            '1H' => '1h',
+            '2H' => '2h',
+            '4H' => '4h',
+            '1D' => '1d',
+            '1W' => '1w',
         ];
         return $map[$timeframe] ?? null;
     }
@@ -3385,25 +3404,25 @@ class CommandHandler
         try {
             $prices = [];
             $step = max(1, (int)(count($klines) / 40)); // 40 data points max
-            
+
             for ($i = 0; $i < count($klines); $i += $step) {
                 $prices[] = floatval($klines[$i][4]);
             }
-            
+
             if (count($prices) < 5) return null;
-            
+
             $minPrice = min($prices);
             $maxPrice = max($prices);
             $priceRange = $maxPrice - $minPrice;
-            
+
             // Normalize to 0-100
-            $normalized = array_map(function($p) use ($minPrice, $priceRange) {
+            $normalized = array_map(function ($p) use ($minPrice, $priceRange) {
                 return $priceRange > 0 ? round((($p - $minPrice) / $priceRange) * 100, 1) : 50;
             }, $prices);
-            
+
             $chartData = implode(',', $normalized);
-            $color = $prices[count($prices)-1] >= $prices[0] ? '00CC00' : 'CC0000';
-            
+            $color = $prices[count($prices) - 1] >= $prices[0] ? '00CC00' : 'CC0000';
+
             // Build simple, reliable Google Charts URL
             $url = "https://chart.googleapis.com/chart?";
             $url .= "cht=lc"; // Line chart
@@ -3417,7 +3436,7 @@ class CommandHandler
             $url .= "&chxs=0,FFFFFF,12"; // White axis labels
             $url .= "&chtt=" . urlencode("{$symbol} {$timeframe}");
             $url .= "&chts=FFFFFF,14"; // White title
-            
+
             Log::info('Generated Google Chart', ['url_length' => strlen($url)]);
             return $url;
         } catch (\Exception $e) {
@@ -3435,31 +3454,43 @@ class CommandHandler
             $prices = [];
             $labels = [];
             $step = max(1, (int)(count($klines) / 50));
-            
+
             for ($i = 0; $i < count($klines); $i += $step) {
                 $prices[] = floatval($klines[$i][4]);
                 $labels[] = date('M d H:i', $klines[$i][0] / 1000);
             }
-            
+
             if (count($prices) < 5) return null;
-            
-            $color = $prices[count($prices)-1] >= $prices[0] ? 'rgb(0, 255, 0)' : 'rgb(255, 0, 0)';
-            
+
+            $color = $prices[count($prices) - 1] >= $prices[0] ? 'rgb(0, 255, 0)' : 'rgb(255, 0, 0)';
+
             $config = [
                 'type' => 'line',
                 'data' => [
                     'labels' => $labels,
-                    'datasets' => [['label' => $symbol, 'data' => $prices, 'borderColor' => $color,
-                        'backgroundColor' => 'rgba(0,0,0,0)', 'borderWidth' => 3, 'pointRadius' => 0]]
+                    'datasets' => [[
+                        'label' => $symbol,
+                        'data' => $prices,
+                        'borderColor' => $color,
+                        'backgroundColor' => 'rgba(0,0,0,0)',
+                        'borderWidth' => 3,
+                        'pointRadius' => 0
+                    ]]
                 ],
                 'options' => [
-                    'plugins' => ['title' => ['display' => true, 'text' => "{$symbol} ({$timeframe})",
-                        'color' => '#fff', 'font' => ['size' => 18]], 'legend' => ['display' => false]],
-                    'scales' => ['x' => ['display' => false],
-                        'y' => ['ticks' => ['color' => '#fff'], 'grid' => ['color' => 'rgba(255,255,255,0.1)']]]
+                    'plugins' => ['title' => [
+                        'display' => true,
+                        'text' => "{$symbol} ({$timeframe})",
+                        'color' => '#fff',
+                        'font' => ['size' => 18]
+                    ], 'legend' => ['display' => false]],
+                    'scales' => [
+                        'x' => ['display' => false],
+                        'y' => ['ticks' => ['color' => '#fff'], 'grid' => ['color' => 'rgba(255,255,255,0.1)']]
+                    ]
                 ]
             ];
-            
+
             $encoded = urlencode(json_encode($config));
             return "https://quickchart.io/chart?width=800&height=400&backgroundColor=black&c={$encoded}";
         } catch (\Exception $e) {
@@ -3476,24 +3507,24 @@ class CommandHandler
         try {
             $prices = [];
             $step = max(1, (int)(count($klines) / 40));
-            
+
             for ($i = 0; $i < count($klines); $i += $step) {
                 $prices[] = floatval($klines[$i][4]);
             }
-            
+
             if (count($prices) < 5) return null;
-            
+
             $minPrice = min($prices);
             $maxPrice = max($prices);
             $priceRange = $maxPrice - $minPrice;
-            
-            $normalized = array_map(function($p) use ($minPrice, $priceRange) {
+
+            $normalized = array_map(function ($p) use ($minPrice, $priceRange) {
                 return $priceRange > 0 ? round((($p - $minPrice) / $priceRange) * 100, 1) : 50;
             }, $prices);
-            
+
             $chartData = implode(',', $normalized);
-            $color = $prices[count($prices)-1] >= $prices[0] ? '00CC00' : 'CC0000';
-            
+            $color = $prices[count($prices) - 1] >= $prices[0] ? '00CC00' : 'CC0000';
+
             $url = "https://image-charts.com/chart?";
             $url .= "cht=lc";
             $url .= "&chs=700x350";
@@ -3506,7 +3537,7 @@ class CommandHandler
             $url .= "&chxs=0,FFFFFF,12";
             $url .= "&chtt=" . urlencode("{$symbol} {$timeframe}");
             $url .= "&chts=FFFFFF,14";
-            
+
             Log::info('Generated Image-Chart', ['url_length' => strlen($url)]);
             return $url;
         } catch (\Exception $e) {
