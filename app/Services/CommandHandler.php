@@ -1022,7 +1022,60 @@ class CommandHandler
      */
     private function handleUnknown(int $chatId, string $command)
     {
-        $this->telegram->sendMessage($chatId, "❓ Unknown command: {$command}\n\nType /help to see available commands.");
+        // Try to suggest similar commands
+        $availableCommands = [
+            '/start',
+            '/help',
+            '/scan',
+            '/analyze',
+            '/trader',
+            '/chart',
+            '/rsi',
+            '/sr',
+            '/divergence',
+            '/cross',
+            '/sentiment',
+            '/news',
+            '/whale',
+            '/pro',
+            '/settings',
+            '/verify',
+            '/feedback'
+        ];
+
+        $suggestion = $this->findClosestCommand($command, $availableCommands);
+
+        $message = "❓ Unknown command: {$command}\n\n";
+
+        if ($suggestion) {
+            $message .= "💡 Did you mean `{$suggestion}`?\n\n";
+        }
+
+        $message .= "Type /help to see available commands.";
+
+        $this->telegram->sendMessage($chatId, $message);
+    }
+
+    /**
+     * Find closest matching command using Levenshtein distance
+     */
+    private function findClosestCommand(string $input, array $commands): ?string
+    {
+        $input = strtolower($input);
+        $minDistance = PHP_INT_MAX;
+        $closest = null;
+
+        foreach ($commands as $command) {
+            $distance = levenshtein($input, strtolower($command));
+
+            // Only suggest if distance is 1-3 characters (typo range)
+            if ($distance > 0 && $distance <= 3 && $distance < $minDistance) {
+                $minDistance = $distance;
+                $closest = $command;
+            }
+        }
+
+        return $closest;
     }
 
     /**
@@ -1313,9 +1366,9 @@ class CommandHandler
      */
     private function handleRadar(int $chatId, User $user)
     {
-        // Show typing indicator
+        // Show typing indicator and single progress message
         $this->telegram->sendChatAction($chatId, 'typing');
-        $this->telegram->sendMessage($chatId, "🎯 Scanning market radar...");
+        $progressMsg = $this->telegram->sendMessage($chatId, "🎯 Scanning market radar...");
 
         try {
             $scan = $this->marketScan->performDeepScan();
@@ -1325,43 +1378,159 @@ class CommandHandler
                 return;
             }
 
-            $message = "🎯 *MARKET RADAR*\n\n";
+            $timestamp = isset($scan['timestamp']) ? \Carbon\Carbon::parse($scan['timestamp'])->format('H:i:s') : 'N/A';
+            $message = "🎯 *MARKET RADAR*\n";
+            $message .= "━━━━━━━━━━━━━━━━━━━━\n";
+            $message .= "⏰ Snapshot: {$timestamp} UTC\n";
+            $message .= "_Purpose: Fast detection of unusual movers_\n";
+            $message .= "━━━━━━━━━━━━━━━━━━━━\n\n";
 
-            // Access crypto data from the scan
+            // === CRYPTO MARKETS ===
             $crypto = $scan['crypto'] ?? [];
-            $topGainers = $crypto['top_gainers'] ?? [];
-            $topLosers = $crypto['top_losers'] ?? [];
+            $gainersData = $crypto['top_gainers'] ?? [];
+            $losersData = $crypto['top_losers'] ?? [];
 
-            if (empty($topGainers) && empty($topLosers)) {
-                $this->telegram->sendMessage($chatId, "❌ No market data available. Please try again.");
-                return;
+            // Handle new volume-filtered structure
+            $topGainers = [];
+            if (isset($gainersData['high_volume'])) {
+                $topGainers = $gainersData['high_volume'] ?? [];
+            } else {
+                $topGainers = $gainersData;
             }
 
-            $message .= "🚀 *Top Gainers (24h)*\n";
-            foreach (array_slice($topGainers, 0, 5) as $idx => $coin) {
-                $message .= ($idx + 1) . ". {$coin['symbol']}: *+{$coin['change_percent']}%*\n";
-                $message .= "   💰 \${$coin['price']} | Vol: {$coin['volume']}\n";
+            $topLosers = [];
+            if (isset($losersData['high_volume'])) {
+                $topLosers = $losersData['high_volume'] ?? [];
+            } else {
+                $topLosers = $losersData;
             }
 
-            $message .= "\n📉 *Top Losers (24h)*\n";
-            foreach (array_slice($topLosers, 0, 5) as $idx => $coin) {
-                $message .= ($idx + 1) . ". {$coin['symbol']}: *{$coin['change_percent']}%*\n";
-                $message .= "   💰 \${$coin['price']} | Vol: {$coin['volume']}\n";
+            if (!empty($topGainers)) {
+                $message .= "💎 *CRYPTO MARKETS*\n";
+                $message .= "_Filtered for Vol ≥ \$1M_\n\n";
+                
+                $message .= "🚀 *Top Gainers*\n";
+                foreach (array_slice($topGainers, 0, 5) as $idx => $coin) {
+                    $radarTag = $this->getCryptoRadarTag($coin);
+                    $message .= ($idx + 1) . ". `{$coin['symbol']}` *+{$coin['change_percent']}%* {$radarTag}\n";
+                    $message .= "   \${$coin['price']} | Vol: \${$coin['volume']}\n";
+                }
+
+                $message .= "\n📉 *Top Losers*\n";
+                foreach (array_slice($topLosers, 0, 5) as $idx => $coin) {
+                    $radarTag = $this->getCryptoRadarTag($coin);
+                    $message .= ($idx + 1) . ". `{$coin['symbol']}` *{$coin['change_percent']}%* {$radarTag}\n";
+                    $message .= "   \${$coin['price']} | Vol: \${$coin['volume']}\n";
+                }
             }
 
-            $message .= "\n💡 Use /analyze [symbol] for detailed analysis";
+            // === STOCK MARKETS ===
+            $stocks = $scan['stocks'] ?? [];
+            if (!empty($stocks['indices'])) {
+                $sessionDate = \Carbon\Carbon::now('America/New_York')->subDay()->format('Y-m-d');
+                $message .= "\n━━━━━━━━━━━━━━━━━━━━\n";
+                $message .= "📈 *STOCK INDICES*\n";
+                if ($stocks['market_status'] === 'Closed') {
+                    $message .= "_Previous Close | As of: {$sessionDate}_\n";
+                }
+                $message .= "\n";
+                foreach ($stocks['indices'] as $idx => $index) {
+                    $changeEmoji = strpos($index['change'], '+') !== false ? '🟢' : '🔴';
+                    $message .= "{$changeEmoji} {$index['name']}: \${$index['price']} ({$index['change']})\n";
+                }
+            }
+
+            // === FOREX MARKETS ===
+            $forex = $scan['forex'] ?? [];
+            if (!empty($forex['major_pairs'])) {
+                $message .= "\n━━━━━━━━━━━━━━━━━━━━\n";
+                $message .= "💱 *FOREX & COMMODITIES*\n";
+                $message .= "_Live quotes_\n\n";
+                
+                // Show top movers in forex (filter out 0% changes)
+                $forexPairs = array_filter($forex['major_pairs'], fn($p) => abs($p['change_percent']) > 0.01);
+                
+                if (empty($forexPairs)) {
+                    // If all are 0%, show live quotes without % change
+                    $forexPairs = array_slice($forex['major_pairs'], 0, 6);
+                    foreach ($forexPairs as $idx => $pair) {
+                        $pairName = match ($pair['pair']) {
+                            'XAUUSD' => 'GOLD',
+                            'XAGUSD' => 'SILVER',
+                            'XPTUSD' => 'PLATINUM',
+                            'XPDUSD' => 'PALLADIUM',
+                            default => $pair['pair']
+                        };
+                        $message .= "• `{$pairName}`: {$pair['price']}\n";
+                    }
+                } else {
+                    // Show top movers with actual changes
+                    usort($forexPairs, fn($a, $b) => abs($b['change_percent']) <=> abs($a['change_percent']));
+                    
+                    foreach (array_slice($forexPairs, 0, 6) as $idx => $pair) {
+                        $changePercent = number_format($pair['change_percent'], 2);
+                        $changeSymbol = $pair['change_percent'] >= 0 ? '+' : '';
+                        $changeEmoji = $pair['change_percent'] >= 0 ? '🟢' : '🔴';
+                        
+                        $pairName = match ($pair['pair']) {
+                            'XAUUSD' => 'GOLD',
+                            'XAGUSD' => 'SILVER',
+                            'XPTUSD' => 'PLATINUM',
+                            'XPDUSD' => 'PALLADIUM',
+                            default => $pair['pair']
+                        };
+                        
+                        $message .= "{$changeEmoji} `{$pairName}`: {$pair['price']} ({$changeSymbol}{$changePercent}%)\n";
+                    }
+                }
+            }
+
+            $message .= "\n━━━━━━━━━━━━━━━━━━━━\n";
+            $message .= "💡 Use `/analyze <symbol>` for details\n";
+            $message .= "📊 Use `/scan` for full market view";
 
             $keyboard = [
                 'inline_keyboard' => $this->getContextualKeyboard('radar')
             ];
             $this->telegram->sendMessage($chatId, $message, $keyboard);
         } catch (\Exception $e) {
-            Log::error('Radar command error', ['error' => $e->getMessage()]);
+            Log::error('Radar command error', ['error' => $e->getMessage(), 'trace' => $e->getTraceAsString()]);
             $keyboard = [
                 'inline_keyboard' => $this->getContextualKeyboard('radar')
             ];
             $this->telegram->sendMessage($chatId, "❌ Error scanning market. Please try again later.", $keyboard);
         }
+    }
+    
+    /**
+     * Generate deterministic radar tag for crypto assets
+     */
+    private function getCryptoRadarTag(array $coin): string
+    {
+        $changePercent = abs(floatval($coin['change_percent']));
+        $volumeRaw = floatval($coin['volume_raw'] ?? 0);
+        
+        // High momentum: >20% change with good volume
+        if ($changePercent > 20 && $volumeRaw >= 10000000) {
+            return "🔥";
+        }
+        
+        // Volume spike: >50M volume
+        if ($volumeRaw >= 50000000) {
+            return "💥";
+        }
+        
+        // Sharp move: 10-20% change
+        if ($changePercent > 10 && $changePercent <= 20) {
+            return $coin['change_percent'] > 0 ? "📈" : "📉";
+        }
+        
+        // Significant move: 5-10% change
+        if ($changePercent > 5) {
+            return $coin['change_percent'] > 0 ? "📈" : "⚠️";
+        }
+        
+        return ""; // No special tag
     }
 
     /**
@@ -2144,45 +2313,66 @@ class CommandHandler
 
         $currentPrice = $analysis['current_price'];
         $marketType = $analysis['market_type'] ?? 'crypto';
+        $marketIcon = match($marketType) {
+            'crypto' => '💎',
+            'forex' => '💱',
+            'stock' => '📈',
+            default => '📊'
+        };
 
         $message = "🎯 *SMART SUPPORT & RESISTANCE*\n";
         $message .= "━━━━━━━━━━━━━━━━━━━━\n\n";
+        $message .= "{$marketIcon} Market: " . ucfirst($marketType) . "\n";
         $message .= "Symbol: `{$analysis['symbol']}`\n";
         $message .= "Price: " . $this->formatPriceAdaptive($currentPrice, $marketType) . "\n\n";
 
-        // Show levels by timeframe
+        // Show levels by timeframe with organized sections
         if (isset($analysis['timeframe_levels']) && !empty($analysis['timeframe_levels'])) {
-            $message .= "📊 *Levels by Timeframe*\n\n";
+            $message .= "📊 *LEVELS BY TIMEFRAME*\n";
+            $message .= "━━━━━━━━━━━━━━━━━━━━\n\n";
 
-            $tfLabels = [
-                '30m' => '30M',
-                '1h' => '1H',
-                '4h' => '4H',
-                '1d' => '1D',
-                '1w' => '1W'
+            $tfGroups = [
+                'Intraday' => ['15m' => '15 Min', '30m' => '30 Min', '1h' => '1 Hour'],
+                'Short-term' => ['4h' => '4 Hour'],
+                'Mid-term' => ['1d' => 'Daily'],
+                'Long-term' => ['1w' => 'Weekly']
             ];
 
-            foreach ($analysis['timeframe_levels'] as $tf => $levels) {
-                $label = $tfLabels[$tf] ?? strtoupper($tf);
-                $message .= "*{$label}:*\n";
-
-                // Show top 3 resistance
-                if (!empty($levels['resistance'])) {
-                    $message .= "  🔺 R: ";
-                    $topR = array_slice($levels['resistance'], 0, 3);
-                    $rFormatted = array_map(fn($r) => $this->formatPriceAdaptive($r, $marketType), $topR);
-                    $message .= implode(' | ', $rFormatted) . "\n";
+            foreach ($tfGroups as $groupName => $timeframes) {
+                $hasData = false;
+                foreach ($timeframes as $tf => $label) {
+                    if (isset($analysis['timeframe_levels'][$tf]) && !empty($analysis['timeframe_levels'][$tf])) {
+                        $hasData = true;
+                        break;
+                    }
                 }
+                
+                if (!$hasData) continue;
+                
+                $message .= "*{$groupName}:*\n";
+                
+                foreach ($timeframes as $tf => $label) {
+                    if (!isset($analysis['timeframe_levels'][$tf])) continue;
+                    
+                    $levels = $analysis['timeframe_levels'][$tf];
+                    $message .= "`{$label}`\n";
 
-                // Show top 3 support
-                if (!empty($levels['support'])) {
-                    $message .= "  🔻 S: ";
-                    $topS = array_slice($levels['support'], 0, 3);
-                    $sFormatted = array_map(fn($s) => $this->formatPriceAdaptive($s, $marketType), $topS);
-                    $message .= implode(' | ', $sFormatted) . "\n";
+                    // Show top 3 resistance
+                    if (!empty($levels['resistance'])) {
+                        $topR = array_slice($levels['resistance'], 0, 3);
+                        $rFormatted = array_map(fn($r) => $this->formatPriceAdaptive($r, $marketType), $topR);
+                        $message .= "  🔺 " . implode(' · ', $rFormatted) . "\n";
+                    }
+
+                    // Show top 3 support
+                    if (!empty($levels['support'])) {
+                        $topS = array_slice($levels['support'], 0, 3);
+                        $sFormatted = array_map(fn($s) => $this->formatPriceAdaptive($s, $marketType), $topS);
+                        $message .= "  🔻 " . implode(' · ', $sFormatted) . "\n";
+                    }
+
+                    $message .= "\n";
                 }
-
-                $message .= "\n";
             }
         }
 
