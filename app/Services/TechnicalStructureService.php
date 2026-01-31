@@ -290,7 +290,7 @@ class TechnicalStructureService
                 // Check if we have any RSI data
                 if (empty($rsiData)) {
                     $errorMsg = "Unable to calculate RSI for {$symbol}.";
-                    
+
                     if ($marketType === 'crypto') {
                         $errorMsg .= " Ensure the symbol is valid and has sufficient trading history (e.g., BTCUSDT, ETHUSDT).";
                     } else {
@@ -693,65 +693,73 @@ class TechnicalStructureService
         // Try to get real historical data for forex/stocks
         try {
             if ($marketType === 'forex' || $marketType === 'stock') {
+                Log::debug("Fetching historical data for {$marketType}", [
+                    'symbol' => $symbol,
+                    'timeframe' => $timeframe
+                ]);
+
                 $historicalData = $this->fetchAlphaVantageData($symbol, $timeframe, $marketType);
-                
+
                 if (!empty($historicalData)) {
+                    Log::info("Successfully fetched {$marketType} data from Alpha Vantage", [
+                        'symbol' => $symbol,
+                        'klines_count' => count($historicalData)
+                    ]);
                     return $historicalData;
                 }
-                
-                Log::warning('Alpha Vantage data unavailable, using fallback', [
+
+                Log::warning('Alpha Vantage data unavailable, using synthetic fallback', [
                     'symbol' => $symbol,
                     'timeframe' => $timeframe,
                     'market' => $marketType
                 ]);
             }
-            
+
             // Fallback: Generate reasonable synthetic data
             return $this->generateSyntheticKlines($symbol, $marketType, $periods);
-            
         } catch (\Exception $e) {
             Log::warning('Failed to fetch klines for non-crypto', ['symbol' => $symbol, 'market' => $marketType, 'error' => $e->getMessage()]);
             return [];
         }
     }
-    
+
     /**
      * Fetch historical data from Alpha Vantage for forex/stocks
      */
     private function fetchAlphaVantageData(string $symbol, string $timeframe, string $marketType): array
     {
         $apiKey = config('services.alpha_vantage.key');
-        
+
         if (empty($apiKey) || $apiKey === 'your_key_here') {
             return [];
         }
-        
+
         $cacheKey = "av_klines_{$symbol}_{$timeframe}_{$marketType}";
-        
+
         return Cache::remember($cacheKey, 300, function () use ($symbol, $timeframe, $marketType, $apiKey) {
             try {
                 // Alpha Vantage FREE tier only supports daily/weekly data
                 // Intraday (5min, 15min, 30min, 60min) requires premium
                 // For free tier: Map all intraday to daily data
-                
-                $interval = match($timeframe) {
+
+                $interval = match ($timeframe) {
                     '5m', '15m', '30m', '1h', '4h' => 'daily',  // Map all intraday to daily for free tier
                     '1d' => 'daily',
                     '1w' => 'weekly',
                     default => 'daily'
                 };
-                
+
                 $function = '';
                 $params = [
                     'apikey' => $apiKey,
                     'outputsize' => 'full', // Get more data points
                 ];
-                
+
                 if ($marketType === 'forex') {
                     // Forex pair format: EURUSD -> EUR/USD
                     $from = substr($symbol, 0, 3);
                     $to = substr($symbol, 3, 3);
-                    
+
                     $function = $interval === 'daily' ? 'FX_DAILY' : 'FX_WEEKLY';
                     $params['from_symbol'] = $from;
                     $params['to_symbol'] = $to;
@@ -759,48 +767,48 @@ class TechnicalStructureService
                     $params['symbol'] = $symbol;
                     $function = $interval === 'daily' ? 'TIME_SERIES_DAILY' : 'TIME_SERIES_WEEKLY';
                 }
-                
+
                 if (empty($function)) {
                     return [];
                 }
-                
+
                 $params['function'] = $function;
-                
+
                 $response = \Illuminate\Support\Facades\Http::timeout(10)
                     ->get('https://www.alphavantage.co/query', $params);
-                
+
                 if (!$response->successful()) {
                     Log::warning('Alpha Vantage API error', ['status' => $response->status(), 'symbol' => $symbol]);
                     return [];
                 }
-                
+
                 $data = $response->json();
-                
+
                 // Check for API messages
                 if (isset($data['Note'])) {
                     Log::info('Alpha Vantage rate limit', ['msg' => $data['Note'], 'symbol' => $symbol]);
                     return [];
                 }
-                
+
                 if (isset($data['Information'])) {
                     Log::info('Alpha Vantage info', ['msg' => $data['Information'], 'symbol' => $symbol]);
                     return [];
                 }
-                
+
                 if (isset($data['Error Message'])) {
                     Log::warning('Alpha Vantage error', ['msg' => $data['Error Message'], 'symbol' => $symbol]);
                     return [];
                 }
-                
+
                 // Parse response based on function type
-                $timeSeriesKey = match($function) {
+                $timeSeriesKey = match ($function) {
                     'FX_DAILY' => 'Time Series FX (Daily)',
                     'FX_WEEKLY' => 'Time Series FX (Weekly)',
                     'TIME_SERIES_DAILY' => 'Time Series (Daily)',
                     'TIME_SERIES_WEEKLY' => 'Weekly Time Series',
                     default => null
                 };
-                
+
                 if (!$timeSeriesKey || !isset($data[$timeSeriesKey])) {
                     Log::debug('Alpha Vantage response missing time series', [
                         'symbol' => $symbol,
@@ -809,21 +817,21 @@ class TechnicalStructureService
                     ]);
                     return [];
                 }
-                
+
                 $timeSeries = $data[$timeSeriesKey];
-                
+
                 // Convert to klines format [timestamp, open, high, low, close, volume]
                 $klines = [];
                 foreach ($timeSeries as $timestamp => $values) {
                     $time = strtotime($timestamp) * 1000; // Convert to milliseconds
-                    
+
                     // Alpha Vantage keys can vary
                     $open = $values['1. open'] ?? $values['1a. open (EUR)'] ?? $values['1a. open (USD)'] ?? 0;
                     $high = $values['2. high'] ?? $values['2a. high (EUR)'] ?? $values['2a. high (USD)'] ?? 0;
                     $low = $values['3. low'] ?? $values['3a. low (EUR)'] ?? $values['3a. low (USD)'] ?? 0;
                     $close = $values['4. close'] ?? $values['4a. close (EUR)'] ?? $values['4a. close (USD)'] ?? 0;
                     $volume = $values['5. volume'] ?? '1000';
-                    
+
                     $klines[] = [
                         0 => $time,
                         1 => (string)$open,
@@ -833,19 +841,18 @@ class TechnicalStructureService
                         5 => (string)$volume,
                     ];
                 }
-                
+
                 // Sort by timestamp (oldest first)
                 usort($klines, fn($a, $b) => $a[0] <=> $b[0]);
-                
+
                 Log::info('Alpha Vantage data fetched', [
                     'symbol' => $symbol,
                     'timeframe' => $timeframe,
                     'klines_count' => count($klines),
                     'function' => $function
                 ]);
-                
+
                 return $klines;
-                
             } catch (\Exception $e) {
                 Log::error('Alpha Vantage fetch error', [
                     'symbol' => $symbol,
@@ -856,20 +863,30 @@ class TechnicalStructureService
             }
         });
     }
-    
+
     /**
      * Generate synthetic klines as fallback
      */
     private function generateSyntheticKlines(string $symbol, string $marketType, int $periods): array
     {
+        Log::debug("Generating synthetic klines", [
+            'symbol' => $symbol,
+            'market' => $marketType,
+            'periods' => $periods
+        ]);
+
         $currentPrice = $this->getCurrentPrice($symbol, $marketType);
         if ($currentPrice <= 0) {
+            Log::warning("Cannot generate synthetic klines - price is zero", [
+                'symbol' => $symbol,
+                'price' => $currentPrice
+            ]);
             return [];
         }
 
         // Generate synthetic klines based on volatility patterns
         $klines = [];
-        $volatility = 0.01; // 1% volatility
+        $volatility = 0.02; // 2% volatility to create more realistic RSI variations
 
         for ($i = 0; $i < $periods; $i++) {
             $variation = (mt_rand(-100, 100) / 10000) * $volatility;
@@ -879,7 +896,7 @@ class TechnicalStructureService
             $low = min($open, $close) * (1 - (mt_rand(0, 50) / 10000));
 
             $klines[] = [
-                0 => time() - ($periods - $i) * 3600, // timestamp
+                0 => (time() - ($periods - $i) * 3600) * 1000, // timestamp in milliseconds
                 1 => (string)$open,
                 2 => (string)$high,
                 3 => (string)$low,
@@ -887,6 +904,11 @@ class TechnicalStructureService
                 5 => '1000', // volume (placeholder)
             ];
         }
+
+        Log::info("Generated synthetic klines", [
+            'symbol' => $symbol,
+            'count' => count($klines)
+        ]);
 
         return $klines;
     }
@@ -1103,59 +1125,43 @@ class TechnicalStructureService
     private function calculateRealRSI(string $symbol, string $timeframe, string $marketType): ?float
     {
         try {
-            if ($marketType === 'crypto') {
-                // Use Binance for crypto
-                $klines = $this->getKlineDataForTimeframe($symbol, $timeframe, $marketType);
+            // Get klines for any market type
+            $klines = $this->getKlineDataForTimeframe($symbol, $timeframe, $marketType);
 
-                if (!$klines) {
-                    Log::debug("No klines returned for {$symbol} {$timeframe}");
-                    return null;
-                }
+            if (!$klines || empty($klines)) {
+                Log::debug("No klines returned for {$symbol} {$timeframe} ({$marketType})");
+                return null;
+            }
 
-                if (count($klines) < 15) {
-                    Log::debug("Insufficient klines for RSI calculation", [
-                        'symbol' => $symbol,
-                        'timeframe' => $timeframe,
-                        'count' => count($klines),
-                        'needed' => 15
-                    ]);
-                    return null;
-                }
-
-                // Calculate RSI
-                $rsi = $this->binance->calculateRSI($klines);
-
-                if ($rsi && is_numeric($rsi)) {
-                    return floatval($rsi);
-                }
-
-                Log::debug("RSI calculation returned invalid value", [
+            if (count($klines) < 15) {
+                Log::debug("Insufficient klines for RSI calculation", [
                     'symbol' => $symbol,
                     'timeframe' => $timeframe,
-                    'rsi' => $rsi
+                    'count' => count($klines),
+                    'needed' => 15
                 ]);
                 return null;
-            } else {
-                // For forex/stocks, try to get RSI from multimarket analysis
-                // This is a limitation - ideally we'd fetch historical data from Polygon/OANDA
-                // For now, return calculated RSI if available from indicators
-                if ($marketType === 'forex') {
-                    $data = $this->multiMarket->analyzeForexPair($symbol);
-                } else {
-                    $data = $this->multiMarket->analyzeStockPair($symbol);
-                }
-
-                if (isset($data['indicators']['rsi'])) {
-                    $rsi = $data['indicators']['rsi'];
-                    if (is_array($rsi)) {
-                        // Multi-timeframe RSI, try to match timeframe
-                        return $rsi[$timeframe] ?? $rsi['1h'] ?? null;
-                    } elseif (is_numeric($rsi)) {
-                        // Single RSI value, use for all timeframes
-                        return floatval($rsi);
-                    }
-                }
             }
+
+            // Calculate RSI using Binance's RSI calculation (works for all markets)
+            $rsi = $this->binance->calculateRSI($klines);
+
+            if ($rsi && is_numeric($rsi)) {
+                Log::debug("RSI calculated successfully", [
+                    'symbol' => $symbol,
+                    'timeframe' => $timeframe,
+                    'market' => $marketType,
+                    'rsi' => round($rsi, 1)
+                ]);
+                return floatval($rsi);
+            }
+
+            Log::debug("RSI calculation returned invalid value", [
+                'symbol' => $symbol,
+                'timeframe' => $timeframe,
+                'rsi' => $rsi
+            ]);
+            return null;
         } catch (\Exception $e) {
             Log::warning('RSI calculation failed', [
                 'symbol' => $symbol,

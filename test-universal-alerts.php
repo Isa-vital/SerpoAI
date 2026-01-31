@@ -47,13 +47,13 @@ foreach ($symbols as $symbol) {
     try {
         $price = $multiMarket->getCurrentPrice($symbol);
         $marketType = $multiMarket->detectMarketType($symbol);
-        $marketIcon = match($marketType) {
+        $marketIcon = match ($marketType) {
             'crypto' => '💎',
             'forex' => '💱',
             'stock' => '📈',
             default => '📊'
         };
-        
+
         if ($price !== null) {
             $prices[$symbol] = $price;
             echo "   {$marketIcon} {$symbol}: \$" . number_format($price, 8) . "\n";
@@ -181,15 +181,15 @@ foreach ($testAlerts as $alert) {
     $alert->refresh();
     $status = $alert->is_triggered ? '✅ TRIGGERED' : '❌ NOT TRIGGERED';
     $marketType = $multiMarket->detectMarketType($alert->coin_symbol);
-    $marketIcon = match($marketType) {
+    $marketIcon = match ($marketType) {
         'crypto' => '💎',
         'forex' => '💱',
         'stock' => '📈',
         default => '📊'
     };
-    
+
     echo "   {$marketIcon} {$alert->coin_symbol} - {$status}\n";
-    
+
     if ($alert->is_triggered) {
         $triggered++;
         echo "      Triggered at: {$alert->triggered_at}\n";

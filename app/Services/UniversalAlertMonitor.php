@@ -132,10 +132,10 @@ class UniversalAlertMonitor
             $symbol = $alert->coin_symbol;
             $condition = $alert->condition;
             $targetPrice = floatval($alert->target_value);
-            
+
             // Detect market type and get icon
             $marketType = $this->multiMarket->detectMarketType($symbol);
-            $marketIcon = match($marketType) {
+            $marketIcon = match ($marketType) {
                 'crypto' => '💎',
                 'forex' => '💱',
                 'stock' => '📈',
@@ -144,9 +144,9 @@ class UniversalAlertMonitor
 
             // Format prices based on market type
             $decimals = ($marketType === 'crypto' && $currentPrice < 1) ? 8 : 2;
-            
+
             // Format condition text
-            $conditionText = match($condition) {
+            $conditionText = match ($condition) {
                 'above' => 'went above',
                 'below' => 'went below',
                 'crosses_above' => 'crossed above',
@@ -159,12 +159,12 @@ class UniversalAlertMonitor
             $message .= "{$marketIcon} *{$symbol}* {$conditionText} your target!\n\n";
             $message .= "🎯 Target: \$" . number_format($targetPrice, $decimals) . "\n";
             $message .= "💰 Current: \$" . number_format($currentPrice, $decimals) . "\n";
-            
+
             $diff = $currentPrice - $targetPrice;
             $diffPercent = (($diff / $targetPrice) * 100);
             $diffEmoji = $diff > 0 ? '📈' : '📉';
             $message .= "{$diffEmoji} Difference: \$" . number_format(abs($diff), $decimals) . " (" . number_format($diffPercent, 2) . "%)\n\n";
-            
+
             $message .= "_Alert ID: {$alert->id}_\n";
             $message .= "_Triggered at: " . now()->format('Y-m-d H:i:s') . " UTC_";
 

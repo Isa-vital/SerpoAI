@@ -36,25 +36,25 @@ foreach ($testSymbols as $market => $symbols) {
     echo "╔════════════════════════════════════════╗\n";
     echo "║  Testing {$market} Market" . str_repeat(' ', 27 - strlen($market)) . "║\n";
     echo "╚════════════════════════════════════════╝\n\n";
-    
+
     foreach ($symbols as $symbol) {
         $totalTests++;
         echo "Testing: {$symbol}\n";
         echo str_repeat('-', 50) . "\n";
-        
+
         // Detect market type
         $detectedMarket = $multiMarket->detectMarketType($symbol);
-        $marketIcon = match($detectedMarket) {
+        $marketIcon = match ($detectedMarket) {
             'crypto' => '💎',
             'forex' => '💱',
             'stock' => '📈',
             default => '📊'
         };
         echo "Market Type: {$marketIcon} " . ucfirst($detectedMarket) . "\n";
-        
+
         try {
             $analysis = $techService->getRSIHeatmap($symbol);
-            
+
             if (isset($analysis['error'])) {
                 echo "❌ FAILED: {$analysis['error']}\n";
                 $failedTests++;
@@ -62,11 +62,11 @@ foreach ($testSymbols as $market => $symbols) {
                 echo "✅ SUCCESS\n";
                 echo "   Symbol: {$analysis['symbol']}\n";
                 echo "   Price: " . number_format($analysis['current_price'], 8) . "\n";
-                
+
                 // Check RSI data
                 $rsiCount = 0;
                 $rsiValues = [];
-                
+
                 if (isset($analysis['rsi_data'])) {
                     foreach ($analysis['rsi_data'] as $tf => $data) {
                         $rsiCount++;
@@ -74,12 +74,12 @@ foreach ($testSymbols as $market => $symbols) {
                         echo "   {$data['emoji']} {$data['label']} ({$tf}): RSI {$data['value']} - {$data['status']} {$data['status_emoji']}\n";
                     }
                 }
-                
+
                 // Check overall RSI
                 if (isset($analysis['overall_rsi']) && $analysis['overall_rsi'] !== null) {
                     echo "   📊 Overall RSI: {$analysis['overall_rsi']} - {$analysis['overall_status']}\n";
                 }
-                
+
                 // Validate we got RSI values
                 if ($rsiCount > 0) {
                     echo "   ✓ Got {$rsiCount} timeframe(s) with RSI values\n";
@@ -93,10 +93,10 @@ foreach ($testSymbols as $market => $symbols) {
             echo "❌ EXCEPTION: {$e->getMessage()}\n";
             $failedTests++;
         }
-        
+
         echo "\n";
     }
-    
+
     echo "\n";
 }
 

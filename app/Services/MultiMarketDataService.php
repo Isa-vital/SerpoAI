@@ -348,8 +348,8 @@ class MultiMarketDataService
             }
 
             $data = $response->json();
-            return isset($data['Realtime Currency Exchange Rate']['5. Exchange Rate']) 
-                ? floatval($data['Realtime Currency Exchange Rate']['5. Exchange Rate']) 
+            return isset($data['Realtime Currency Exchange Rate']['5. Exchange Rate'])
+                ? floatval($data['Realtime Currency Exchange Rate']['5. Exchange Rate'])
                 : null;
         } catch (\Exception $e) {
             Log::error("Error getting forex price for {$symbol}", ['error' => $e->getMessage()]);
@@ -379,8 +379,8 @@ class MultiMarketDataService
             }
 
             $data = $response->json();
-            return isset($data['Global Quote']['05. price']) 
-                ? floatval($data['Global Quote']['05. price']) 
+            return isset($data['Global Quote']['05. price'])
+                ? floatval($data['Global Quote']['05. price'])
                 : null;
         } catch (\Exception $e) {
             Log::error("Error getting stock price for {$symbol}", ['error' => $e->getMessage()]);

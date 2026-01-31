@@ -10,6 +10,13 @@ class TokenVerificationService
 {
     private const CACHE_TTL = 300; // 5 minutes
 
+    private AssetTypeDetector $assetDetector;
+
+    public function __construct()
+    {
+        $this->assetDetector = app(AssetTypeDetector::class);
+    }
+
     /**
      * Verify a token with comprehensive analysis
      */
@@ -21,9 +28,33 @@ class TokenVerificationService
 
         Log::info('Token verification started', ['input' => $input, 'chain' => $chain, 'address' => $address]);
 
+        // MANDATORY: Detect asset type before proceeding
+        $assetType = $this->assetDetector->detectAssetType($address, $chain);
+
+        // Reject native assets (BTC, ETH, etc.)
+        if ($assetType['is_native']) {
+            return [
+                'error' => $assetType['error'],
+                'asset_type' => $assetType['type'],
+                'asset_name' => $assetType['asset_name'] ?? null,
+                'is_native' => true,
+            ];
+        }
+
+        // Reject wallet addresses (EOA)
+        if (!$assetType['is_contract']) {
+            return [
+                'error' => $assetType['error'] ?? 'Cannot verify wallet addresses. Please provide a token contract address.',
+                'asset_type' => $assetType['type'],
+                'is_contract' => false,
+            ];
+        }
+
         // Try cache first
         $cacheKey = "token_verify_{$chain}_{$address}";
         if ($cached = Cache::get($cacheKey)) {
+            // Add asset type info to cached data
+            $cached['asset_type_info'] = $assetType;
             return $cached;
         }
 
@@ -35,6 +66,9 @@ class TokenVerificationService
             'base' => $this->verifyBaseToken($address),
             default => $this->getGenericTokenInfo($input, $chain)
         };
+
+        // Add asset type information
+        $data['asset_type_info'] = $assetType;
 
         // Calculate risk score with breakdown
         $scoring = $this->calculateRiskScoreWithBreakdown($data);
@@ -133,8 +167,9 @@ class TokenVerificationService
         }
 
         try {
-            // Get token info
-            $response = Http::timeout(15)->get('https://api.etherscan.io/api', [
+            // Get token info using V2 endpoint
+            $response = Http::timeout(15)->get('https://api.etherscan.io/v2/api', [
+                'chainid' => 1,
                 'module' => 'token',
                 'action' => 'tokeninfo',
                 'contractaddress' => $address,
@@ -147,18 +182,29 @@ class TokenVerificationService
 
             $data = $response->json();
 
-            // Get contract source code
-            $contractResponse = Http::timeout(15)->get('https://api.etherscan.io/api', [
+            // Get contract source code using V2 endpoint
+            $contractResponse = Http::timeout(15)->get('https://api.etherscan.io/v2/api', [
+                'chainid' => 1,
                 'module' => 'contract',
                 'action' => 'getsourcecode',
                 'address' => $address,
                 'apikey' => $apiKey
             ]);
 
-            $contractData = $contractResponse->successful() ? $contractResponse->json('result')[0] ?? [] : [];
+            $contractData = [];
+            if ($contractResponse->successful()) {
+                $result = $contractResponse->json('result', []);
+                // Ensure result is an array and has data
+                if (is_array($result) && !empty($result) && is_array($result[0])) {
+                    $contractData = $result[0];
+                } else {
+                    Log::warning('Etherscan getsourcecode returned invalid result', ['result' => $result]);
+                }
+            }
 
-            // Get top holders (approximate from transactions)
-            $holdersResponse = Http::timeout(15)->get('https://api.etherscan.io/api', [
+            // Get top holders (approximate from transactions) using V2 endpoint
+            $holdersResponse = Http::timeout(15)->get('https://api.etherscan.io/v2/api', [
+                'chainid' => 1,
                 'module' => 'account',
                 'action' => 'tokentx',
                 'contractaddress' => $address,
@@ -168,27 +214,41 @@ class TokenVerificationService
                 'apikey' => $apiKey
             ]);
 
-            $transactions = $holdersResponse->successful() ? $holdersResponse->json('result', []) : [];
-            $topHolders = $this->extractTopHoldersFromTransactions($transactions);
+            $transactions = [];
+            if ($holdersResponse->successful()) {
+                $result = $holdersResponse->json('result', []);
+                // Ensure result is an array, not an error string
+                if (is_array($result)) {
+                    $transactions = $result;
+                } else {
+                    Log::warning('Etherscan tokentx returned non-array result', ['result' => $result]);
+                }
+            }
+            $topHolders = !empty($transactions) ? $this->extractTopHoldersFromTransactions($transactions) : [];
 
             $tokenInfo = $data['result'][0] ?? [];
 
-            return [
+            // Build result with safe array access
+            $result = [
                 'chain' => 'Ethereum',
                 'address' => $address,
                 'name' => $tokenInfo['name'] ?? $contractData['ContractName'] ?? 'Unknown',
                 'symbol' => $tokenInfo['symbol'] ?? 'N/A',
                 'decimals' => (int) ($tokenInfo['decimals'] ?? 18),
                 'total_supply' => (float) ($tokenInfo['totalSupply'] ?? 0),
-                'verified' => !empty($contractData['SourceCode']),
-                'contract_name' => $contractData['ContractName'] ?? null,
-                'compiler_version' => $contractData['CompilerVersion'] ?? null,
-                'optimization_used' => $contractData['OptimizationUsed'] === '1',
-                'proxy' => str_contains(strtolower($contractData['Implementation'] ?? ''), '0x'),
-                'has_source_code' => !empty($contractData['SourceCode']),
-                'top_holders' => $topHolders,
-                'explorer_url' => "https://etherscan.io/token/{$address}",
             ];
+
+            // Safely add contract data fields
+            $result['verified'] = !empty($contractData['SourceCode'] ?? '');
+            $result['contract_name'] = $contractData['ContractName'] ?? null;
+            $result['compiler_version'] = $contractData['CompilerVersion'] ?? null;
+            $result['optimization_used'] = isset($contractData['OptimizationUsed']) && $contractData['OptimizationUsed'] === '1';
+            $result['proxy'] = str_contains(strtolower($contractData['Implementation'] ?? ''), '0x');
+            $result['has_source_code'] = !empty($contractData['SourceCode'] ?? '');
+            $result['top_holders'] = $topHolders;
+            $result['explorer_url'] = "https://etherscan.io/token/{$address}";
+
+            return $result;
         } catch (\Exception $e) {
             Log::error('Ethereum token verification failed', ['error' => $e->getMessage(), 'address' => $address]);
             return ['error' => 'Failed to verify Ethereum token: ' . $e->getMessage()];
@@ -221,12 +281,12 @@ class TokenVerificationService
                 'address' => $address,
                 'name' => $contractData['ContractName'] ?? 'Unknown',
                 'symbol' => 'N/A',
-                'verified' => !empty($contractData['SourceCode']),
+                'verified' => !empty($contractData['SourceCode'] ?? ''),
                 'contract_name' => $contractData['ContractName'] ?? null,
                 'compiler_version' => $contractData['CompilerVersion'] ?? null,
                 'optimization_used' => ($contractData['OptimizationUsed'] ?? '0') === '1',
                 'proxy' => str_contains(strtolower($contractData['Implementation'] ?? ''), '0x'),
-                'has_source_code' => !empty($contractData['SourceCode']),
+                'has_source_code' => !empty($contractData['SourceCode'] ?? ''),
                 'top_holders' => [],
                 'explorer_url' => "https://etherscan.io/token/{$address}",
                 'api_key_needed' => true,
@@ -288,11 +348,11 @@ class TokenVerificationService
                 'chain' => 'BSC',
                 'address' => $address,
                 'name' => $contractData['ContractName'] ?? 'Unknown',
-                'verified' => !empty($contractData['SourceCode']),
+                'verified' => !empty($contractData['SourceCode'] ?? ''),
                 'compiler_version' => $contractData['CompilerVersion'] ?? null,
                 'optimization_used' => ($contractData['OptimizationUsed'] ?? '0') === '1',
                 'proxy' => str_contains(strtolower($contractData['Implementation'] ?? ''), '0x'),
-                'has_source_code' => !empty($contractData['SourceCode']),
+                'has_source_code' => !empty($contractData['SourceCode'] ?? ''),
                 'license_type' => $contractData['LicenseType'] ?? 'None',
                 'explorer_url' => "https://bscscan.com/token/{$address}",
             ];
@@ -339,10 +399,10 @@ class TokenVerificationService
                 'chain' => 'Base',
                 'address' => $address,
                 'name' => $contractData['ContractName'] ?? 'Unknown',
-                'verified' => !empty($contractData['SourceCode']),
+                'verified' => !empty($contractData['SourceCode'] ?? ''),
                 'compiler_version' => $contractData['CompilerVersion'] ?? null,
-                'optimization_used' => $contractData['OptimizationUsed'] === '1',
-                'has_source_code' => !empty($contractData['SourceCode']),
+                'optimization_used' => ($contractData['OptimizationUsed'] ?? '0') === '1',
+                'has_source_code' => !empty($contractData['SourceCode'] ?? ''),
                 'explorer_url' => "https://basescan.org/token/{$address}",
             ];
         } catch (\Exception $e) {
@@ -709,12 +769,15 @@ class TokenVerificationService
             $warnings[] = '⚠️ MEDIUM whale risk - monitor large holders';
         }
 
-        if (($data['holders_count'] ?? 0) < 100) {
-            $warnings[] = '⚠️ Small holder count - liquidity may be limited';
+        // Only warn about holder count if we actually KNOW the count
+        $holderCount = $data['holders_count'] ?? null;
+        if ($holderCount !== null && is_numeric($holderCount) && $holderCount > 0 && $holderCount < 100) {
+            $warnings[] = '⚠️ Small holder count (' . $holderCount . ') - liquidity may be limited';
         }
 
-        if (!isset($data['total_supply']) || $data['total_supply'] == 0) {
-            $warnings[] = '⚠️ Unable to verify total supply';
+        // Only warn about supply if we know it's actually 0 (not just missing)
+        if (isset($data['total_supply']) && $data['total_supply'] == 0) {
+            $warnings[] = '⚠️ Total supply is zero - potential issue';
         }
 
         return $warnings;

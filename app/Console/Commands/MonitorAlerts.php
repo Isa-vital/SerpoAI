@@ -51,7 +51,7 @@ class MonitorAlerts extends Command
         $this->info("📈 Alert Statistics:");
         $this->info("   Active Alerts: {$stats['total_active']}");
         $this->info("   Triggered Today: {$stats['total_triggered_today']}");
-        
+
         if (!empty($stats['by_market'])) {
             $this->info("   By Market:");
             foreach ($stats['by_market'] as $symbol => $count) {
@@ -75,7 +75,7 @@ class MonitorAlerts extends Command
         while (true) {
             $checkCount++;
             $this->info("[Check #{$checkCount}] " . now()->format('Y-m-d H:i:s'));
-            
+
             try {
                 $this->monitor->checkAllAlerts();
                 $this->info('✅ Check completed');
@@ -84,7 +84,7 @@ class MonitorAlerts extends Command
             }
 
             $this->newLine();
-            
+
             // Wait for next check
             $this->info("⏳ Next check in {$interval} seconds...");
             sleep($interval);

@@ -766,7 +766,7 @@ class CommandHandler
         // Parse params - check if first param is symbol or price
         $symbol = 'SERPO'; // Default
         $targetPrice = 0;
-        
+
         if (count($params) >= 2) {
             // Format: /setalert SYMBOL PRICE
             $symbol = strtoupper($params[0]);
@@ -794,7 +794,7 @@ class CommandHandler
                 'is_active' => true,
             ]);
 
-            $marketIcon = match($marketType) {
+            $marketIcon = match ($marketType) {
                 'crypto' => '💎',
                 'forex' => '💱',
                 'stock' => '📈',
@@ -844,23 +844,23 @@ class CommandHandler
         }
 
         $message = "🔔 *Your Active Alerts*\n\n";
-        
+
         foreach ($alerts as $alert) {
             $symbol = $alert->coin_symbol;
             $marketType = $this->multiMarket->detectMarketType($symbol);
-            
-            $marketIcon = match($marketType) {
+
+            $marketIcon = match ($marketType) {
                 'crypto' => '💎',
                 'forex' => '💱',
                 'stock' => '📈',
                 default => '📊'
             };
-            
+
             $decimals = ($marketType === 'crypto' && $alert->target_value < 1) ? 8 : 2;
-            
+
             $message .= "{$marketIcon} *{$symbol}* " . ucfirst($alert->condition) . " $" . number_format($alert->target_value, $decimals) . "\n";
         }
-        
+
         $message .= "\n_Alerts are checked every minute_";
 
         $keyboard = [

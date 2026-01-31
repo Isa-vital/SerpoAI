@@ -48,12 +48,12 @@ try {
             'apikey' => $apiKey,
             'outputsize' => 'compact',
         ]);
-    
+
     if (!$response->successful()) {
         echo "❌ HTTP Error: {$response->status()}\n";
     } else {
         $data = $response->json();
-        
+
         if (isset($data['Error Message'])) {
             echo "❌ API Error: {$data['Error Message']}\n";
         } elseif (isset($data['Note'])) {
@@ -66,7 +66,7 @@ try {
             $latest = array_key_first($timeSeries);
             $latestData = $timeSeries[$latest];
             $close = $latestData['4. close'] ?? $latestData['4a. close (USD)'] ?? 'N/A';
-            
+
             echo "✅ Success!\n";
             echo "   Data Points: {$count}\n";
             echo "   Latest: {$latest}\n";
@@ -93,12 +93,12 @@ try {
             'apikey' => $apiKey,
             'outputsize' => 'compact',
         ]);
-    
+
     if (!$response->successful()) {
         echo "❌ HTTP Error: {$response->status()}\n";
     } else {
         $data = $response->json();
-        
+
         if (isset($data['Error Message'])) {
             echo "❌ API Error: {$data['Error Message']}\n";
         } elseif (isset($data['Note'])) {
@@ -111,7 +111,7 @@ try {
             $latest = array_key_first($timeSeries);
             $latestData = $timeSeries[$latest];
             $close = $latestData['4. close'] ?? 'N/A';
-            
+
             echo "✅ Success!\n";
             echo "   Data Points: {$count}\n";
             echo "   Latest: {$latest}\n";

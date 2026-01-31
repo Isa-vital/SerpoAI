@@ -30,18 +30,18 @@ echo "🔍 Testing Market Detection & Price Fetching\n\n";
 
 foreach ($testSymbols as $category => $symbols) {
     echo "{$category}:\n";
-    
+
     foreach ($symbols as $symbol) {
         $marketType = $multiMarket->detectMarketType($symbol);
         $price = $multiMarket->getCurrentPrice($symbol);
-        
-        $marketIcon = match($marketType) {
+
+        $marketIcon = match ($marketType) {
             'crypto' => '💎',
             'forex' => '💱',
             'stock' => '📈',
             default => '📊'
         };
-        
+
         if ($price !== null) {
             $decimals = ($marketType === 'crypto' && $price < 1) ? 8 : 2;
             echo "   {$marketIcon} {$symbol}: \$" . number_format($price, $decimals) . " ({$marketType})\n";
@@ -49,7 +49,7 @@ foreach ($testSymbols as $category => $symbols) {
             echo "   ❌ {$symbol}: Failed to fetch price\n";
         }
     }
-    
+
     echo "\n";
 }
 
