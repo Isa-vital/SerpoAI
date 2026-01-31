@@ -289,15 +289,18 @@ class TechnicalStructureService
 
                 // Check if we have any RSI data
                 if (empty($rsiData)) {
-                    $errorMsg = "Unable to calculate RSI for {$symbol}.";
+                    $errorMsg = "❌ Unable to calculate RSI for {$symbol}.\n\n";
 
                     if ($marketType === 'crypto') {
-                        $errorMsg .= " Ensure the symbol is valid and has sufficient trading history (e.g., BTCUSDT, ETHUSDT).";
+                        $errorMsg .= "💡 **Crypto RSI requires trading pairs:**\n";
+                        $errorMsg .= "✅ Use: BTCUSDT, ETHUSDT, BNBUSDT\n";
+                        $errorMsg .= "❌ Don't use: BTC, ETH, token symbols\n\n";
+                        $errorMsg .= "For token analysis, use /verify [contract_address]";
                     } else {
                         // Check if Alpha Vantage key is configured
                         $apiKey = config('services.alpha_vantage.key');
                         if (empty($apiKey) || $apiKey === 'your_key_here') {
-                            $errorMsg .= "\n\n📊 {$marketType} RSI requires Alpha Vantage API.\n\n";
+                            $errorMsg .= "📊 {$marketType} RSI requires Alpha Vantage API.\n\n";
                             $errorMsg .= "Get free key: https://www.alphavantage.co/support/#api-key\n";
                             $errorMsg .= "Add to .env: ALPHA_VANTAGE_API_KEY=your_key";
                         } else {
@@ -1261,6 +1264,9 @@ class TechnicalStructureService
      */
     private function explainWeightedRSI(float $overallRSI, array $rsiData): string
     {
+        // Classify overall status first
+        $overallStatus = $this->classifyRSI($overallRSI);
+
         // Analyze RSI distribution
         $oversoldCount = 0;
         $overboughtCount = 0;
@@ -1278,15 +1284,26 @@ class TechnicalStructureService
             $maxRSI = max($maxRSI, $rsi);
         }
 
-        // Build explanation
-        if ($oversoldCount >= 3) {
-            return "Most timeframes show oversold conditions (RSI < 30), suggesting potential downside exhaustion. Long-term RSI weighted at 40% is key.";
-        } elseif ($overboughtCount >= 3) {
-            return "Most timeframes show overbought conditions (RSI > 70), suggesting potential upside exhaustion. Long-term RSI weighted at 40% is key.";
-        } elseif ($maxRSI - $minRSI > 30) {
-            return "RSI values are divergent across timeframes (range: {$minRSI}-{$maxRSI}), indicating mixed momentum. Higher timeframes carry more weight.";
+        // Build explanation aligned with overall status
+        if ($overallStatus === 'Oversold') {
+            if ($oversoldCount >= 3) {
+                return "Weighted RSI is {$overallRSI} (Oversold). Most timeframes show RSI < 30, with long-term (1D) weighted at 40% pulling the overall reading below 30.";
+            } else {
+                return "Weighted RSI is {$overallRSI} (Oversold). The long-term timeframe (1D, 40% weight) is heavily oversold, dominating the weighted average despite mixed shorter timeframes.";
+            }
+        } elseif ($overallStatus === 'Overbought') {
+            if ($overboughtCount >= 3) {
+                return "Weighted RSI is {$overallRSI} (Overbought). Most timeframes show RSI > 70, with long-term (1D) weighted at 40% pushing the overall reading above 70.";
+            } else {
+                return "Weighted RSI is {$overallRSI} (Overbought). The long-term timeframe (1D, 40% weight) is heavily overbought, dominating the weighted average despite mixed shorter timeframes.";
+            }
         } else {
-            return "RSI values are clustered between {$minRSI}-{$maxRSI} across all major timeframes, indicating balanced momentum with no extreme conditions.";
+            // Neutral
+            if ($maxRSI - $minRSI > 30) {
+                return "Weighted RSI is {$overallRSI} (Neutral). RSI values range from {$minRSI}-{$maxRSI} across timeframes. The weighted average balances oversold/overbought signals, with no single extreme dominating.";
+            } else {
+                return "Weighted RSI is {$overallRSI} (Neutral). RSI values are clustered between {$minRSI}-{$maxRSI} across all timeframes, indicating balanced momentum with no extreme conditions.";
+            }
         }
     }
 

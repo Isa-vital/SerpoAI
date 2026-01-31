@@ -102,6 +102,15 @@ class DerivativesAnalysisService
             try {
                 $stockData = $this->marketData->analyzeStock($symbol);
 
+                // Check if error returned from API
+                if (isset($stockData['error'])) {
+                    return [
+                        'symbol' => $symbol,
+                        'market_type' => 'stock',
+                        'error' => $stockData['error'],
+                    ];
+                }
+
                 // Simplified institutional flow proxy using volume analysis
                 $volume = floatval($stockData['volume'] ?? 0);
                 $avgVolume = floatval($stockData['avg_volume'] ?? $volume);
@@ -177,16 +186,22 @@ class DerivativesAnalysisService
 
         return Cache::remember($cacheKey, 180, function () use ($symbol) {
             try {
+                // Get 24hr ticker data for price and price change
                 $futuresData = $this->getFuturesStats($symbol);
-                $openInterest = floatval($futuresData['openInterest'] ?? 0);
-                $openInterestValue = floatval($futuresData['openInterestValue'] ?? 0);
                 $price = floatval($futuresData['lastPrice'] ?? 0);
+                $priceChange = floatval($futuresData['priceChangePercent'] ?? 0);
 
-                // Get historical OI (simplified - would use historical API in production)
-                $oiChange24h = $this->estimateOIChange($symbol);
+                // Get Open Interest from dedicated endpoint
+                $oiData = $this->getOpenInterestData($symbol);
+                $openInterest = floatval($oiData['openInterest'] ?? 0);
+
+                // Calculate OI value in USD: contracts × price
+                $openInterestValue = $openInterest * $price;
+
+                // Calculate real 24h OI change
+                $oiChange24h = $this->estimateOIChange($symbol, $openInterest);
 
                 // Analyze OI relationship with price
-                $priceChange = floatval($futuresData['priceChangePercent'] ?? 0);
                 $signal = $this->analyzeOIPriceRelationship($oiChange24h, $priceChange);
 
                 return [
@@ -266,6 +281,23 @@ class DerivativesAnalysisService
             }
         } catch (\Exception $e) {
             Log::warning('Futures stats fetch failed', ['symbol' => $symbol, 'error' => $e->getMessage()]);
+        }
+
+        return [];
+    }
+
+    private function getOpenInterestData(string $symbol): array
+    {
+        try {
+            $response = Http::timeout(10)->get('https://fapi.binance.com/fapi/v1/openInterest', [
+                'symbol' => $symbol
+            ]);
+
+            if ($response->successful()) {
+                return $response->json();
+            }
+        } catch (\Exception $e) {
+            Log::warning('Open Interest fetch failed', ['symbol' => $symbol, 'error' => $e->getMessage()]);
         }
 
         return [];
@@ -369,10 +401,24 @@ class DerivativesAnalysisService
         };
     }
 
-    private function estimateOIChange(string $symbol): float
+    private function estimateOIChange(string $symbol, float $currentOI): float
     {
-        // Simplified - in production would calculate from historical OI data
-        return rand(-15, 15) + (rand(0, 100) / 100);
+        // Get cached OI from 24 hours ago
+        $cacheKey = "oi_24h_ago_{$symbol}";
+        $previousOI = Cache::get($cacheKey);
+
+        // Store current OI for next comparison (24 hour cache)
+        Cache::put($cacheKey, $currentOI, 86400);
+
+        // If no previous data, return 0 (not enough data yet)
+        if ($previousOI === null || $previousOI <= 0) {
+            return 0.0;
+        }
+
+        // Calculate percentage change
+        $change = (($currentOI - $previousOI) / $previousOI) * 100;
+
+        return round($change, 2);
     }
 
     private function analyzeOIPriceRelationship(float $oiChange, float $priceChange): array

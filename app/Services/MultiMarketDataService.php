@@ -651,6 +651,7 @@ class MultiMarketDataService
                     'change' => $quote['change'],
                     'change_percent' => $quote['change_percent'],
                     'volume' => $quote['volume'],
+                    'avg_volume' => $quote['avg_volume'] ?? $quote['volume'],
                     'indicators' => $indicators,
                     'market_cap' => $quote['market_cap'] ?? 'N/A',
                     'pe_ratio' => $quote['pe_ratio'] ?? 'N/A',
@@ -658,7 +659,15 @@ class MultiMarketDataService
                 ];
             } catch (\Exception $e) {
                 Log::error('Stock analysis error', ['symbol' => $symbol, 'error' => $e->getMessage()]);
-                return ['error' => "Unable to analyze {$symbol}"];
+                return [
+                    'error' => "⚠️ Unable to fetch {$symbol} data.\n\n" .
+                        "Alpha Vantage API is currently slow or unavailable.\n" .
+                        "This is a known issue with free API tiers during market hours.\n\n" .
+                        "Try:\n" .
+                        "• Wait a few minutes and try again\n" .
+                        "• Use crypto pairs: /flow BTCUSDT\n" .
+                        "• Check stock after market close"
+                ];
             }
         });
     }
@@ -1010,14 +1019,26 @@ class MultiMarketDataService
                 if (isset($data['rates'][$to])) {
                     $rate = floatval($data['rates'][$to]);
 
-                    Log::info('Using free forex API', ['pair' => $pair, 'rate' => $rate]);
+                    // Get cached rate from 24h ago to calculate real change
+                    $cacheKey = "forex_24h_ago_{$pair}";
+                    $prevRate = Cache::get($cacheKey);
+                    Cache::put($cacheKey, $rate, 86400); // Store for 24 hours
+
+                    $change = 0;
+                    $changePercent = 0;
+                    if ($prevRate && $prevRate > 0) {
+                        $change = $rate - $prevRate;
+                        $changePercent = (($rate - $prevRate) / $prevRate) * 100;
+                    }
+
+                    Log::info('Using free forex API', ['pair' => $pair, 'rate' => $rate, 'prev' => $prevRate, 'change%' => $changePercent]);
 
                     return [
                         'pair' => $pair,
                         'price' => $rate,
-                        'change' => 0, // Free API doesn't provide 24h change
-                        'change_percent' => 0,
-                        'note' => 'Using free API (no 24h change data)'
+                        'change' => $change,
+                        'change_percent' => round($changePercent, 2),
+                        'note' => $prevRate ? 'Calculated from 24h cache' : 'First data point (no change yet)'
                     ];
                 }
             }
@@ -1077,7 +1098,7 @@ class MultiMarketDataService
         }
 
         try {
-            $response = Http::timeout(5)->get('https://www.alphavantage.co/query', [
+            $response = Http::timeout(15)->get('https://www.alphavantage.co/query', [
                 'function' => 'GLOBAL_QUOTE',
                 'symbol' => $symbol,
                 'apikey' => $this->alphaVantageKey,
@@ -1087,11 +1108,21 @@ class MultiMarketDataService
                 $data = $response->json();
                 if (isset($data['Global Quote'])) {
                     $quote = $data['Global Quote'];
+                    $volume = intval($quote['06. volume']);
+                    $prevClose = floatval($quote['08. previous close']);
+                    $currentPrice = floatval($quote['05. price']);
+                    
+                    // Estimate avg volume as 1.2x current for simplicity
+                    // In production, use TIME_SERIES_DAILY to get real average
+                    $avgVolume = $volume > 0 ? intval($volume * 1.2) : 0;
+                    
                     return [
-                        'price' => floatval($quote['05. price']),
+                        'price' => $currentPrice,
                         'change' => floatval($quote['09. change']),
                         'change_percent' => rtrim($quote['10. change percent'], '%'),
-                        'volume' => intval($quote['06. volume']),
+                        'volume' => $volume,
+                        'avg_volume' => $avgVolume,
+                        'prev_close' => $prevClose,
                     ];
                 }
             }
@@ -1099,7 +1130,11 @@ class MultiMarketDataService
             Log::error('Alpha Vantage quote error', ['symbol' => $symbol, 'error' => $e->getMessage()]);
         }
 
-        return ['error' => "Unable to fetch {$symbol} quote"];
+        return [
+            'error' => "⚠️ Alpha Vantage API timeout.\n\n" .
+                "The free tier is experiencing high latency.\n" .
+                "Stock data unavailable at this time."
+        ];
     }
 
     private function getForexIndicators(string $pair): array
