@@ -331,42 +331,153 @@ class TechnicalStructureService
     /**
      * RSI Divergence Scanner
      */
-    public function scanDivergences(string $symbol): array
+    public function scanDivergences(string $symbol, string $timeframe = '1h'): array
     {
         $marketType = $this->multiMarket->detectMarketType($symbol);
-        $cacheKey = "divergence_{$symbol}";
+        $cacheKey = "divergence_v2_{$symbol}_{$timeframe}";
 
-        return Cache::remember($cacheKey, 300, function () use ($symbol, $marketType) {
+        return Cache::remember($cacheKey, 60, function () use ($symbol, $timeframe, $marketType) {
             try {
-                $klines = $this->getKlineData($symbol, $marketType);
+                // Normalize symbol
+                $symbol = $this->normalizeSymbol($symbol, $marketType);
 
-                if (isset($klines['error'])) {
-                    return $klines;
-                }
+                // Get klines for this timeframe
+                $lookbackCandles = in_array($timeframe, ['1d', '1w']) ? 150 : 200;
+                $klines = $this->getKlineDataForTimeframe($symbol, $timeframe, $marketType, $lookbackCandles);
 
-                $divergences = [];
-
-                foreach (['1h', '4h', '1d'] as $tf) {
-                    if (isset($klines[$tf])) {
-                        $div = $this->detectDivergence($klines[$tf], $tf);
-                        if ($div) {
-                            $divergences[$tf] = $div;
-                        }
-                    }
+                if (empty($klines) || count($klines) < 50) {
+                    return ['error' => "Insufficient candles for {$symbol} on {$timeframe}. Need at least 50, got " . count($klines)];
                 }
 
                 $currentPrice = $this->getCurrentPrice($symbol, $marketType);
+                if ($currentPrice <= 0) {
+                    return ['error' => "Unable to fetch price for {$symbol}"];
+                }
+
+                // Calculate RSI series
+                $closes = array_map(fn($k) => floatval($k[4]), $klines);
+                $rsiSeries = $this->calculateRSISeries($closes, 14);
+                $currentRSI = !empty($rsiSeries) ? round(end($rsiSeries), 1) : 50.0;
+
+                // Extract highs and lows for price pivots
+                $highs = array_map(fn($k) => floatval($k[2]), $klines);
+                $lows = array_map(fn($k) => floatval($k[3]), $klines);
+
+                // Detect pivots (5 bars on each side)
+                $pricePivotHighs = $this->detectPivotsAdvanced($highs, 5, 5, 'high');
+                $pricePivotLows = $this->detectPivotsAdvanced($lows, 5, 5, 'low');
+                $rsiPivotHighs = $this->detectPivotsAdvanced($rsiSeries, 5, 5, 'high');
+                $rsiPivotLows = $this->detectPivotsAdvanced($rsiSeries, 5, 5, 'low');
+
+                // Set thresholds based on market type
+                $minPriceDeltaPct = match ($marketType) {
+                    'forex' => 0.25,
+                    'crypto' => 0.8,
+                    'stock' => 0.8,
+                    default => 0.8
+                };
+                $minRsiDelta = 6.0;
+                $minBarsApart = 10;
+                $maxAgeBars = 80;
+
+                // Check for divergences (4 types)
+                $divergence = null;
+                $checkedTypes = ['regular_bullish', 'regular_bearish', 'hidden_bullish', 'hidden_bearish'];
+                $reason = 'No pivots met all thresholds.';
+
+                // 1. Regular Bullish: Price LL, RSI HL
+                $bullish = $this->detectRegularBullishDivergence(
+                    $pricePivotLows,
+                    $rsiPivotLows,
+                    $lows,
+                    $rsiSeries,
+                    $minPriceDeltaPct,
+                    $minRsiDelta,
+                    $minBarsApart,
+                    $maxAgeBars,
+                    count($klines)
+                );
+                if ($bullish) {
+                    $divergence = $bullish;
+                    $reason = null;
+                }
+
+                // 2. Regular Bearish: Price HH, RSI LH
+                if (!$divergence) {
+                    $bearish = $this->detectRegularBearishDivergence(
+                        $pricePivotHighs,
+                        $rsiPivotHighs,
+                        $highs,
+                        $rsiSeries,
+                        $minPriceDeltaPct,
+                        $minRsiDelta,
+                        $minBarsApart,
+                        $maxAgeBars,
+                        count($klines)
+                    );
+                    if ($bearish) {
+                        $divergence = $bearish;
+                        $reason = null;
+                    }
+                }
+
+                // 3. Hidden Bullish: Price HL, RSI LL (optional)
+                // 4. Hidden Bearish: Price LH, RSI HH (optional)
+                // Implement if needed
+
+                // Calculate confidence
+                $confidence = 'Medium';
+                if ($divergence) {
+                    if (
+                        abs($divergence['price_delta_pct']) > 1.5 * $minPriceDeltaPct &&
+                        abs($divergence['rsi_delta']) > 1.5 * $minRsiDelta
+                    ) {
+                        $confidence = 'High';
+                    } elseif (
+                        abs($divergence['price_delta_pct']) < $minPriceDeltaPct * 1.1 ||
+                        abs($divergence['rsi_delta']) < $minRsiDelta * 1.1
+                    ) {
+                        $confidence = 'Low';
+                    }
+                } else {
+                    // Check if close but didn't meet thresholds
+                    if (empty($pricePivotLows) || empty($pricePivotHighs)) {
+                        $reason = 'Insufficient clean pivots detected in lookback window.';
+                    } else {
+                        $reason = 'Latest pivots did not meet thresholds (ΔRSI < ' . $minRsiDelta . ' or ΔPrice < ' . $minPriceDeltaPct . '%).';
+                    }
+                }
+
+                $source = match ($marketType) {
+                    'crypto' => 'Binance',
+                    'forex' => 'ExchangeRate-API',
+                    'stock' => 'Alpha Vantage',
+                    default => 'Unknown'
+                };
 
                 return [
                     'symbol' => $symbol,
+                    'market_type' => $marketType,
+                    'timeframe' => strtoupper($timeframe),
                     'current_price' => $currentPrice,
-                    'divergences' => $divergences,
-                    'has_divergence' => !empty($divergences),
-                    'signal_strength' => $this->calculateDivergenceStrength($divergences),
+                    'current_rsi' => $currentRSI,
+                    'lookback_candles' => count($klines),
+                    'source' => $source,
+                    'updated_at' => gmdate('Y-m-d H:i') . ' UTC',
+                    'has_divergence' => !is_null($divergence),
+                    'divergence' => $divergence,
+                    'confidence' => $confidence,
+                    'hidden_checked' => false, // Update when hidden implemented
+                    'reason' => $reason,
                 ];
             } catch (\Exception $e) {
-                Log::error('Divergence scan error', ['symbol' => $symbol, 'error' => $e->getMessage()]);
-                return ['error' => "Unable to scan divergences for {$symbol}"];
+                Log::error('Divergence scan error', [
+                    'symbol' => $symbol,
+                    'timeframe' => $timeframe,
+                    'error' => $e->getMessage(),
+                    'trace' => $e->getTraceAsString()
+                ]);
+                return ['error' => "Unable to scan divergences for {$symbol}: " . $e->getMessage()];
             }
         });
     }
@@ -478,31 +589,7 @@ class TechnicalStructureService
         return ['error' => 'Unsupported market type'];
     }
 
-    private function getKlineDataForTimeframe(string $symbol, string $timeframe, string $marketType): ?array
-    {
-        if ($marketType === 'crypto') {
-            $symbol = strtoupper(str_replace(['/', '-'], '', $symbol));
-
-            // Check if symbol already has quote currency
-            $quoteAssets = ['USDT', 'BUSD', 'USDC', 'USD', 'BTC', 'ETH', 'BNB'];
-            $hasQuote = false;
-            foreach ($quoteAssets as $quote) {
-                if (str_ends_with($symbol, $quote)) {
-                    $hasQuote = true;
-                    break;
-                }
-            }
-            if (!$hasQuote) {
-                $symbol .= 'USDT';
-            }
-
-            return $this->binance->getKlines($symbol, $timeframe, 100);
-        }
-
-        return $this->getMultiMarketKlines($symbol, $timeframe, $marketType);
-    }
-
-    private function getMultiMarketKlines(string $symbol, string $timeframe, string $marketType): array
+    private function getMultiMarketKlines(string $symbol, string $timeframe, string $marketType, int $periods = 100): array
     {
         // For forex/stocks, we'll simulate klines from current price data
         // This is a simplified approach - ideally you'd have real historical data
@@ -514,7 +601,6 @@ class TechnicalStructureService
 
             // Generate synthetic klines based on volatility patterns
             $klines = [];
-            $periods = 100;
             $volatility = 0.01; // 1% volatility
 
             for ($i = 0; $i < $periods; $i++) {
@@ -1095,6 +1181,263 @@ class TechnicalStructureService
         if ($count >= 3) return 'Very Strong';
         if ($count >= 2) return 'Strong';
         return 'Moderate';
+    }
+
+    private function calculateCurrentRSI(array $klines): ?float
+    {
+        if (count($klines) < 15) return null;
+
+        $closes = array_map(fn($k) => floatval($k[4]), $klines);
+        $recent = array_slice($closes, -15);
+
+        return $this->calculateSimpleRSI($recent);
+    }
+
+    /**
+     * Calculate RSI series for all candles (for pivot detection)
+     */
+    private function calculateRSISeries(array $closes, int $period = 14): array
+    {
+        if (count($closes) < $period + 1) return [];
+
+        $rsiSeries = [];
+
+        for ($i = $period; $i < count($closes); $i++) {
+            $subset = array_slice($closes, $i - $period, $period);
+            $rsiSeries[] = $this->calculateSimpleRSI($subset);
+        }
+
+        return $rsiSeries;
+    }
+
+    /**
+     * Detect pivots using lookback window
+     * Returns array of [index => value]
+     */
+    private function detectPivotsAdvanced(array $series, int $left, int $right, string $type): array
+    {
+        $pivots = [];
+
+        for ($i = $left; $i < count($series) - $right; $i++) {
+            $isPivot = true;
+            $current = $series[$i];
+
+            // Check left side
+            for ($j = $i - $left; $j < $i; $j++) {
+                if ($type === 'high' && $series[$j] > $current) {
+                    $isPivot = false;
+                    break;
+                } elseif ($type === 'low' && $series[$j] < $current) {
+                    $isPivot = false;
+                    break;
+                }
+            }
+
+            if (!$isPivot) continue;
+
+            // Check right side
+            for ($j = $i + 1; $j <= $i + $right; $j++) {
+                if ($type === 'high' && $series[$j] > $current) {
+                    $isPivot = false;
+                    break;
+                } elseif ($type === 'low' && $series[$j] < $current) {
+                    $isPivot = false;
+                    break;
+                }
+            }
+
+            if ($isPivot) {
+                $pivots[$i] = $current;
+            }
+        }
+
+        return $pivots;
+    }
+
+    /**
+     * Normalize symbol based on market type
+     */
+    private function normalizeSymbol(string $symbol, string $marketType): string
+    {
+        $symbol = strtoupper(str_replace(['/', '-', ' '], '', $symbol));
+
+        if ($marketType === 'crypto') {
+            // Add USDT if no quote currency
+            $quoteAssets = ['USDT', 'BUSD', 'USDC', 'USD', 'BTC', 'ETH', 'BNB'];
+            $hasQuote = false;
+            foreach ($quoteAssets as $quote) {
+                if (str_ends_with($symbol, $quote)) {
+                    $hasQuote = true;
+                    break;
+                }
+            }
+            if (!$hasQuote) {
+                $symbol .= 'USDT';
+            }
+        }
+
+        return $symbol;
+    }
+
+    /**
+     * Detect Regular Bullish Divergence: Price LL, RSI HL
+     */
+    private function detectRegularBullishDivergence(
+        array $pricePivots,
+        array $rsiPivots,
+        array $priceData,
+        array $rsiData,
+        float $minPriceDelta,
+        float $minRsiDelta,
+        int $minBarsApart,
+        int $maxAge,
+        int $totalBars
+    ): ?array {
+        if (count($pricePivots) < 2 || count($rsiPivots) < 2) return null;
+
+        // Get last 2 price pivot lows (most recent first)
+        $priceIndices = array_keys($pricePivots);
+        rsort($priceIndices);
+
+        if (count($priceIndices) < 2) return null;
+
+        $idx2 = $priceIndices[0]; // Most recent
+        $idx1 = $priceIndices[1]; // Previous
+
+        // Check recency
+        if (($totalBars - 1 - $idx2) > $maxAge) return null;
+
+        // Check bars apart
+        if (($idx2 - $idx1) < $minBarsApart) return null;
+
+        $price1 = $priceData[$idx1];
+        $price2 = $priceData[$idx2];
+        $priceDeltaPct = (($price2 - $price1) / $price1) * 100;
+
+        // Price should make lower low (negative delta)
+        if ($priceDeltaPct >= 0) return null;
+        if (abs($priceDeltaPct) < $minPriceDelta) return null;
+
+        // Now check RSI - find closest RSI pivots to price pivots
+        $rsi1 = $this->findClosestRsiPivot($rsiPivots, $idx1, $rsiData, 10);
+        $rsi2 = $this->findClosestRsiPivot($rsiPivots, $idx2, $rsiData, 10);
+
+        if (is_null($rsi1) || is_null($rsi2)) return null;
+
+        $rsiDelta = $rsi2 - $rsi1;
+
+        // RSI should make higher low (positive delta)
+        if ($rsiDelta <= 0) return null;
+        if (abs($rsiDelta) < $minRsiDelta) return null;
+
+        return [
+            'type' => 'Regular Bullish Divergence',
+            'price1' => $price1,
+            'price2' => $price2,
+            'price_delta_pct' => $priceDeltaPct,
+            'rsi1' => $rsi1,
+            'rsi2' => $rsi2,
+            'rsi_delta' => $rsiDelta,
+            'pivot1_index' => $idx1,
+            'pivot2_index' => $idx2,
+            'bars_apart' => $idx2 - $idx1,
+        ];
+    }
+
+    /**
+     * Detect Regular Bearish Divergence: Price HH, RSI LH
+     */
+    private function detectRegularBearishDivergence(
+        array $pricePivots,
+        array $rsiPivots,
+        array $priceData,
+        array $rsiData,
+        float $minPriceDelta,
+        float $minRsiDelta,
+        int $minBarsApart,
+        int $maxAge,
+        int $totalBars
+    ): ?array {
+        if (count($pricePivots) < 2 || count($rsiPivots) < 2) return null;
+
+        // Get last 2 price pivot highs (most recent first)
+        $priceIndices = array_keys($pricePivots);
+        rsort($priceIndices);
+
+        if (count($priceIndices) < 2) return null;
+
+        $idx2 = $priceIndices[0]; // Most recent
+        $idx1 = $priceIndices[1]; // Previous
+
+        // Check recency
+        if (($totalBars - 1 - $idx2) > $maxAge) return null;
+
+        // Check bars apart
+        if (($idx2 - $idx1) < $minBarsApart) return null;
+
+        $price1 = $priceData[$idx1];
+        $price2 = $priceData[$idx2];
+        $priceDeltaPct = (($price2 - $price1) / $price1) * 100;
+
+        // Price should make higher high (positive delta)
+        if ($priceDeltaPct <= 0) return null;
+        if (abs($priceDeltaPct) < $minPriceDelta) return null;
+
+        // Now check RSI
+        $rsi1 = $this->findClosestRsiPivot($rsiPivots, $idx1, $rsiData, 10);
+        $rsi2 = $this->findClosestRsiPivot($rsiPivots, $idx2, $rsiData, 10);
+
+        if (is_null($rsi1) || is_null($rsi2)) return null;
+
+        $rsiDelta = $rsi2 - $rsi1;
+
+        // RSI should make lower high (negative delta)
+        if ($rsiDelta >= 0) return null;
+        if (abs($rsiDelta) < $minRsiDelta) return null;
+
+        return [
+            'type' => 'Regular Bearish Divergence',
+            'price1' => $price1,
+            'price2' => $price2,
+            'price_delta_pct' => $priceDeltaPct,
+            'rsi1' => $rsi1,
+            'rsi2' => $rsi2,
+            'rsi_delta' => $rsiDelta,
+            'pivot1_index' => $idx1,
+            'pivot2_index' => $idx2,
+            'bars_apart' => $idx2 - $idx1,
+        ];
+    }
+
+    /**
+     * Find closest RSI pivot to a price pivot index
+     */
+    private function findClosestRsiPivot(array $rsiPivots, int $targetIndex, array $rsiData, int $tolerance): ?float
+    {
+        $closest = null;
+        $minDiff = PHP_INT_MAX;
+
+        foreach (array_keys($rsiPivots) as $rsiIdx) {
+            $diff = abs($rsiIdx - $targetIndex);
+            if ($diff <= $tolerance && $diff < $minDiff) {
+                $minDiff = $diff;
+                $closest = $rsiData[$rsiIdx];
+            }
+        }
+
+        return $closest;
+    }
+
+    /**
+     * Get kline data for specific timeframe with custom lookback
+     */
+    private function getKlineDataForTimeframe(string $symbol, string $timeframe, string $marketType, int $limit = 200): ?array
+    {
+        if ($marketType === 'crypto') {
+            return $this->binance->getKlines($symbol, $timeframe, $limit);
+        }
+
+        return $this->getMultiMarketKlines($symbol, $timeframe, $marketType, $limit);
     }
 
     private function detectMACross(array $klines, int $fastPeriod, int $slowPeriod): array

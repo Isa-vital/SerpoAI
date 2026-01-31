@@ -2249,23 +2249,45 @@ class CommandHandler
     private function handleDivergence(int $chatId, array $params)
     {
         if (empty($params)) {
-            $this->telegram->sendMessage($chatId, "Please specify a symbol.\n\nExample: `/divergence BTCUSDT`");
+            $this->telegram->sendMessage($chatId, "Please specify a symbol.\n\nExample: `/divergence BTCUSDT 1h`\n\nSupported TF: 5m, 15m, 30m, 1h, 4h, 1d, 1w");
             return;
         }
 
         $symbol = $params[0];
+        $timeframe = isset($params[1]) ? strtolower($params[1]) : null;
+
+        // Normalize symbol and get default timeframe if not provided
+        $marketType = $this->multiMarket->detectMarketType($symbol);
+
+        if (!$timeframe) {
+            // Default timeframes by market
+            $timeframe = match ($marketType) {
+                'crypto' => '1h',
+                'forex' => '1h',
+                'stock' => '1h',
+                default => '1h'
+            };
+        }
+
+        // Validate timeframe
+        $validTfs = ['5m', '15m', '30m', '1h', '4h', '1d', '1w'];
+        if (!in_array($timeframe, $validTfs)) {
+            $this->telegram->sendMessage($chatId, "❌ Invalid timeframe: {$timeframe}\n\nSupported: 5m, 15m, 30m, 1h, 4h, 1d, 1w");
+            return;
+        }
+
         $this->telegram->sendChatAction($chatId, 'typing');
-        $this->telegram->sendMessage($chatId, "🔍 Scanning for divergences in {$symbol}...");
 
         try {
-            $analysis = $this->technical->scanDivergences($symbol);
+            $analysis = $this->technical->scanDivergences($symbol, $timeframe);
             $message = $this->formatDivergenceAnalysis($analysis);
             $keyboard = [
                 'inline_keyboard' => $this->getContextualKeyboard('technical')
             ];
+
             $this->telegram->sendMessage($chatId, $message, $keyboard);
         } catch (\Exception $e) {
-            Log::error('Divergence scan error', ['error' => $e->getMessage()]);
+            Log::error('Divergence scan error', ['error' => $e->getMessage(), 'symbol' => $symbol, 'tf' => $timeframe]);
             $keyboard = [
                 'inline_keyboard' => $this->getContextualKeyboard('technical')
             ];
@@ -2529,32 +2551,52 @@ class CommandHandler
             return "❌ " . $analysis['error'];
         }
 
+        $marketType = $analysis['market_type'] ?? 'crypto';
+        $marketIcon = match ($marketType) {
+            'crypto' => '💎',
+            'forex' => '💱',
+            'stock' => '📈',
+            default => '📊'
+        };
+
         $message = "🔍 *RSI DIVERGENCE SCANNER*\n";
-        $message .= "━━━━━━━━━━━━━━━━━━━━\n\n";
-        $message .= "Symbol: `{$analysis['symbol']}`\n";
-        $message .= "Price: \${$analysis['current_price']}\n\n";
+        $message .= "━━━━━━━━━━━━━━━━━━━━\n";
+        $message .= "Symbol: `{$analysis['symbol']}` | Market: " . ucfirst($marketType) . "\n";
+        $message .= "Source: {$analysis['source']} | Updated: {$analysis['updated_at']}\n";
+        $message .= "TF: {$analysis['timeframe']} | RSI: 14 | Lookback: {$analysis['lookback_candles']}\n";
+        $message .= "Price: " . $this->formatPriceAdaptive($analysis['current_price'], $marketType);
+        $message .= " | RSI(14): {$analysis['current_rsi']}\n\n";
 
+        // Result section
         if (!$analysis['has_divergence']) {
-            $message .= "✅ No significant divergences detected\n";
-            $message .= "Market price and RSI are aligned\n";
+            $message .= "*Result:* ✅ No confirmed divergence\n\n";
+            $message .= "*Checked:*\n";
+            $message .= "• Regular bullish (LL vs HL)\n";
+            $message .= "• Regular bearish (HH vs LH)\n";
+            if ($analysis['hidden_checked']) {
+                $message .= "• Hidden divergences\n";
+            }
+            $message .= "\n*Notes:*\n";
+            $message .= $analysis['reason'] . "\n";
         } else {
-            $message .= "⚠️ *Divergences Detected*\n\n";
+            $div = $analysis['divergence'];
+            $emoji = str_contains($div['type'], 'Bullish') ? '🟢' : '🔴';
+            $message .= "*Result:* {$emoji} {$div['type']} (Confirmed)\n\n";
 
-            foreach ($analysis['divergences'] as $tf => $div) {
-                $emoji = $div['type'] === 'Bullish' ? '🟢' : '🔴';
-                $message .= "{$emoji} *{$tf}*: {$div['type']} Divergence\n";
-                $message .= "   Strength: {$div['strength']}\n\n";
-            }
+            $message .= "*Evidence:*\n";
+            $message .= "• Price: " . number_format($div['price1'], 2) . " → " . number_format($div['price2'], 2);
+            $message .= " (" . ($div['price_delta_pct'] >= 0 ? '+' : '') . number_format($div['price_delta_pct'], 2) . "%)\n";
+            $message .= "• RSI: " . round($div['rsi1'], 1) . " → " . round($div['rsi2'], 1);
+            $message .= " (" . ($div['rsi_delta'] >= 0 ? '+' : '') . round($div['rsi_delta'], 1) . ")\n";
 
-            $message .= "━━━━━━━━━━━━━━━━━━━━\n";
-            $message .= "Signal Strength: *{$analysis['signal_strength']}*\n\n";
-
-            if (strpos($analysis['divergences'][array_key_first($analysis['divergences'])]['type'], 'Bullish') !== false) {
-                $message .= "💡 Bullish divergence suggests potential reversal to upside\n";
-            } else {
-                $message .= "💡 Bearish divergence suggests potential reversal to downside\n";
-            }
+            $message .= "\n*Pivots:*\n";
+            $message .= "• Pivots at candles: {$div['pivot1_index']} & {$div['pivot2_index']} ";
+            $message .= "({$div['bars_apart']} bars apart)\n";
         }
+
+        $message .= "\n*Confidence:* {$analysis['confidence']}\n";
+        $message .= "\n━━━━━━━━━━━━━━━━━━━━\n";
+        $message .= "_Analysis only. Not financial advice._";
 
         return $message;
     }
