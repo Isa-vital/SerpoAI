@@ -3625,22 +3625,9 @@ class CommandHandler
             ]
         ];
 
-        // Generate DEXScreener chart snapshot with proper candlestick view
-        Log::info('Generating DEXScreener chart snapshot', ['pair' => $pairAddress]);
-        $chartImage = $this->generateDexScreenerSnapshot($pairAddress, $timeframe);
-
-        if ($chartImage) {
-            Log::info('Sending DEX chart photo');
-            try {
-                $this->telegram->sendPhoto($chatId, $chartImage, $caption, $keyboard);
-            } catch (\Exception $e) {
-                Log::error('Failed to send DEX chart photo', ['error' => $e->getMessage()]);
-                $this->telegram->sendMessage($chatId, $caption, $keyboard);
-            }
-        } else {
-            Log::info('No chart image, sending text with link');
-            $this->telegram->sendMessage($chatId, $caption, $keyboard);
-        }
+        // For now, send text with link (screenshot services have reliability issues with DEXScreener)
+        Log::info('Sending DEX chart with link', ['pair' => $pairAddress]);
+        $this->telegram->sendMessage($chatId, $caption, $keyboard);
     }
 
     /**
