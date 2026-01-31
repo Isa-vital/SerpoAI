@@ -727,10 +727,13 @@ class CommandHandler
         $message .= "`/alerts liquidity on` - Liquidity alerts\n\n";
         $message .= "💡 Use `off` instead of `on` to disable specific types\n\n";
         $message .= "*What you'll receive:*\n";
-        $message .= "🟢 Buy alerts - When significant buying activity detected\n";
-        $message .= "🐋 Whale alerts - Large transactions (2+ TON)\n";
+        $message .= "🟢 Buy alerts - Significant buying activity\n";
+        $message .= "🐋 Whale alerts - Large transactions\n";
         $message .= "📈 Price alerts - 5%+ price changes\n";
-        $message .= "💧 Liquidity alerts - 10%+ liquidity changes";
+        $message .= "💧 Liquidity alerts - 10%+ liquidity changes\n\n";
+        $message .= "*Supported Markets:*\n";
+        $message .= "💎 Crypto • 💱 Forex • 📈 Stocks\n\n";
+        $message .= "_Set custom alerts with /setalert [SYMBOL] [PRICE]_";
 
         $keyboard = [
             'inline_keyboard' => $this->getContextualKeyboard('alerts')
@@ -744,16 +747,42 @@ class CommandHandler
     private function handleSetAlert(int $chatId, array $params, User $user)
     {
         if (empty($params)) {
-            $this->telegram->sendMessage($chatId, "Usage: `/setalert [price]`\nExample: `/setalert 0.00001`");
+            $message = "📊 *Set Price Alert*\n\n";
+            $message .= "*Usage:*\n";
+            $message .= "`/setalert [SYMBOL] [PRICE]`\n\n";
+            $message .= "*Examples:*\n";
+            $message .= "`/setalert SERPO 0.00001`\n";
+            $message .= "`/setalert BTC 50000`\n";
+            $message .= "`/setalert AAPL 180`\n";
+            $message .= "`/setalert EURUSD 1.10`\n\n";
+            $message .= "*Supported Markets:*\n";
+            $message .= "🔷 Crypto (BTC, ETH, SERPO, etc.)\n";
+            $message .= "🔷 Forex (EURUSD, GBPUSD, etc.)\n";
+            $message .= "🔷 Stocks (AAPL, TSLA, GOOGL, etc.)";
+            $this->telegram->sendMessage($chatId, $message);
             return;
         }
 
-        $targetPrice = floatval($params[0]);
+        // Parse params - check if first param is symbol or price
+        $symbol = 'SERPO'; // Default
+        $targetPrice = 0;
+        
+        if (count($params) >= 2) {
+            // Format: /setalert SYMBOL PRICE
+            $symbol = strtoupper($params[0]);
+            $targetPrice = floatval($params[1]);
+        } else {
+            // Format: /setalert PRICE (defaults to SERPO)
+            $targetPrice = floatval($params[0]);
+        }
 
         if ($targetPrice <= 0) {
             $this->telegram->sendMessage($chatId, "❌ Invalid price. Please enter a valid number.");
             return;
         }
+
+        // Validate symbol format
+        $marketType = $this->multiMarket->detectMarketType($symbol);
 
         try {
             Alert::create([
@@ -761,19 +790,30 @@ class CommandHandler
                 'alert_type' => 'price',
                 'condition' => 'above',
                 'target_value' => $targetPrice,
-                'coin_symbol' => 'SERPO',
+                'coin_symbol' => $symbol,
                 'is_active' => true,
             ]);
 
-            $message = "✅ Alert created!\n\n";
-            $message .= "You'll be notified when SERPO reaches $" . number_format($targetPrice, 8);
+            $marketIcon = match($marketType) {
+                'crypto' => '💎',
+                'forex' => '💱',
+                'stock' => '📈',
+                default => '📊'
+            };
+
+            $message = "✅ *Alert Created!*\n\n";
+            $message .= "{$marketIcon} *Symbol:* {$symbol}\n";
+            $message .= "🎯 *Target Price:* $" . number_format($targetPrice, $marketType === 'crypto' && $targetPrice < 1 ? 8 : 2) . "\n";
+            $message .= "📈 *Condition:* Above target\n\n";
+            $message .= "You'll be notified when {$symbol} reaches the target price!\n\n";
+            $message .= "_Use /myalerts to view all your alerts_";
 
             $keyboard = [
                 'inline_keyboard' => $this->getContextualKeyboard('alerts')
             ];
             $this->telegram->sendMessage($chatId, $message, $keyboard);
         } catch (\Exception $e) {
-            Log::error('Error creating alert', ['message' => $e->getMessage()]);
+            Log::error('Error creating alert', ['message' => $e->getMessage(), 'symbol' => $symbol]);
             $keyboard = [
                 'inline_keyboard' => $this->getContextualKeyboard('alerts')
             ];
@@ -792,14 +832,36 @@ class CommandHandler
             ->get();
 
         if ($alerts->isEmpty()) {
-            $this->telegram->sendMessage($chatId, "You don't have any active alerts.\n\nUse `/setalert [price]` to create one!");
+            $message = "You don't have any active alerts.\n\n";
+            $message .= "*Create an alert:*\n";
+            $message .= "`/setalert [SYMBOL] [PRICE]`\n\n";
+            $message .= "*Examples:*\n";
+            $message .= "`/setalert BTC 50000`\n";
+            $message .= "`/setalert AAPL 180`\n";
+            $message .= "`/setalert EURUSD 1.10`";
+            $this->telegram->sendMessage($chatId, $message);
             return;
         }
 
         $message = "🔔 *Your Active Alerts*\n\n";
+        
         foreach ($alerts as $alert) {
-            $message .= "• SERPO " . ucfirst($alert->condition) . " $" . number_format($alert->target_value, 8) . "\n";
+            $symbol = $alert->coin_symbol;
+            $marketType = $this->multiMarket->detectMarketType($symbol);
+            
+            $marketIcon = match($marketType) {
+                'crypto' => '💎',
+                'forex' => '💱',
+                'stock' => '📈',
+                default => '📊'
+            };
+            
+            $decimals = ($marketType === 'crypto' && $alert->target_value < 1) ? 8 : 2;
+            
+            $message .= "{$marketIcon} *{$symbol}* " . ucfirst($alert->condition) . " $" . number_format($alert->target_value, $decimals) . "\n";
         }
+        
+        $message .= "\n_Alerts are checked every minute_";
 
         $keyboard = [
             'inline_keyboard' => $this->getContextualKeyboard('alerts')

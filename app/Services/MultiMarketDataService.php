@@ -254,6 +254,141 @@ class MultiMarketDataService
     }
 
     /**
+     * Get current price for any symbol (crypto, forex, or stock)
+     */
+    public function getCurrentPrice(string $symbol): ?float
+    {
+        $symbol = strtoupper($symbol);
+        $marketType = $this->detectMarketType($symbol);
+        $cacheKey = "current_price_{$symbol}";
+
+        return Cache::remember($cacheKey, 60, function () use ($symbol, $marketType) {
+            try {
+                if ($marketType === 'crypto') {
+                    return $this->getCryptoPrice($symbol);
+                } elseif ($marketType === 'forex') {
+                    return $this->getForexPrice($symbol);
+                } elseif ($marketType === 'stock') {
+                    return $this->getStockPrice($symbol);
+                }
+
+                Log::warning("Unable to determine market type for {$symbol}");
+                return null;
+            } catch (\Exception $e) {
+                Log::error('Get current price error', [
+                    'symbol' => $symbol,
+                    'error' => $e->getMessage()
+                ]);
+                return null;
+            }
+        });
+    }
+
+    /**
+     * Get crypto price from Binance
+     */
+    private function getCryptoPrice(string $symbol): ?float
+    {
+        try {
+            // Special handling for SERPO
+            if ($symbol === 'SERPO') {
+                $marketData = app(MarketDataService::class);
+                $priceData = $marketData->getSerpoPriceFromDex();
+                return $priceData['price'] ?? null;
+            }
+
+            // Normalize symbol for Binance
+            $quoteAssets = ['USDT', 'BUSD', 'USDC', 'BTC', 'ETH', 'BNB'];
+            $hasQuote = false;
+            foreach ($quoteAssets as $quote) {
+                if (strlen($symbol) > strlen($quote) && str_ends_with($symbol, $quote)) {
+                    $hasQuote = true;
+                    break;
+                }
+            }
+            if (!$hasQuote) {
+                $symbol .= 'USDT';
+            }
+
+            $ticker = $this->binance->get24hTicker($symbol);
+            return $ticker ? floatval($ticker['lastPrice']) : null;
+        } catch (\Exception $e) {
+            Log::error("Error getting crypto price for {$symbol}", ['error' => $e->getMessage()]);
+            return null;
+        }
+    }
+
+    /**
+     * Get forex price from Alpha Vantage
+     */
+    private function getForexPrice(string $symbol): ?float
+    {
+        try {
+            if (strlen($symbol) !== 6) {
+                return null;
+            }
+
+            $from = substr($symbol, 0, 3);
+            $to = substr($symbol, 3, 3);
+
+            if (empty($this->alphaVantageKey)) {
+                Log::warning('Alpha Vantage API key not configured');
+                return null;
+            }
+
+            $response = Http::timeout(10)->get('https://www.alphavantage.co/query', [
+                'function' => 'CURRENCY_EXCHANGE_RATE',
+                'from_currency' => $from,
+                'to_currency' => $to,
+                'apikey' => $this->alphaVantageKey,
+            ]);
+
+            if (!$response->successful()) {
+                return null;
+            }
+
+            $data = $response->json();
+            return isset($data['Realtime Currency Exchange Rate']['5. Exchange Rate']) 
+                ? floatval($data['Realtime Currency Exchange Rate']['5. Exchange Rate']) 
+                : null;
+        } catch (\Exception $e) {
+            Log::error("Error getting forex price for {$symbol}", ['error' => $e->getMessage()]);
+            return null;
+        }
+    }
+
+    /**
+     * Get stock price from Alpha Vantage
+     */
+    private function getStockPrice(string $symbol): ?float
+    {
+        try {
+            if (empty($this->alphaVantageKey)) {
+                Log::warning('Alpha Vantage API key not configured');
+                return null;
+            }
+
+            $response = Http::timeout(10)->get('https://www.alphavantage.co/query', [
+                'function' => 'GLOBAL_QUOTE',
+                'symbol' => $symbol,
+                'apikey' => $this->alphaVantageKey,
+            ]);
+
+            if (!$response->successful()) {
+                return null;
+            }
+
+            $data = $response->json();
+            return isset($data['Global Quote']['05. price']) 
+                ? floatval($data['Global Quote']['05. price']) 
+                : null;
+        } catch (\Exception $e) {
+            Log::error("Error getting stock price for {$symbol}", ['error' => $e->getMessage()]);
+            return null;
+        }
+    }
+
+    /**
      * Get crypto market data from multiple sources
      */
     public function getCryptoData(): array
