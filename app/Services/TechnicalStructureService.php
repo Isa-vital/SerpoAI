@@ -539,45 +539,84 @@ class TechnicalStructureService
     public function monitorMACross(string $symbol): array
     {
         $marketType = $this->multiMarket->detectMarketType($symbol);
-        $cacheKey = "ma_cross_{$symbol}";
+        $cacheKey = "ma_cross_v3_{$symbol}";
 
-        return Cache::remember($cacheKey, 300, function () use ($symbol, $marketType) {
+        return Cache::remember($cacheKey, 60, function () use ($symbol, $marketType) {
             try {
+                // Normalize symbol
+                $symbol = $this->normalizeSymbol($symbol, $marketType);
+                
                 $klines = $this->getKlineData($symbol, $marketType);
 
                 if (isset($klines['error'])) {
                     return $klines;
                 }
 
-                $crosses = [];
+                $currentPrice = $this->getCurrentPrice($symbol, $marketType);
+                if ($currentPrice <= 0) {
+                    return ['error' => "Unable to fetch price for {$symbol}"];
+                }
 
-                foreach (['1h', '4h', '1d'] as $tf) {
-                    if (isset($klines[$tf])) {
-                        // Check 20/50 cross
-                        $cross2050 = $this->detectMACross($klines[$tf], 20, 50);
+                $crosses = [];
+                $recentCrosses = [];
+                $allTimeframes = ['15m', '30m', '1h', '4h', '1d', '1w'];
+
+                foreach ($allTimeframes as $tf) {
+                    if (isset($klines[$tf]) && !empty($klines[$tf])) {
+                        // Calculate MAs
+                        $ma20 = $this->calculateMA($klines[$tf], 20);
+                        $ma50 = $this->calculateMA($klines[$tf], 50);
+                        $ma200 = $this->calculateMA($klines[$tf], 200);
+                        
+                        // Check 20/50 cross with detailed info
+                        $cross2050 = $this->detectMACrossDetailed($klines[$tf], 20, 50, $tf, '20/50');
+                        $cross2050['ma20_value'] = $ma20;
+                        $cross2050['ma50_value'] = $ma50;
 
                         // Check 50/200 cross (Golden/Death Cross)
-                        $cross50200 = $this->detectMACross($klines[$tf], 50, 200);
+                        $cross50200 = $this->detectMACrossDetailed($klines[$tf], 50, 200, $tf, '50/200');
+                        $cross50200['ma50_value'] = $ma50;
+                        $cross50200['ma200_value'] = $ma200;
 
                         $crosses[$tf] = [
                             'ma20_50' => $cross2050,
                             'ma50_200' => $cross50200,
                         ];
+                        
+                        // Collect recent crosses
+                        if ($cross2050['cross_found']) {
+                            $recentCrosses[] = $cross2050['cross_info'];
+                        }
+                        if ($cross50200['cross_found']) {
+                            $recentCrosses[] = $cross50200['cross_info'];
+                        }
                     }
                 }
 
-                $currentPrice = $this->getCurrentPrice($symbol, $marketType);
+                $source = match($marketType) {
+                    'crypto' => 'Binance',
+                    'forex' => 'ExchangeRate-API',
+                    'stock' => 'Alpha Vantage',
+                    default => 'Unknown'
+                };
 
                 return [
                     'symbol' => $symbol,
+                    'market_type' => $marketType,
                     'current_price' => $currentPrice,
                     'crosses' => $crosses,
-                    'recent_crosses' => $this->getRecentCrosses($crosses),
-                    'trend_confirmation' => $this->getTrendConfirmation($crosses),
+                    'recent_crosses' => $recentCrosses,
+                    'trend_summary' => $this->getDeterministicTrendSummary($crosses),
+                    'source' => $source,
+                    'updated_at' => gmdate('Y-m-d H:i') . ' UTC',
                 ];
             } catch (\Exception $e) {
-                Log::error('MA Cross monitor error', ['symbol' => $symbol, 'error' => $e->getMessage()]);
-                return ['error' => "Unable to monitor MA crosses for {$symbol}"];
+                Log::error('MA Cross monitor error', [
+                    'symbol' => $symbol,
+                    'error' => $e->getMessage(),
+                    'trace' => $e->getTraceAsString()
+                ]);
+                return ['error' => "Unable to monitor MA crosses for {$symbol}: " . $e->getMessage()];
             }
         });
     }
@@ -1535,41 +1574,119 @@ class TechnicalStructureService
         return $this->getMultiMarketKlines($symbol, $timeframe, $marketType, $limit);
     }
 
-    private function detectMACross(array $klines, int $fastPeriod, int $slowPeriod): array
+    /**
+     * Detect MA cross with detailed info including gap%, timestamp, and near-cross detection
+     */
+    private function detectMACrossDetailed(array $klines, int $fastPeriod, int $slowPeriod, string $timeframe, string $maPair): array
     {
         if (count($klines) < $slowPeriod + 5) {
             return [
                 'status' => 'Insufficient data',
                 'ma_fast' => null,
                 'ma_slow' => null,
+                'gap_pct' => null,
+                'near_cross' => false,
                 'cross_type' => null,
                 'is_bullish' => null,
+                'cross_found' => false,
+                'cross_info' => null,
                 'periods' => "{$fastPeriod}/{$slowPeriod}",
             ];
         }
 
-        $maFast = $this->binance->calculateMA($klines, $fastPeriod);
-        $maSlow = $this->binance->calculateMA($klines, $slowPeriod);
+        $maFast = $this->calculateMA($klines, $fastPeriod);
+        $maSlow = $this->calculateMA($klines, $slowPeriod);
 
-        // Get previous values
-        $prevKlines = array_slice($klines, 0, -1);
-        $prevMaFast = $this->binance->calculateMA($prevKlines, $fastPeriod);
-        $prevMaSlow = $this->binance->calculateMA($prevKlines, $slowPeriod);
-
-        $crossType = null;
-        if ($prevMaFast < $prevMaSlow && $maFast > $maSlow) {
-            $crossType = 'Golden Cross';
-        } elseif ($prevMaFast > $prevMaSlow && $maFast < $maSlow) {
-            $crossType = 'Death Cross';
+        // Calculate gap%
+        $gapPct = null;
+        $nearCross = false;
+        if ($maFast !== null && $maSlow !== null && $maSlow != 0) {
+            $gapPct = (($maFast - $maSlow) / $maSlow) * 100;
+            $nearCross = abs($gapPct) < 0.2; // Flag if within 0.2%
         }
 
-        return [
+        // Check last 5 candles for cross
+        $crossFound = false;
+        $crossType = null;
+        $crossAge = null;
+        $crossTimestamp = null;
+        
+        for ($i = 1; $i <= min(5, count($klines) - $slowPeriod); $i++) {
+            $prevKlines = array_slice($klines, 0, -$i);
+            $prevMaFast = $this->calculateMA($prevKlines, $fastPeriod);
+            $prevMaSlow = $this->calculateMA($prevKlines, $slowPeriod);
+
+            if ($prevMaFast !== null && $prevMaSlow !== null) {
+                if ($prevMaFast < $prevMaSlow && $maFast > $maSlow) {
+                    // Bullish cross detected
+                    $crossFound = true;
+                    $crossAge = $i;
+                    $crossTimestamp = isset($klines[count($klines) - $i][0]) ? $klines[count($klines) - $i][0] : null;
+                    
+                    // Determine cross name based on MA pair
+                    if ($maPair === '50/200') {
+                        $crossType = 'Golden Cross (50/200)';
+                    } else {
+                        $crossType = "Bullish cross ({$maPair})";
+                    }
+                    break;
+                } elseif ($prevMaFast > $prevMaSlow && $maFast < $maSlow) {
+                    // Bearish cross detected
+                    $crossFound = true;
+                    $crossAge = $i;
+                    $crossTimestamp = isset($klines[count($klines) - $i][0]) ? $klines[count($klines) - $i][0] : null;
+                    
+                    // Determine cross name based on MA pair
+                    if ($maPair === '50/200') {
+                        $crossType = 'Death Cross (50/200)';
+                    } else {
+                        $crossType = "Bearish cross ({$maPair})";
+                    }
+                    break;
+                }
+            }
+        }
+
+        $result = [
             'ma_fast' => $maFast,
             'ma_slow' => $maSlow,
+            'gap_pct' => $gapPct,
+            'near_cross' => $nearCross,
             'cross_type' => $crossType,
             'is_bullish' => $maFast > $maSlow,
+            'cross_found' => $crossFound,
             'periods' => "{$fastPeriod}/{$slowPeriod}",
         ];
+
+        // Add cross info if found
+        if ($crossFound) {
+            $result['cross_info'] = [
+                'timeframe' => strtoupper($timeframe),
+                'type' => $crossType,
+                'ma_pair' => $maPair,
+                'age_candles' => $crossAge,
+                'timestamp' => $crossTimestamp ? gmdate('Y-m-d H:i', $crossTimestamp / 1000) . ' UTC' : 'Unknown',
+            ];
+        } else {
+            $result['cross_info'] = null;
+        }
+
+        return $result;
+    }
+
+    /**
+     * Calculate Simple Moving Average for a given period
+     */
+    private function calculateMA(array $klines, int $period): ?float
+    {
+        if (count($klines) < $period) {
+            return null;
+        }
+
+        $closes = array_map(fn($k) => (float)$k[4], $klines);
+        $slice = array_slice($closes, -$period);
+        
+        return array_sum($slice) / count($slice);
     }
 
     private function getRecentCrosses(array $crosses): array
@@ -1594,19 +1711,34 @@ class TechnicalStructureService
         return $recent;
     }
 
-    private function getTrendConfirmation(array $crosses): string
+    /**
+     * Generate deterministic trend summary by time horizon
+     */
+    private function getDeterministicTrendSummary(array $crosses): string
     {
-        $bullishCount = 0;
-        $bearishCount = 0;
+        $shortTerm = ['15m', '30m'];
+        $midTerm = ['1h', '4h'];
+        $longTerm = ['1d', '1w'];
 
-        foreach ($crosses as $tfCrosses) {
-            if (isset($tfCrosses['ma50_200']['is_bullish']) && $tfCrosses['ma50_200']['is_bullish'] !== null) {
-                $tfCrosses['ma50_200']['is_bullish'] ? $bullishCount++ : $bearishCount++;
+        $evaluateTrend = function($timeframes) use ($crosses) {
+            $bullish = 0;
+            $bearish = 0;
+            
+            foreach ($timeframes as $tf) {
+                if (isset($crosses[$tf]['ma50_200']['is_bullish'])) {
+                    $crosses[$tf]['ma50_200']['is_bullish'] ? $bullish++ : $bearish++;
+                }
             }
-        }
+            
+            if ($bullish > $bearish) return 'bullish';
+            if ($bearish > $bullish) return 'bearish';
+            return 'mixed';
+        };
 
-        if ($bullishCount > $bearishCount) return 'Bullish trend confirmed';
-        if ($bearishCount > $bullishCount) return 'Bearish trend confirmed';
-        return 'Mixed signals';
+        $short = $evaluateTrend($shortTerm);
+        $mid = $evaluateTrend($midTerm);
+        $long = $evaluateTrend($longTerm);
+
+        return "Short-term {$short}, swing {$mid}, macro {$long}";
     }
 }

@@ -2632,37 +2632,108 @@ class CommandHandler
             return "❌ " . $analysis['error'];
         }
 
-        $message = "📈 *MOVING AVERAGE CROSS MONITOR*\n";
-        $message .= "━━━━━━━━━━━━━━━━━━━━\n\n";
-        $message .= "Symbol: `{$analysis['symbol']}`\n";
-        $message .= "Price: \${$analysis['current_price']}\n\n";
+        $marketType = $analysis['market_type'] ?? 'crypto';
+        $marketIcon = match($marketType) {
+            'crypto' => '💎',
+            'forex' => '💱',
+            'stock' => '📈',
+            default => '📊'
+        };
 
+        $message = "📈 *MOVING AVERAGE CROSS MONITOR*\n";
+        $message .= "━━━━━━━━━━━━━━━━━━━━\n";
+        $message .= "Symbol: `{$analysis['symbol']}` | Market: " . ucfirst($marketType) . " {$marketIcon}\n";
+        $message .= "Source: {$analysis['source']} | Updated: {$analysis['updated_at']}\n";
+        $message .= "Price: " . $this->formatPriceAdaptive($analysis['current_price'], $marketType) . " (latest)\n\n";
+
+        // Recent crosses with detailed info
         if (!empty($analysis['recent_crosses'])) {
-            $message .= "🔔 *Recent Crosses*\n";
+            $message .= "🔔 *RECENT CROSSES* (within last 5 candles per TF)\n";
             foreach ($analysis['recent_crosses'] as $cross) {
-                $emoji = $cross['type'] === 'Golden Cross' ? '🟡' : '⚫';
-                $message .= "{$emoji} {$cross['type']} ({$cross['ma']}) - {$cross['timeframe']}\n";
+                $emoji = str_contains($cross['type'], 'Golden') ? '🟡' : '⚫';
+                $message .= "{$emoji} {$cross['type']}\n";
+                $message .= "   TF: {$cross['timeframe']} | Age: {$cross['age_candles']} candle(s)\n";
+                $message .= "   Time: {$cross['timestamp']}\n";
             }
             $message .= "\n";
         }
 
-        $message .= "📊 *Current Status*\n\n";
-        foreach ($analysis['crosses'] as $tf => $crosses) {
-            $message .= "*{$tf}*\n";
+        $message .= "📊 *MA STATUS BY TIMEFRAME*\n";
+        $message .= "━━━━━━━━━━━━━━━━━━━━\n\n";
 
-            // 20/50 MA
-            $ma2050 = $crosses['ma20_50'];
-            $status2050 = $ma2050['is_bullish'] ? '🟢 Bullish' : '🔴 Bearish';
-            $message .= "  MA20/50: {$status2050}\n";
+        // Group timeframes
+        $tfGroups = [
+            'Scalping' => ['15m' => '15 Min'],
+            'Intraday' => ['30m' => '30 Min', '1h' => '1 Hour'],
+            'Swing' => ['4h' => '4 Hour'],
+            'Position' => ['1d' => 'Daily', '1w' => 'Weekly']
+        ];
 
-            // 50/200 MA
-            $ma50200 = $crosses['ma50_200'];
-            $status50200 = $ma50200['is_bullish'] ? '🟢 Bullish' : '🔴 Bearish';
-            $message .= "  MA50/200: {$status50200}\n\n";
+        foreach ($tfGroups as $groupName => $timeframes) {
+            $hasData = false;
+            foreach ($timeframes as $tf => $label) {
+                if (isset($analysis['crosses'][$tf])) {
+                    $hasData = true;
+                    break;
+                }
+            }
+            
+            if (!$hasData) continue;
+            
+            $message .= "*{$groupName}:*\n";
+            
+            foreach ($timeframes as $tf => $label) {
+                if (!isset($analysis['crosses'][$tf])) continue;
+                
+                $crosses = $analysis['crosses'][$tf];
+                $message .= "`{$label}`\n";
+
+                // MA20/50
+                $ma2050 = $crosses['ma20_50'];
+                $status2050 = $ma2050['is_bullish'] ? '🟢 Bullish' : '🔴 Bearish';
+                $gapPct2050 = isset($ma2050['gap_pct']) ? sprintf("%.2f%%", $ma2050['gap_pct']) : 'N/A';
+                $nearCross2050 = $ma2050['near_cross'] ?? false ? ' ⚠️ Near cross' : '';
+                
+                $message .= "  MA20/50: {$status2050} (gap: {$gapPct2050}){$nearCross2050}";
+                if ($ma2050['cross_found'] ?? false) {
+                    $crossIcon = str_contains($ma2050['cross_type'], 'Golden') || str_contains($ma2050['cross_type'], 'Bullish') ? '🟡' : '⚫';
+                    $message .= " {$crossIcon}";
+                }
+                if (isset($ma2050['ma20_value']) && isset($ma2050['ma50_value'])) {
+                    $ma20Val = $this->formatPriceAdaptive($ma2050['ma20_value'], $marketType);
+                    $ma50Val = $this->formatPriceAdaptive($ma2050['ma50_value'], $marketType);
+                    $message .= "\n     {$ma20Val} / {$ma50Val}";
+                }
+                $message .= "\n";
+
+                // MA50/200
+                $ma50200 = $crosses['ma50_200'];
+                $status50200 = $ma50200['is_bullish'] ? '🟢 Bullish' : '🔴 Bearish';
+                $gapPct50200 = isset($ma50200['gap_pct']) ? sprintf("%.2f%%", $ma50200['gap_pct']) : 'N/A';
+                $nearCross50200 = $ma50200['near_cross'] ?? false ? ' ⚠️ Near cross' : '';
+                
+                $message .= "  MA50/200: {$status50200} (gap: {$gapPct50200}){$nearCross50200}";
+                if ($ma50200['cross_found'] ?? false) {
+                    $crossIcon = str_contains($ma50200['cross_type'], 'Golden') ? '🟡' : '⚫';
+                    $message .= " {$crossIcon}";
+                }
+                if (isset($ma50200['ma50_value']) && isset($ma50200['ma200_value'])) {
+                    $ma50Val = $this->formatPriceAdaptive($ma50200['ma50_value'], $marketType);
+                    $ma200Val = $this->formatPriceAdaptive($ma50200['ma200_value'], $marketType);
+                    $message .= "\n     {$ma50Val} / {$ma200Val}";
+                }
+                $message .= "\n\n";
+            }
         }
 
         $message .= "━━━━━━━━━━━━━━━━━━━━\n";
-        $message .= "Trend: *{$analysis['trend_confirmation']}*";
+        $message .= "*Trend Summary:* " . ucfirst($analysis['trend_summary']) . "\n\n";
+        $message .= "_Legend:_\n";
+        $message .= "🟢 Fast MA > Slow MA (Bullish)\n";
+        $message .= "🔴 Fast MA < Slow MA (Bearish)\n";
+        $message .= "🟡 Bullish cross | ⚫ Bearish cross\n";
+        $message .= "⚠️ Near cross (gap < 0.2%)\n";
+        $message .= "Golden/Death Cross: 50/200 MA crossover";
 
         return $message;
     }
