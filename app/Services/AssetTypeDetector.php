@@ -36,7 +36,18 @@ class AssetTypeDetector
             ];
         }
 
-        // Check if it's a valid EVM address format
+        // For Solana and TON, skip EVM validation and assume valid contract
+        if (in_array($chain, ['solana', 'sol', 'ton'])) {
+            return [
+                'type' => $chain === 'ton' ? 'TON Jetton' : 'Solana Token',
+                'is_contract' => true,
+                'is_native' => false,
+                'standards' => [$chain === 'ton' ? 'TEP-74' : 'SPL Token'],
+                'confidence' => 'High',
+            ];
+        }
+
+        // Check if it's a valid EVM address format (for Ethereum, BSC, Base, etc.)
         if (!$this->isValidEvmAddress($address)) {
             return [
                 'type' => 'Unknown',

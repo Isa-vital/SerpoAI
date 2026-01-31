@@ -120,7 +120,7 @@ class CommandHandler
             // Existing commands
             '/price' => $this->handlePrice($chatId, $params),
             '/chart' => $this->handleChart($chatId, $params),
-            '/signals' => $this->handleSignals($chatId),
+            '/signals' => $this->handleSignals($chatId, $params),
             '/sentiment' => $this->handleSentiment($chatId, $params),
 
             // NEW: AI-Powered Features
@@ -246,104 +246,71 @@ class CommandHandler
         $message = "🤖 *SerpoAI Trading Assistant*\n";
         $message .= "━━━━━━━━━━━━━━━━━━━━\n\n";
 
-        $message .= "*🌍 MULTI-MARKET ANALYSIS*\n";
-        $message .= "/scan - Deep scan across ALL markets\n";
-        $message .= "  • Crypto: 2000+ pairs (all quote currencies)\n";
-        $message .= "  • Stocks: All NYSE, NASDAQ symbols\n";
-        $message .= "  • Forex: 150+ pairs + Gold/Silver\n\n";
+        $message .= "*� TRADING SIGNALS (NEW)*\n";
+        $message .= "/signals [symbol] - Professional trading signals\n";
+        $message .= "  • Crypto: `BTCUSDT`, `ETHUSDT`, `BNBUSDT`\n";
+        $message .= "  • Stocks: `AAPL`, `TSLA`, `MSFT`\n";
+        $message .= "  • Forex: `EURUSD`, `GBPUSD`, `XAUUSD`\n";
+        $message .= "  • Token: `SERPO`\n";
+        $message .= "Features: RSI, MACD, EMAs, confidence scoring (1-5)\n";
+        $message .= "Includes: Reasoning, flip conditions, market metadata\n\n";
 
-        $message .= "/analyze [symbol] - Universal Analytics\n";
-        $message .= "  • Crypto: `BTCUSDT`, `ETHBTC`, `BNBBUSD`\n";
-        $message .= "  • Stocks: `AAPL`, `TSLA`, `NVDA`\n";
-        $message .= "  • Forex: `EURUSD`, `XAUUSD` (Gold)\n\n";
+        $message .= "*🔍 TOKEN VERIFICATION*\n";
+        $message .= "/verify [address] - Professional token analysis\n";
+        $message .= "  • Transparent risk scoring (7 weighted factors)\n";
+        $message .= "  • RAW METRICS: holder count, supply, verification\n";
+        $message .= "  • Ownership detection (renounced/active/unknown)\n";
+        $message .= "  • Profile analysis & differentiation\n";
+        $message .= "  • Works without API keys (public endpoints)\n\n";
 
+        $message .= "*📊 Market Intelligence*\n";
+        $message .= "/price [symbol] - Current price (all markets)\n";
+        $message .= "/chart [symbol] [tf] - TradingView charts\n";
+        $message .= "/analyze [symbol] - AI-powered analysis\n";
+        $message .= "/sentiment [symbol] - Market sentiment\n";
         $message .= "/radar - Top movers & market radar\n\n";
 
-        $message .= "*📊 Technical Structure & Momentum*\n";
-        $message .= "/sr [symbol] - Smart S/R levels\n";
-        $message .= "/rsi [symbol] - Multi-timeframe RSI heatmap\n";
-        $message .= "/divergence [symbol] - RSI divergence scanner\n";
-        $message .= "/cross [symbol] - MA cross monitor\n\n";
+        $message .= "*📈 Technical Analysis*\n";
+        $message .= "/sr [symbol] - Support/Resistance levels\n";
+        $message .= "/rsi [symbol] - Multi-timeframe RSI\n";
+        $message .= "/oi [symbol] - Open interest (crypto)\n\n";
 
-        $message .= "*� Money Flow & Derivatives*\n";
-        $message .= "/flow [symbol] - Money flow monitor\n";
-        $message .= "/oi [symbol] - Open interest pulse (crypto)\n";
-        $message .= "/rates [symbol] - Funding rates watch (crypto)\n\n";
-
-        $message .= "*�📈 Market Intelligence*\n";
-        $message .= "/price [symbol] - Current price\n";
-        $message .= "/chart [symbol] [timeframe] - TradingView charts (all markets)\n";
-        $message .= "/signals - Trading signals\n";
-        $message .= "/sentiment [symbol] - Market sentiment\n\n";
-
-        $message .= "*🚀 ELITE FEATURES*\n";
-        $message .= "🔥 `/trader [symbol]` - AI Trading Assistant\n";
-        $message .= "  • Works with Crypto, Stocks & Forex\n";
-        $message .= "  • Entry/exit recommendations\n";
-        $message .= "  • Real-time technical analysis\n";
-        $message .= "🔥 `/search` - Natural language market search\n";
-        $message .= "🔥 `/backtest` - Strategy backtesting (text/image)\n";
-        $message .= "🔥 `/verify` - Professional token verification\n";
-        $message .= "🔥 `/degen101` - Learn to trade like a pro\n\n";
-
-        $message .= "*🔔 Smart Alerts*\n";
-        $message .= "/alerts - Manage subscriptions\n";
-        $message .= "/setalert [price] - Set price alert\n";
+        $message .= "*� Alerts & Notifications*\n";
+        $message .= "/alerts - Manage price alerts\n";
+        $message .= "/setalert [symbol] [price] - Set alert\n";
         $message .= "/myalerts - View active alerts\n\n";
 
-        $message .= "*🎭 AI-Powered Features*\n";
-        $message .= "/aisentiment [coin] - Real social sentiment\n";
-        $message .= "/predict [coin] - AI price predictions\n";
-        $message .= "/recommend - Personalized trading advice\n";
-        $message .= "/query [question] - Ask me anything\n\n";
+        $message .= "*🎭 AI Features*\n";
+        $message .= "/predict [symbol] - AI price predictions\n";
+        $message .= "/aisentiment [symbol] - Social sentiment\n";
+        $message .= "/ask [question] - Ask trading questions\n\n";
 
-        $message .= "*📊 Analytics & Reports*\n";
-        $message .= "/daily - Daily market summary\n";
-        $message .= "/weekly - Weekly performance report\n";
-        $message .= "/trends [days] - Holder & volume trends\n";
-        $message .= "/whales - Whale activity tracker\n\n";
+        $message .= "*📰 News & Information*\n";
+        $message .= "/news - Latest crypto news\n";
+        $message .= "/whales - Whale transaction tracker\n\n";
 
-        $message .= "*📰 News & Events*\n";
-        $message .= "/news - Latest crypto news & listings\n";
-        $message .= "/calendar - Economic events calendar\n\n";
-
-        $message .= "*💰 Portfolio Management*\n";
-        $message .= "/portfolio - View your holdings\n";
-        $message .= "/addwallet [address] - Track wallet\n";
-        $message .= "/removewallet [address] - Stop tracking\n\n";
-
-        $message .= "*🤖 AI & Learning*\n";
-        $message .= "/explain [term] - Explain trading concepts\n";
-        $message .= "/ask [question] - Ask trading questions\n";
-        $message .= "/learn [topic] - Learning center\n";
-        $message .= "/glossary [term] - Crypto dictionary\n\n";
-
-        $message .= "*👤 Account & Settings*\n";
+        $message .= "*👤 Account*\n";
         $message .= "/profile - Your trading profile\n";
-        $message .= "/premium - Upgrade to premium\n";
-        $message .= "/language - Change bot language\n";
         $message .= "/settings - Bot settings\n";
         $message .= "/about - About SerpoAI\n\n";
 
         $message .= "━━━━━━━━━━━━━━━━━━━━\n";
-        $message .= "💡 *Quick Examples:*\n";
-        $message .= "• `/scan` - Full market overview\n";
-        $message .= "• `/trader BTCUSDT` - AI trade analysis\n";
-        $message .= "• `/trader AAPL` - Stock trade setup\n";
-        $message .= "• `/trader EURUSD` - Forex signals\n";
-        $message .= "• `/sr BTCUSDT` - S/R analysis\n";
-        $message .= "• `/rsi ETHUSDT` - RSI heatmap\n";
-        $message .= "• `/analyze AAPL` - Stock analysis\n";
-        $message .= "• `/predict SERPO` - AI prediction\n";
-        $message .= "• `/divergence BTC` - Find divergences\n";
-        $message .= "• `/flow BTCUSDT` - Money flow\n";
-        $message .= "• `/rates ETHUSDT` - Funding rates\n\n";
+        $message .= "💡 *Quick Start Examples:*\n";
+        $message .= "• `/signals BTCUSDT` - Bitcoin trading signals\n";
+        $message .= "• `/signals AAPL` - Apple stock signals\n";
+        $message .= "• `/signals EURUSD` - EUR/USD forex signals\n";
+        $message .= "• `/signals SERPO` - SERPO token signals\n";
+        $message .= "• `/verify 0xAddress` - Verify any token\n";
+        $message .= "• `/chart BTCUSDT 1H` - Bitcoin hourly chart\n";
+        $message .= "• `/price SERPO` - Current SERPO price\n";
+        $message .= "• `/analyze ETHUSDT` - AI Ethereum analysis\n\n";
 
-        $message .= "🌟 *Premium Features:*\n";
-        $message .= "• Advanced AI predictions\n";
-        $message .= "• Real-time whale alerts\n";
-        $message .= "• Custom alert portfolios\n";
-        $message .= "• Priority support\n\n";
+        $message .= "✨ *Key Features:*\n";
+        $message .= "✅ Multi-market support (Crypto/Stocks/Forex)\n";
+        $message .= "✅ Professional confidence scoring (1-5)\n";
+        $message .= "✅ Transparent risk analysis with raw data\n";
+        $message .= "✅ Real-time data from Binance, Yahoo Finance\n";
+        $message .= "✅ Free to use, no API keys required\n\n";
 
         $message .= "Type any command to get started! 🚀";
 
@@ -573,24 +540,74 @@ class CommandHandler
     /**
      * Handle /signals command
      */
-    private function handleSignals(int $chatId)
+    private function handleSignals(int $chatId, array $params)
     {
-        // Show typing indicator
-        $this->telegram->sendChatAction($chatId, 'typing');
-        $this->telegram->sendMessage($chatId, "🔍 Analyzing SERPO...");
+        // Show usage if no parameters provided
+        if (empty($params)) {
+            $message = "🎯 *Trading Signals Generator*\n\n";
+            $message .= "Get AI-powered technical analysis with buy/sell signals for any trading pair.\n\n";
+            $message .= "*Usage:*\n";
+            $message .= "`/signals BTCUSDT`\n";
+            $message .= "`/signals ETHUSDT`\n";
+            $message .= "`/signals SERPO`\n";
+            $message .= "`/signals AAPL` (stocks)\n";
+            $message .= "`/signals EURUSD` (forex)\n\n";
+            $message .= "*Analysis Includes:*\n";
+            $message .= "📊 RSI (Relative Strength Index)\n";
+            $message .= "📈 MACD (Moving Average Convergence Divergence)\n";
+            $message .= "📉 EMA Trends (12/26 periods)\n";
+            $message .= "🎯 Overall Buy/Sell recommendation\n";
+            $message .= "💯 Confidence score (1-5)\n\n";
+            $message .= "*Supported Markets:*\n";
+            $message .= "💎 Crypto (all major pairs)\n";
+            $message .= "📈 Stocks (US markets)\n";
+            $message .= "💱 Forex (major pairs)\n\n";
+            $message .= "⚠️ _Not financial advice. Always DYOR._";
 
-        // Generate trading signals
-        $analysis = $this->marketData->generateTradingSignal('SERPO');
+            $keyboard = [
+                'inline_keyboard' => [
+                    [
+                        ['text' => '📊 BTC Signals', 'callback_data' => '/signals BTCUSDT'],
+                        ['text' => '💎 ETH Signals', 'callback_data' => '/signals ETHUSDT'],
+                    ],
+                    [
+                        ['text' => '🐍 SERPO Signals', 'callback_data' => '/signals SERPO'],
+                        ['text' => '📈 SPY Signals', 'callback_data' => '/signals SPY'],
+                    ],
+                    [
+                        ['text' => '📚 Learn More', 'callback_data' => '/help signals'],
+                    ],
+                ]
+            ];
 
-        if (empty($analysis['signals'])) {
-            $this->telegram->sendMessage($chatId, "⏳ Not enough data for analysis. Please try again later.");
+            $this->telegram->sendMessage($chatId, $message, $keyboard);
             return;
         }
 
-        $message = "🎯 *Trading Signals - SERPO*\n\n";
+        $symbol = strtoupper(implode('', $params));
 
-        if ($analysis['price']) {
-            $message .= "💰 Current Price: $" . number_format($analysis['price'], 8) . "\n\n";
+        // Show typing indicator
+        $this->telegram->sendChatAction($chatId, 'typing');
+        $this->telegram->sendMessage($chatId, "🔍 Analyzing {$symbol}...");
+
+        // Generate trading signals
+        $analysis = $this->marketData->generateTradingSignal($symbol);
+
+        if (empty($analysis['signals'])) {
+            // Check if there's a specific error message
+            $errorMsg = $analysis['error'] ?? "⏳ Not enough data for {$symbol} analysis. Please try again later or check the symbol.";
+            $this->telegram->sendMessage($chatId, $errorMsg);
+            return;
+        }
+
+        // Format header with metadata
+        $message = "🎯 *Trading Signals - {$symbol}*\n";
+        $message .= "📊 Market: {$analysis['market_type']} | TF: {$analysis['timeframe']}\n";
+        $message .= "🔄 Source: {$analysis['source']}\n";
+        $message .= "🕐 Updated: " . date('H:i:s', strtotime($analysis['updated_at'])) . " UTC\n\n";
+
+        if ($analysis['formatted_price']) {
+            $message .= "💰 Current Price: {$analysis['formatted_price']}\n\n";
         }
 
         $message .= "*Technical Indicators:*\n";
@@ -600,34 +617,51 @@ class CommandHandler
 
         $message .= "\n*Overall Signal:*\n";
         $message .= $analysis['emoji'] . " *" . $analysis['recommendation'] . "*\n";
-        $message .= "_Confidence Score: " . $analysis['score'] . "/5_\n\n";
-
-        // Add detailed metrics
-        if ($analysis['rsi'] !== null) {
-            $message .= "\n📊 *Detailed Metrics:*\n";
-            $message .= "RSI(14): " . $analysis['rsi'] . "\n";
+        $message .= "_Confidence: " . $analysis['confidence'] . "/5_\n";
+        
+        // Add reasoning
+        if (!empty($analysis['reasons'])) {
+            $message .= "\n*Reasoning:* " . implode(', ', $analysis['reasons']) . "\n";
+        }
+        
+        // Add flip conditions
+        if (!empty($analysis['flip_conditions'])) {
+            $message .= "\n*Flip if:* " . implode(' OR ', $analysis['flip_conditions']) . "\n";
         }
 
-        if ($analysis['macd'] !== null) {
-            $message .= "MACD: " . number_format($analysis['macd']['macd'], 8) . "\n";
-            $message .= "Signal: " . number_format($analysis['macd']['signal'], 8) . "\n";
-            $message .= "EMA(12): $" . number_format($analysis['macd']['ema12'], 8) . "\n";
-            $message .= "EMA(26): $" . number_format($analysis['macd']['ema26'], 8) . "\n";
+        // Add detailed metrics only if data quality is good
+        if ($analysis['data_quality'] === 'full' && !($analysis['is_data_flat'] ?? false)) {
+            if ($analysis['rsi'] !== null) {
+                $message .= "\n📊 *Detailed Metrics:*\n";
+                $message .= "RSI(14): " . number_format($analysis['rsi'], 2) . "\n";
+            }
+
+            if ($analysis['macd'] !== null) {
+                $message .= "MACD: " . number_format($analysis['macd']['macd'], 8) . "\n";
+                $message .= "Signal: " . number_format($analysis['macd']['signal'], 8) . "\n";
+                $message .= "EMA(12): " . number_format($analysis['macd']['ema12'], 8) . "\n";
+                $message .= "EMA(26): " . number_format($analysis['macd']['ema26'], 8) . "\n";
+            }
+        } elseif ($analysis['data_quality'] === 'limited') {
+            $message .= "\n⚠️ *Limited Data Mode*\n";
+            $message .= "_Historical price data is flat or insufficient. Analysis based on current price only._\n";
         }
 
         $message .= "\n⚠️ _This is not financial advice. Always DYOR._";
 
         $keyboard = [
-            'inline_keyboard' => $this->getContextualKeyboard('signals')
+            'inline_keyboard' => [
+                [
+                    ['text' => '📊 Chart', 'callback_data' => "/chart {$symbol} 1H"],
+                    ['text' => '🔄 Refresh', 'callback_data' => "/signals {$symbol}"],
+                ],
+                [
+                    ['text' => '📈 Analyze', 'callback_data' => "/analyze {$symbol}"],
+                ],
+            ]
         ];
 
         $this->telegram->sendMessage($chatId, $message, $keyboard);
-
-        // Send chart with signals
-        $chartUrl = $this->generatePriceChart('SERPO', '24h');
-        if ($chartUrl) {
-            $this->telegram->sendPhoto($chatId, $chartUrl, "📈 SERPO 24h Chart");
-        }
     }
 
     /**
@@ -903,40 +937,45 @@ class CommandHandler
      */
     private function handleAbout(int $chatId)
     {
-        $message = "🤖 *About SerpoAI v1.1.0*\n\n";
-        $message .= "Your AI-powered trading companion for the SERPO ecosystem. Real-time insights, advanced analytics, and professional trading tools.\n\n";
+        $message = "🤖 *About SerpoAI v1.2.1*\n\n";
+        $message .= "Professional multi-market trading assistant powered by AI. Trusted analysis across crypto, stocks, and forex with transparent data and professional-grade insights.\n\n";
 
-        $message .= "📊 *Core Features:*\n";
-        $message .= "• Live price tracking & charts\n";
-        $message .= "• Real-time candlestick charts (DexScreener)\n";
-        $message .= "• Technical analysis (RSI, MACD, Bollinger Bands)\n";
-        $message .= "• Custom price alerts & notifications\n";
-        $message .= "• Portfolio tracking & analytics\n\n";
+        $message .= "✨ *What's New in v1.2.1:*\n";
+        $message .= "🎯 Multi-Market Trading Signals\n";
+        $message .= "  • Crypto (Binance), Stocks & Forex (Yahoo Finance)\n";
+        $message .= "  • Confidence scoring: 1-5 (never negative)\n";
+        $message .= "  • Signal reasoning & flip conditions\n";
+        $message .= "  • Market metadata (source, timeframe, updated)\n\n";
+        
+        $message .= "🔍 Enhanced Token Verification\n";
+        $message .= "  • 7 weighted risk factors with breakdown\n";
+        $message .= "  • RAW METRICS section (holder count, supply)\n";
+        $message .= "  • Verified ownership detection\n";
+        $message .= "  • Profile analysis for differentiation\n";
+        $message .= "  • Works without API keys\n\n";
 
-        $message .= "🎯 *Advanced Tools:*\n";
-        $message .= "• Market scanner (gainers/losers/volume)\n";
-        $message .= "• Pair analytics & liquidity analysis\n";
-        $message .= "• Sentiment analysis (social + on-chain)\n";
-        $message .= "• Trading signals & recommendations\n";
-        $message .= "• Real-time crypto news feed\n\n";
+        $message .= "📊 *Core Capabilities:*\n";
+        $message .= "• Real-time price tracking (DexScreener, Binance, Yahoo)\n";
+        $message .= "• Technical indicators: RSI, MACD, EMAs\n";
+        $message .= "• Data quality detection & Limited Data Mode\n";
+        $message .= "• TradingView charts for all markets\n";
+        $message .= "• Custom price alerts\n";
+        $message .= "• AI-powered market analysis\n\n";
 
-        $message .= "📚 *Learning Center:*\n";
-        $message .= "• Trading guides & tutorials\n";
-        $message .= "• Crypto glossary (100+ terms)\n";
-        $message .= "• Strategy explanations\n\n";
-
-        $message .= "👤 *User Features:*\n";
-        $message .= "• Personal profile & stats\n";
-        $message .= "• Trading history tracking\n";
-        $message .= "• Customizable notifications\n\n";
+        $message .= "🎯 *Data Sources:*\n";
+        $message .= "• Binance API - Crypto pairs (free, unlimited)\n";
+        $message .= "• Yahoo Finance - Stocks & Forex (free, unlimited)\n";
+        $message .= "• DexScreener - DEX tokens & pairs\n";
+        $message .= "• Blockchain Explorers - Token verification\n\n";
 
         $message .= "🔗 *Quick Links:*\n";
         $message .= "🌐 [Website](https://serpocoin.io)\n";
         $message .= "📱 [Telegram](https://t.me/serpocoinchannel)\n";
-        $message .= "📊 [Live Chart](https://dexscreener.com/ton/EQCPeUzKknneMlA1UbivELxd8lFUA_oaOX9m9PPc4d6lHQyw)\n\n";
+        $message .= "📊 [SERPO Chart](https://dexscreener.com/ton/EQCPeUzKknneMlA1UbivELxd8lFUA_oaOX9m9PPc4d6lHQyw)\n\n";
 
         $message .= "💡 _Type /help to see all commands_\n";
-        $message .= "_Version 1.1.0 - Under Beta Testing_";
+        $message .= "_Version 1.2.1 - January 2026_\n";
+        $message .= "_Made with ❤️ for traders_";
 
         $this->telegram->sendMessage($chatId, $message);
     }

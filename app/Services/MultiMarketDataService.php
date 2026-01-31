@@ -1111,11 +1111,11 @@ class MultiMarketDataService
                     $volume = intval($quote['06. volume']);
                     $prevClose = floatval($quote['08. previous close']);
                     $currentPrice = floatval($quote['05. price']);
-                    
+
                     // Estimate avg volume as 1.2x current for simplicity
                     // In production, use TIME_SERIES_DAILY to get real average
                     $avgVolume = $volume > 0 ? intval($volume * 1.2) : 0;
-                    
+
                     return [
                         'price' => $currentPrice,
                         'change' => floatval($quote['09. change']),

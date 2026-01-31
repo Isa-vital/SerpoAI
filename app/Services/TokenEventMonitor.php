@@ -52,13 +52,13 @@ class TokenEventMonitor
     /**
      * Main monitoring loop - checks for new events
      */
-    public function checkForEvents(): void
+    public function checkForEvents(bool $force = false): void
     {
         try {
-            Log::info('Starting token event check');
+            Log::info('Starting token event check', ['force' => $force]);
 
             // Check for new transactions
-            $this->checkNewTransactions();
+            $this->checkNewTransactions($force);
 
             // Check for price changes
             $this->checkPriceChanges();
@@ -81,10 +81,10 @@ class TokenEventMonitor
     /**
      * Check for new buy/sell transactions
      */
-    private function checkNewTransactions(): void
+    private function checkNewTransactions(bool $force = false): void
     {
         try {
-            Log::info('🔍 Starting transaction check from DexScreener...');
+            Log::info('🔍 Starting transaction check from DexScreener...', ['force' => $force]);
 
             // Get last checked transaction hash
             $lastTxHash = Cache::get('last_checked_tx_hash');
@@ -119,7 +119,7 @@ class TokenEventMonitor
             // Process buys
             if (isset($transactions['h24']['buys'])) {
                 Log::info('Processing buys...');
-                $this->processBuys($transactions, $mainPair);
+                $this->processBuys($transactions, $mainPair, $force);
             }
 
             // Process sells
@@ -852,13 +852,13 @@ class TokenEventMonitor
     /**
      * Process buy transactions from DexScreener data
      */
-    private function processBuys(array $transactions, array $pairData): void
+    private function processBuys(array $transactions, array $pairData, bool $force = false): void
     {
         $buyCount = $transactions['h24']['buys'] ?? 0;
         $volume = floatval($pairData['volume']['h24'] ?? 0);
         $price = floatval($pairData['priceUsd'] ?? 0);
 
-        Log::info('💚 Processing buys', ['count' => $buyCount, 'volume' => $volume]);
+        Log::info('💚 Processing buys', ['count' => $buyCount, 'volume' => $volume, 'force' => $force]);
 
         // Note: Individual whale transactions (20+ TON) are detected and alerted
         // by processJettonTransfer() via TON blockchain monitoring
@@ -868,11 +868,11 @@ class TokenEventMonitor
             $lastBuyAlert = Cache::get('last_buy_alert_time', 0);
             $now = time();
 
-            Log::info('Buy threshold met', ['last_alert' => $lastBuyAlert, 'time_since' => $now - $lastBuyAlert]);
+            Log::info('Buy threshold met', ['last_alert' => $lastBuyAlert, 'time_since' => $now - $lastBuyAlert, 'force' => $force]);
 
-            // Only alert if at least 30 minutes passed
-            if ($now - $lastBuyAlert > 1800) {
-                Log::info('🚨 Sending buy alert!');
+            // Only alert if at least 30 minutes passed (or force mode)
+            if ($force || $now - $lastBuyAlert > 1800) {
+                Log::info('🚨 Sending buy alert!' . ($force ? ' (forced)' : ''));
                 $this->sendBuyAlert([
                     'buy_count' => $buyCount,
                     'volume' => $volume,
@@ -881,7 +881,7 @@ class TokenEventMonitor
 
                 Cache::put('last_buy_alert_time', $now, now()->addHours(2));
             } else {
-                Log::info('⏳ Skipping buy alert - too soon since last alert');
+                Log::info('⏳ Skipping buy alert - too soon since last alert (use --force to override)');
             }
         } else {
             Log::info('⏭️ Buy threshold not met - skipping alert');

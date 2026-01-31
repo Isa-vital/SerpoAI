@@ -15,7 +15,8 @@ class MonitorTokenEvents extends Command
 {
     protected $signature = 'serpo:monitor 
                             {--interval=60 : Seconds between checks}
-                            {--once : Run once instead of continuous loop}';
+                            {--once : Run once instead of continuous loop}
+                            {--force : Force send alerts even if cooldown is active}';
 
     protected $description = 'Monitor SERPO token for buys, sells, liquidity changes, and price movements';
 
@@ -31,6 +32,7 @@ class MonitorTokenEvents extends Command
     {
         $interval = (int) $this->option('interval');
         $runOnce = $this->option('once');
+        $force = $this->option('force');
 
         $this->info('🚀 Starting SERPO Token Event Monitor...');
         $this->info("📊 Check interval: {$interval} seconds");
@@ -40,7 +42,10 @@ class MonitorTokenEvents extends Command
 
         if ($runOnce) {
             $this->info('Running single check...');
-            $this->runCheck();
+            if ($force) {
+                $this->comment('⚡ Force mode: Bypassing cooldowns');
+            }
+            $this->runCheck($force);
             $this->info('✅ Check completed');
             return Command::SUCCESS;
         }
@@ -57,7 +62,7 @@ class MonitorTokenEvents extends Command
             $this->info("[" . now()->format('H:i:s') . "] Check #{$checkCount} starting...");
 
             try {
-                $this->runCheck();
+                $this->runCheck(false);
                 $duration = round(microtime(true) - $startTime, 2);
                 $this->info("✅ Check completed in {$duration}s");
             } catch (\Exception $e) {
@@ -73,8 +78,8 @@ class MonitorTokenEvents extends Command
         return Command::SUCCESS;
     }
 
-    private function runCheck(): void
+    private function runCheck(bool $force = false): void
     {
-        $this->monitor->checkForEvents();
+        $this->monitor->checkForEvents($force);
     }
 }
