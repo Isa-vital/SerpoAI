@@ -27,12 +27,12 @@ class TechnicalStructureService
     /**
      * Smart Support & Resistance Analysis
      */
-    public function getSmartSupportResistance(string $symbol): array
+    public function getSmartSupportResistance(string $symbol, bool $showMacro = false): array
     {
         $marketType = $this->multiMarket->detectMarketType($symbol);
-        $cacheKey = "sr_analysis_{$symbol}";
+        $cacheKey = "sr_analysis_v2_{$symbol}";
 
-        return Cache::remember($cacheKey, 300, function () use ($symbol, $marketType) {
+        return Cache::remember($cacheKey, 300, function () use ($symbol, $marketType, $showMacro) {
             try {
                 // Get kline data for multiple timeframes
                 $klines = $this->getKlineData($symbol, $marketType);
@@ -41,43 +41,200 @@ class TechnicalStructureService
                     return $klines;
                 }
 
-                // Calculate support/resistance for each timeframe
-                $levels = [];
+                // Get current price
+                $currentPrice = $this->getCurrentPrice($symbol, $marketType);
+                if ($currentPrice <= 0) {
+                    return ['error' => "Unable to fetch current price for {$symbol}"];
+                }
+
+                // Calculate support/resistance for each timeframe using pivot detection
                 $timeframes = ['30m', '1h', '4h', '1d', '1w'];
+                $allLevels = []; // Track all levels with their timeframes
+
                 foreach ($timeframes as $tf) {
                     if (isset($klines[$tf]) && !empty($klines[$tf])) {
-                        $levels[$tf] = $this->calculateSRLevels($klines[$tf]);
+                        $pivots = $this->detectPivotLevels($klines[$tf], $tf);
+
+                        foreach ($pivots['resistance'] as $level) {
+                            $allLevels[] = [
+                                'type' => 'resistance',
+                                'price' => $level,
+                                'timeframe' => $tf,
+                            ];
+                        }
+
+                        foreach ($pivots['support'] as $level) {
+                            $allLevels[] = [
+                                'type' => 'support',
+                                'price' => $level,
+                                'timeframe' => $tf,
+                            ];
+                        }
                     }
                 }
 
-                // Find confluent levels (appear in multiple timeframes)
-                $confluentLevels = $this->findConfluentLevels($levels);
+                // Cluster levels and find confluence (±0.3% tolerance)
+                $clustered = $this->clusterAndRankLevels($allLevels, $currentPrice, 0.003);
 
-                // Identify liquidity zones (high volume areas)
-                $liquidityZones = $this->identifyLiquidityZones($klines['1h']);
+                // Separate support and resistance
+                $supports = array_filter($clustered, fn($l) => $l['price'] < $currentPrice);
+                $resistances = array_filter($clustered, fn($l) => $l['price'] > $currentPrice);
 
-                // Get current price
-                $currentPrice = $this->getCurrentPrice($symbol, $marketType);
+                // Sort: supports descending (closest first), resistances ascending (closest first)
+                usort($supports, fn($a, $b) => $b['price'] <=> $a['price']);
+                usort($resistances, fn($a, $b) => $a['price'] <=> $b['price']);
 
-                // Use AI to analyze strength
-                $aiAnalysis = $this->aiAnalyzeSRLevels($confluentLevels, $currentPrice, $symbol);
+                // Apply active band filter (±15% by default)
+                $activeBand = 0.15;
+                $lowerBound = $currentPrice * (1 - $activeBand);
+                $upperBound = $currentPrice * (1 + $activeBand);
+
+                $activeSupports = array_filter($supports, fn($l) => $l['price'] >= $lowerBound);
+                $activeResistances = array_filter($resistances, fn($l) => $l['price'] <= $upperBound);
+
+                // Find nearest levels (correct calculation)
+                $nearestSupport = !empty($supports) ? $supports[0] : null;
+                $nearestResistance = !empty($resistances) ? $resistances[0] : null;
+
+                // Identify confluent levels (≥2 timeframes)
+                $confluentLevels = array_filter($clustered, fn($l) => count($l['timeframes']) >= 2);
+
+                // Organize by timeframe for display (top 2 per timeframe)
+                $levelsByTimeframe = [];
+                foreach ($timeframes as $tf) {
+                    $tfSupports = array_filter($activeSupports, fn($l) => in_array($tf, $l['timeframes']));
+                    $tfResistances = array_filter($activeResistances, fn($l) => in_array($tf, $l['timeframes']));
+
+                    $levelsByTimeframe[$tf] = [
+                        'support' => array_slice(array_values($tfSupports), 0, 2),
+                        'resistance' => array_slice(array_values($tfResistances), 0, 2),
+                    ];
+                }
 
                 return [
                     'symbol' => $symbol,
                     'market_type' => $marketType,
                     'current_price' => $currentPrice,
-                    'support_levels' => $confluentLevels['support'],
-                    'resistance_levels' => $confluentLevels['resistance'],
-                    'timeframe_levels' => $levels, // All levels by timeframe
-                    'liquidity_zones' => $liquidityZones,
-                    'key_levels' => $this->identifyKeyLevels($confluentLevels, $currentPrice),
-                    'ai_insight' => $aiAnalysis,
+                    'active_band' => $activeBand * 100, // as percentage
+                    'nearest_support' => $nearestSupport,
+                    'nearest_resistance' => $nearestResistance,
+                    'confluent_levels' => array_slice($confluentLevels, 0, 5),
+                    'levels_by_timeframe' => $levelsByTimeframe,
+                    'macro_supports' => $showMacro ? array_slice($supports, 0, 5) : [],
+                    'macro_resistances' => $showMacro ? array_slice($resistances, 0, 5) : [],
+                    'updated_at' => now()->format('Y-m-d H:i') . ' UTC',
+                    'data_source' => $marketType === 'crypto' ? 'Binance' : ucfirst($marketType) . ' Data',
                 ];
             } catch (\Exception $e) {
-                Log::error('SR Analysis error', ['symbol' => $symbol, 'error' => $e->getMessage()]);
-                return ['error' => "Unable to analyze S/R for {$symbol}"];
+                Log::error('SR Analysis error', ['symbol' => $symbol, 'error' => $e->getMessage(), 'trace' => $e->getTraceAsString()]);
+                return ['error' => "Unable to analyze S/R for {$symbol}. Error: " . $e->getMessage()];
             }
         });
+    }
+
+    /**
+     * Detect pivot highs and lows from klines
+     */
+    private function detectPivotLevels(array $klines, string $timeframe): array
+    {
+        $lookback = 5; // 5 candles on each side
+        $supports = [];
+        $resistances = [];
+
+        for ($i = $lookback; $i < count($klines) - $lookback; $i++) {
+            $current = floatval($klines[$i][3]); // low
+            $currentHigh = floatval($klines[$i][2]); // high
+
+            // Check for pivot low (support)
+            $isPivotLow = true;
+            for ($j = $i - $lookback; $j <= $i + $lookback; $j++) {
+                if ($j === $i) continue;
+                if (floatval($klines[$j][3]) < $current) {
+                    $isPivotLow = false;
+                    break;
+                }
+            }
+            if ($isPivotLow) {
+                $supports[] = $current;
+            }
+
+            // Check for pivot high (resistance)
+            $isPivotHigh = true;
+            for ($j = $i - $lookback; $j <= $i + $lookback; $j++) {
+                if ($j === $i) continue;
+                if (floatval($klines[$j][2]) > $currentHigh) {
+                    $isPivotHigh = false;
+                    break;
+                }
+            }
+            if ($isPivotHigh) {
+                $resistances[] = $currentHigh;
+            }
+        }
+
+        return [
+            'support' => $supports,
+            'resistance' => $resistances,
+        ];
+    }
+
+    /**
+     * Cluster nearby levels and rank by confluence
+     */
+    private function clusterAndRankLevels(array $levels, float $currentPrice, float $tolerance): array
+    {
+        if (empty($levels)) return [];
+
+        $clusters = [];
+
+        foreach ($levels as $level) {
+            $price = $level['price'];
+            $foundCluster = false;
+
+            // Try to add to existing cluster
+            foreach ($clusters as &$cluster) {
+                $avgPrice = $cluster['price'];
+                if (abs($price - $avgPrice) / $avgPrice <= $tolerance) {
+                    // Add to cluster
+                    $cluster['prices'][] = $price;
+                    $cluster['timeframes'][] = $level['timeframe'];
+                    $cluster['count']++;
+                    // Recalculate average
+                    $cluster['price'] = array_sum($cluster['prices']) / count($cluster['prices']);
+                    $foundCluster = true;
+                    break;
+                }
+            }
+
+            // Create new cluster
+            if (!$foundCluster) {
+                $clusters[] = [
+                    'type' => $level['type'],
+                    'price' => $price,
+                    'prices' => [$price],
+                    'timeframes' => [$level['timeframe']],
+                    'count' => 1,
+                ];
+            }
+        }
+
+        // Deduplicate timeframes and sort by count (confluence)
+        foreach ($clusters as &$cluster) {
+            $cluster['timeframes'] = array_values(array_unique($cluster['timeframes']));
+            $cluster['confluence'] = count($cluster['timeframes']);
+        }
+
+        // Sort by confluence (more timeframes = stronger level), then by proximity to current price
+        usort($clusters, function ($a, $b) use ($currentPrice) {
+            if ($a['confluence'] !== $b['confluence']) {
+                return $b['confluence'] <=> $a['confluence'];
+            }
+            $distA = abs($a['price'] - $currentPrice);
+            $distB = abs($b['price'] - $currentPrice);
+            return $distA <=> $distB;
+        });
+
+        return $clusters;
     }
 
     /**
@@ -297,11 +454,11 @@ class TechnicalStructureService
         if ($marketType === 'forex' || $marketType === 'stock') {
             $klines = [];
             $timeframes = ['15m', '30m', '1h', '4h', '1d', '1w'];
-            
+
             foreach ($timeframes as $tf) {
                 $klines[$tf] = $this->getMultiMarketKlines($symbol, $tf, $marketType);
             }
-            
+
             // Check if we got any data
             $hasData = false;
             foreach ($klines as $data) {
@@ -310,11 +467,11 @@ class TechnicalStructureService
                     break;
                 }
             }
-            
+
             if (!$hasData) {
                 return ['error' => "No historical data available for {$symbol}. S/R analysis requires trading history."];
             }
-            
+
             return $klines;
         }
 
@@ -341,10 +498,10 @@ class TechnicalStructureService
 
             return $this->binance->getKlines($symbol, $timeframe, 100);
         }
-        
+
         return $this->getMultiMarketKlines($symbol, $timeframe, $marketType);
     }
-    
+
     private function getMultiMarketKlines(string $symbol, string $timeframe, string $marketType): array
     {
         // For forex/stocks, we'll simulate klines from current price data
@@ -354,19 +511,19 @@ class TechnicalStructureService
             if ($currentPrice <= 0) {
                 return [];
             }
-            
+
             // Generate synthetic klines based on volatility patterns
             $klines = [];
             $periods = 100;
             $volatility = 0.01; // 1% volatility
-            
+
             for ($i = 0; $i < $periods; $i++) {
                 $variation = (mt_rand(-100, 100) / 10000) * $volatility;
                 $open = $currentPrice * (1 + $variation);
                 $close = $currentPrice * (1 + (mt_rand(-100, 100) / 10000) * $volatility);
                 $high = max($open, $close) * (1 + (mt_rand(0, 50) / 10000));
                 $low = min($open, $close) * (1 - (mt_rand(0, 50) / 10000));
-                
+
                 $klines[] = [
                     0 => time() - ($periods - $i) * 3600, // timestamp
                     1 => (string)$open,
@@ -376,7 +533,7 @@ class TechnicalStructureService
                     5 => '1000', // volume (placeholder)
                 ];
             }
-            
+
             return $klines;
         } catch (\Exception $e) {
             Log::warning('Failed to generate klines for non-crypto', ['symbol' => $symbol, 'market' => $marketType]);
