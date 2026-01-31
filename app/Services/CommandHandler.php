@@ -2567,15 +2567,37 @@ class CommandHandler
         $message .= "Price: " . $this->formatPriceAdaptive($analysis['current_price'], $marketType);
         $message .= " | RSI(14): {$analysis['current_rsi']}\n\n";
 
+        // Pivot metadata
+        $pivotMeta = $analysis['pivot_metadata'];
+        $message .= "*Pivots:* {$pivotMeta['highs_count']} highs, {$pivotMeta['lows_count']} lows";
+        if ($pivotMeta['last_pivot_age'] !== null) {
+            $message .= " | Last: {$pivotMeta['last_pivot_age']} bars ago";
+        }
+        $message .= "\n\n";
+
         // Result section
         if (!$analysis['has_divergence']) {
             $message .= "*Result:* ✅ No confirmed divergence\n\n";
             $message .= "*Checked:*\n";
             $message .= "• Regular bullish (LL vs HL)\n";
             $message .= "• Regular bearish (HH vs LH)\n";
-            if ($analysis['hidden_checked']) {
+            if ($analysis['hidden_enabled']) {
                 $message .= "• Hidden divergences\n";
+            } else {
+                $message .= "• Hidden divergences: _disabled_\n";
             }
+
+            // Show best candidate deltas if available
+            if (isset($analysis['best_candidate']) && $analysis['best_candidate']) {
+                $cand = $analysis['best_candidate'];
+                $message .= "\n*Best Candidate:*\n";
+                $message .= "Type: {$cand['type']}\n";
+                $message .= "• ΔPrice: " . number_format($cand['price_delta_pct'], 2) . "% ";
+                $message .= "(threshold: {$analysis['thresholds']['min_price_delta_pct']}%)\n";
+                $message .= "• ΔRSI: " . number_format($cand['rsi_delta'], 1) . " ";
+                $message .= "(threshold: {$analysis['thresholds']['min_rsi_delta']})\n";
+            }
+
             $message .= "\n*Notes:*\n";
             $message .= $analysis['reason'] . "\n";
         } else {
@@ -2595,6 +2617,9 @@ class CommandHandler
         }
 
         $message .= "\n*Confidence:* {$analysis['confidence']}\n";
+        if (!empty($analysis['confidence_reason'])) {
+            $message .= "_{$analysis['confidence_reason']}_\n";
+        }
         $message .= "\n━━━━━━━━━━━━━━━━━━━━\n";
         $message .= "_Analysis only. Not financial advice._";
 

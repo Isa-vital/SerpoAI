@@ -382,11 +382,12 @@ class TechnicalStructureService
 
                 // Check for divergences (4 types)
                 $divergence = null;
-                $checkedTypes = ['regular_bullish', 'regular_bearish', 'hidden_bullish', 'hidden_bearish'];
+                $bestCandidate = null;
                 $reason = 'No pivots met all thresholds.';
+                $confidenceReason = '';
 
                 // 1. Regular Bullish: Price LL, RSI HL
-                $bullish = $this->detectRegularBullishDivergence(
+                $bullishResult = $this->detectRegularBullishDivergence(
                     $pricePivotLows,
                     $rsiPivotLows,
                     $lows,
@@ -397,14 +398,15 @@ class TechnicalStructureService
                     $maxAgeBars,
                     count($klines)
                 );
-                if ($bullish) {
-                    $divergence = $bullish;
-                    $reason = null;
+                if ($bullishResult['confirmed']) {
+                    $divergence = $bullishResult['divergence'];
+                } elseif ($bullishResult['candidate']) {
+                    $bestCandidate = $bullishResult['candidate'];
                 }
 
                 // 2. Regular Bearish: Price HH, RSI LH
                 if (!$divergence) {
-                    $bearish = $this->detectRegularBearishDivergence(
+                    $bearishResult = $this->detectRegularBearishDivergence(
                         $pricePivotHighs,
                         $rsiPivotHighs,
                         $highs,
@@ -415,36 +417,72 @@ class TechnicalStructureService
                         $maxAgeBars,
                         count($klines)
                     );
-                    if ($bearish) {
-                        $divergence = $bearish;
-                        $reason = null;
+                    if ($bearishResult['confirmed']) {
+                        $divergence = $bearishResult['divergence'];
+                    } elseif ($bearishResult['candidate'] && !$bestCandidate) {
+                        $bestCandidate = $bearishResult['candidate'];
                     }
                 }
 
                 // 3. Hidden Bullish: Price HL, RSI LL (optional)
                 // 4. Hidden Bearish: Price LH, RSI HH (optional)
-                // Implement if needed
+                // Not yet implemented
 
-                // Calculate confidence
+                // Pivot metadata
+                $pivotHighsCount = count($pricePivotHighs);
+                $pivotLowsCount = count($pricePivotLows);
+                $lastPivotAge = null;
+                if (!empty($pricePivotHighs) || !empty($pricePivotLows)) {
+                    $allPivotIndices = array_merge(array_keys($pricePivotHighs), array_keys($pricePivotLows));
+                    $lastPivotIndex = max($allPivotIndices);
+                    $lastPivotAge = count($klines) - 1 - $lastPivotIndex;
+                }
+
+                // Calculate confidence with reasoning
                 $confidence = 'Medium';
                 if ($divergence) {
-                    if (
-                        abs($divergence['price_delta_pct']) > 1.5 * $minPriceDeltaPct &&
-                        abs($divergence['rsi_delta']) > 1.5 * $minRsiDelta
-                    ) {
+                    $priceDeltaAbs = abs($divergence['price_delta_pct']);
+                    $rsiDeltaAbs = abs($divergence['rsi_delta']);
+                    
+                    if ($priceDeltaAbs > 1.5 * $minPriceDeltaPct && $rsiDeltaAbs > 1.5 * $minRsiDelta) {
                         $confidence = 'High';
-                    } elseif (
-                        abs($divergence['price_delta_pct']) < $minPriceDeltaPct * 1.1 ||
-                        abs($divergence['rsi_delta']) < $minRsiDelta * 1.1
-                    ) {
+                        $confidenceReason = 'Strong deltas exceed 1.5× thresholds with clean pivots';
+                    } elseif ($priceDeltaAbs < $minPriceDeltaPct * 1.1 || $rsiDeltaAbs < $minRsiDelta * 1.1) {
                         $confidence = 'Low';
+                        $confidenceReason = 'Deltas barely meet minimum thresholds';
+                    } else {
+                        $confidenceReason = 'Deltas meet thresholds with clean pivots';
                     }
                 } else {
-                    // Check if close but didn't meet thresholds
-                    if (empty($pricePivotLows) || empty($pricePivotHighs)) {
-                        $reason = 'Insufficient clean pivots detected in lookback window.';
+                    // No confirmed divergence - build detailed reason
+                    if ($pivotHighsCount === 0 && $pivotLowsCount === 0) {
+                        $reason = 'No clean pivots detected in lookback window';
+                        $confidence = 'Low';
+                        $confidenceReason = 'Insufficient pivot data';
+                    } elseif ($pivotHighsCount < 2 && $pivotLowsCount < 2) {
+                        $reason = 'Insufficient pivots (need at least 2 highs or 2 lows)';
+                        $confidence = 'Low';
+                        $confidenceReason = 'Too few pivots for comparison';
+                    } elseif ($lastPivotAge && $lastPivotAge > $maxAgeBars) {
+                        $reason = "Last pivot too old ({$lastPivotAge} bars, max {$maxAgeBars})";
+                        $confidence = 'Low';
+                        $confidenceReason = 'Pivots not recent enough';
+                    } elseif ($bestCandidate) {
+                        // Show why best candidate failed
+                        $failedThresholds = [];
+                        if (abs($bestCandidate['price_delta_pct']) < $minPriceDeltaPct) {
+                            $failedThresholds[] = "ΔPrice " . number_format($bestCandidate['price_delta_pct'], 2) . "% < {$minPriceDeltaPct}%";
+                        }
+                        if (abs($bestCandidate['rsi_delta']) < $minRsiDelta) {
+                            $failedThresholds[] = "ΔRSI " . round($bestCandidate['rsi_delta'], 1) . " < {$minRsiDelta}";
+                        }
+                        $reason = 'Best candidate failed: ' . implode(', ', $failedThresholds);
+                        $confidence = 'Medium';
+                        $confidenceReason = 'Clean pivots found but deltas below thresholds';
                     } else {
-                        $reason = 'Latest pivots did not meet thresholds (ΔRSI < ' . $minRsiDelta . ' or ΔPrice < ' . $minPriceDeltaPct . '%).';
+                        $reason = 'Pivots found but no valid divergence pattern detected';
+                        $confidence = 'Medium';
+                        $confidenceReason = 'Pivots exist but lack divergence structure';
                     }
                 }
 
@@ -466,8 +504,21 @@ class TechnicalStructureService
                     'updated_at' => gmdate('Y-m-d H:i') . ' UTC',
                     'has_divergence' => !is_null($divergence),
                     'divergence' => $divergence,
+                    'best_candidate' => $bestCandidate,
+                    'pivot_metadata' => [
+                        'highs_count' => $pivotHighsCount,
+                        'lows_count' => $pivotLowsCount,
+                        'last_pivot_age' => $lastPivotAge,
+                    ],
+                    'thresholds' => [
+                        'min_price_delta_pct' => $minPriceDeltaPct,
+                        'min_rsi_delta' => $minRsiDelta,
+                        'min_bars_apart' => $minBarsApart,
+                        'max_age_bars' => $maxAgeBars,
+                    ],
                     'confidence' => $confidence,
-                    'hidden_checked' => false, // Update when hidden implemented
+                    'confidence_reason' => $confidenceReason,
+                    'hidden_enabled' => false,
                     'reason' => $reason,
                 ];
             } catch (\Exception $e) {
@@ -1292,45 +1343,58 @@ class TechnicalStructureService
         int $minBarsApart,
         int $maxAge,
         int $totalBars
-    ): ?array {
-        if (count($pricePivots) < 2 || count($rsiPivots) < 2) return null;
+    ): array {
+        if (count($pricePivots) < 2 || count($rsiPivots) < 2) {
+            return ['confirmed' => false, 'divergence' => null, 'candidate' => null];
+        }
 
         // Get last 2 price pivot lows (most recent first)
         $priceIndices = array_keys($pricePivots);
         rsort($priceIndices);
 
-        if (count($priceIndices) < 2) return null;
+        if (count($priceIndices) < 2) {
+            return ['confirmed' => false, 'divergence' => null, 'candidate' => null];
+        }
 
         $idx2 = $priceIndices[0]; // Most recent
         $idx1 = $priceIndices[1]; // Previous
 
         // Check recency
-        if (($totalBars - 1 - $idx2) > $maxAge) return null;
+        if (($totalBars - 1 - $idx2) > $maxAge) {
+            return ['confirmed' => false, 'divergence' => null, 'candidate' => null];
+        }
 
         // Check bars apart
-        if (($idx2 - $idx1) < $minBarsApart) return null;
+        if (($idx2 - $idx1) < $minBarsApart) {
+            return ['confirmed' => false, 'divergence' => null, 'candidate' => null];
+        }
 
         $price1 = $priceData[$idx1];
         $price2 = $priceData[$idx2];
         $priceDeltaPct = (($price2 - $price1) / $price1) * 100;
 
         // Price should make lower low (negative delta)
-        if ($priceDeltaPct >= 0) return null;
-        if (abs($priceDeltaPct) < $minPriceDelta) return null;
+        if ($priceDeltaPct >= 0) {
+            return ['confirmed' => false, 'divergence' => null, 'candidate' => null];
+        }
 
         // Now check RSI - find closest RSI pivots to price pivots
         $rsi1 = $this->findClosestRsiPivot($rsiPivots, $idx1, $rsiData, 10);
         $rsi2 = $this->findClosestRsiPivot($rsiPivots, $idx2, $rsiData, 10);
 
-        if (is_null($rsi1) || is_null($rsi2)) return null;
+        if (is_null($rsi1) || is_null($rsi2)) {
+            return ['confirmed' => false, 'divergence' => null, 'candidate' => null];
+        }
 
         $rsiDelta = $rsi2 - $rsi1;
 
         // RSI should make higher low (positive delta)
-        if ($rsiDelta <= 0) return null;
-        if (abs($rsiDelta) < $minRsiDelta) return null;
+        if ($rsiDelta <= 0) {
+            return ['confirmed' => false, 'divergence' => null, 'candidate' => null];
+        }
 
-        return [
+        // Build candidate data
+        $candidateData = [
             'type' => 'Regular Bullish Divergence',
             'price1' => $price1,
             'price2' => $price2,
@@ -1341,6 +1405,15 @@ class TechnicalStructureService
             'pivot1_index' => $idx1,
             'pivot2_index' => $idx2,
             'bars_apart' => $idx2 - $idx1,
+        ];
+
+        // Check if meets thresholds
+        $meetsThresholds = abs($priceDeltaPct) >= $minPriceDelta && abs($rsiDelta) >= $minRsiDelta;
+
+        return [
+            'confirmed' => $meetsThresholds,
+            'divergence' => $meetsThresholds ? $candidateData : null,
+            'candidate' => !$meetsThresholds ? $candidateData : null,
         ];
     }
 
@@ -1357,45 +1430,58 @@ class TechnicalStructureService
         int $minBarsApart,
         int $maxAge,
         int $totalBars
-    ): ?array {
-        if (count($pricePivots) < 2 || count($rsiPivots) < 2) return null;
+    ): array {
+        if (count($pricePivots) < 2 || count($rsiPivots) < 2) {
+            return ['confirmed' => false, 'divergence' => null, 'candidate' => null];
+        }
 
         // Get last 2 price pivot highs (most recent first)
         $priceIndices = array_keys($pricePivots);
         rsort($priceIndices);
 
-        if (count($priceIndices) < 2) return null;
+        if (count($priceIndices) < 2) {
+            return ['confirmed' => false, 'divergence' => null, 'candidate' => null];
+        }
 
         $idx2 = $priceIndices[0]; // Most recent
         $idx1 = $priceIndices[1]; // Previous
 
         // Check recency
-        if (($totalBars - 1 - $idx2) > $maxAge) return null;
+        if (($totalBars - 1 - $idx2) > $maxAge) {
+            return ['confirmed' => false, 'divergence' => null, 'candidate' => null];
+        }
 
         // Check bars apart
-        if (($idx2 - $idx1) < $minBarsApart) return null;
+        if (($idx2 - $idx1) < $minBarsApart) {
+            return ['confirmed' => false, 'divergence' => null, 'candidate' => null];
+        }
 
         $price1 = $priceData[$idx1];
         $price2 = $priceData[$idx2];
         $priceDeltaPct = (($price2 - $price1) / $price1) * 100;
 
         // Price should make higher high (positive delta)
-        if ($priceDeltaPct <= 0) return null;
-        if (abs($priceDeltaPct) < $minPriceDelta) return null;
+        if ($priceDeltaPct <= 0) {
+            return ['confirmed' => false, 'divergence' => null, 'candidate' => null];
+        }
 
         // Now check RSI
         $rsi1 = $this->findClosestRsiPivot($rsiPivots, $idx1, $rsiData, 10);
         $rsi2 = $this->findClosestRsiPivot($rsiPivots, $idx2, $rsiData, 10);
 
-        if (is_null($rsi1) || is_null($rsi2)) return null;
+        if (is_null($rsi1) || is_null($rsi2)) {
+            return ['confirmed' => false, 'divergence' => null, 'candidate' => null];
+        }
 
         $rsiDelta = $rsi2 - $rsi1;
 
         // RSI should make lower high (negative delta)
-        if ($rsiDelta >= 0) return null;
-        if (abs($rsiDelta) < $minRsiDelta) return null;
+        if ($rsiDelta >= 0) {
+            return ['confirmed' => false, 'divergence' => null, 'candidate' => null];
+        }
 
-        return [
+        // Build candidate data
+        $candidateData = [
             'type' => 'Regular Bearish Divergence',
             'price1' => $price1,
             'price2' => $price2,
@@ -1406,6 +1492,15 @@ class TechnicalStructureService
             'pivot1_index' => $idx1,
             'pivot2_index' => $idx2,
             'bars_apart' => $idx2 - $idx1,
+        ];
+
+        // Check if meets thresholds
+        $meetsThresholds = abs($priceDeltaPct) >= $minPriceDelta && abs($rsiDelta) >= $minRsiDelta;
+
+        return [
+            'confirmed' => $meetsThresholds,
+            'divergence' => $meetsThresholds ? $candidateData : null,
+            'candidate' => !$meetsThresholds ? $candidateData : null,
         ];
     }
 
