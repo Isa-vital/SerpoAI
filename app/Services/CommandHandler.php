@@ -352,8 +352,27 @@ class CommandHandler
      */
     private function handlePrice(int $chatId, array $params)
     {
-        $symbol = !empty($params) ? strtoupper($params[0]) : 'SERPO';
+        if (empty($params)) {
+            $message = "💰 *Price Information*\n\n";
+            $message .= "Usage: `/price [symbol]`\n\n";
+            $message .= "📈 *Supported Markets:*\n";
+            $message .= "• Crypto: BTC, ETH, SOL, SERPO\n";
+            $message .= "• Stocks: AAPL, TSLA, GOOGL\n";
+            $message .= "• Forex: EURUSD, GBPJPY\n\n";
+            $message .= "📝 *Examples:*\n";
+            $message .= "• `/price BTC`\n";
+            $message .= "• `/price SERPO`\n";
+            $message .= "• `/price AAPL`\n";
+            $message .= "• `/price EURUSD`";
 
+            $this->telegram->sendMessage($chatId, $message);
+            return;
+        }
+
+        $symbol = strtoupper($params[0]);
+        $this->telegram->sendChatAction($chatId, 'typing');
+
+        // Special handling for SERPO (uses DEX data)
         if ($symbol === 'SERPO') {
             $data = $this->marketData->getSerpoPriceFromDex();
 
@@ -362,13 +381,16 @@ class CommandHandler
                 return;
             }
 
-            $message = "💰 *SERPO Price Information*\n\n";
+            $message = "💰 *SERPO Price Information*\n";
+            $message .= "━━━━━━━━━━━━━━━━━━━━\n";
+            $message .= "Market: Crypto (DEX) 💎\n\n";
             $message .= "💵 Price: $" . $this->telegram->formatPrice($data['price']) . "\n";
             $message .= "📊 24h Change: " . $this->telegram->formatPercentage($data['price_change_24h']) . "\n";
             $message .= "💧 Volume 24h: $" . number_format($data['volume_24h'], 0) . "\n";
             $message .= "🏊 Liquidity: $" . number_format($data['liquidity'], 0) . "\n";
             $message .= "🔄 DEX: " . strtoupper($data['dex']) . "\n\n";
-            $message .= "📈 Use `/chart` to view live candlestick chart\n\n";
+            $message .= "━━━━━━━━━━━━━━━━━━━━\n";
+            $message .= "📈 Use `/chart SERPO` for live chart\n";
             $message .= "_Updated: " . $data['updated_at']->diffForHumans() . "_";
 
             // Create inline keyboard with chart link
@@ -383,9 +405,98 @@ class CommandHandler
             ];
 
             $this->telegram->sendMessage($chatId, $message, $keyboard);
-        } else {
-            $this->telegram->sendMessage($chatId, "Currently only SERPO is supported. Use `/price` or `/price SERPO`");
+            return;
         }
+
+        // Handle all other markets (crypto, forex, stocks)
+        try {
+            $priceData = $this->multiMarket->getUniversalPriceData($symbol);
+
+            if (isset($priceData['error'])) {
+                $this->telegram->sendMessage($chatId, "❌ " . $priceData['error']);
+                return;
+            }
+
+            $message = $this->formatUniversalPriceData($priceData);
+
+            $keyboard = [
+                'inline_keyboard' => $this->getContextualKeyboard('price')
+            ];
+
+            $this->telegram->sendMessage($chatId, $message, $keyboard);
+        } catch (\Exception $e) {
+            Log::error('Price command error', ['symbol' => $symbol, 'error' => $e->getMessage()]);
+            $this->telegram->sendMessage($chatId, "❌ Unable to fetch price for {$symbol}. Please try again.");
+        }
+    }
+
+    /**
+     * Format universal price data for any market
+     */
+    private function formatUniversalPriceData(array $data): string
+    {
+        $marketIcon = match ($data['market_type']) {
+            'crypto' => '💎',
+            'forex' => '💱',
+            'stock' => '📈',
+            default => '📊'
+        };
+
+        $message = "💰 *{$data['symbol']} Price Information*\n";
+        $message .= "━━━━━━━━━━━━━━━━━━━━\n";
+        $message .= "Market: " . ucfirst($data['market_type']) . " {$marketIcon}\n";
+        $message .= "Source: {$data['source']}\n\n";
+
+        // Price
+        $message .= "💵 Price: " . $this->formatPriceAdaptive($data['price'], $data['market_type']) . "\n";
+
+        // Change (if available)
+        if (isset($data['change_24h'])) {
+            $changeEmoji = $data['change_24h'] >= 0 ? '🟢' : '🔴';
+            $message .= "{$changeEmoji} 24h Change: " . sprintf("%+.2f%%", $data['change_24h']) . "\n";
+        } elseif (isset($data['change_pct'])) {
+            $changeEmoji = $data['change_pct'] >= 0 ? '🟢' : '🔴';
+            $message .= "{$changeEmoji} Change: " . sprintf("%+.2f%%", $data['change_pct']) . "\n";
+        }
+
+        // Volume (if available)
+        if (isset($data['volume_24h']) && $data['volume_24h'] > 0) {
+            $message .= "💧 Volume 24h: $" . $this->formatLargeNumber($data['volume_24h']) . "\n";
+        }
+
+        // Market Cap (crypto/stocks)
+        if (isset($data['market_cap']) && $data['market_cap'] > 0) {
+            $message .= "📊 Market Cap: $" . $this->formatLargeNumber($data['market_cap']) . "\n";
+        }
+
+        // High/Low (if available)
+        if (isset($data['high_24h']) && isset($data['low_24h'])) {
+            $high = $this->formatPriceAdaptive($data['high_24h'], $data['market_type']);
+            $low = $this->formatPriceAdaptive($data['low_24h'], $data['market_type']);
+            $message .= "📈 24h High: {$high}\n";
+            $message .= "📉 24h Low: {$low}\n";
+        }
+
+        $message .= "\n━━━━━━━━━━━━━━━━━━━━\n";
+        $message .= "📊 Use `/chart {$data['symbol']}` for live chart\n";
+        $message .= "_Updated: {$data['updated_at']}_";
+
+        return $message;
+    }
+
+    /**
+     * Format large numbers (millions, billions)
+     */
+    private function formatLargeNumber(float $number): string
+    {
+        if ($number >= 1_000_000_000) {
+            return number_format($number / 1_000_000_000, 2) . 'B';
+        } elseif ($number >= 1_000_000) {
+            return number_format($number / 1_000_000, 2) . 'M';
+        } elseif ($number >= 1_000) {
+            return number_format($number / 1_000, 2) . 'K';
+        }
+        return number_format($number, 2);
     }
 
     /**
@@ -2633,7 +2744,7 @@ class CommandHandler
         }
 
         $marketType = $analysis['market_type'] ?? 'crypto';
-        $marketIcon = match($marketType) {
+        $marketIcon = match ($marketType) {
             'crypto' => '💎',
             'forex' => '💱',
             'stock' => '📈',
@@ -2677,14 +2788,14 @@ class CommandHandler
                     break;
                 }
             }
-            
+
             if (!$hasData) continue;
-            
+
             $message .= "*{$groupName}:*\n";
-            
+
             foreach ($timeframes as $tf => $label) {
                 if (!isset($analysis['crosses'][$tf])) continue;
-                
+
                 $crosses = $analysis['crosses'][$tf];
                 $message .= "`{$label}`\n";
 
@@ -2693,7 +2804,7 @@ class CommandHandler
                 $status2050 = $ma2050['is_bullish'] ? '🟢 Bullish' : '🔴 Bearish';
                 $gapPct2050 = isset($ma2050['gap_pct']) ? sprintf("%.2f%%", $ma2050['gap_pct']) : 'N/A';
                 $nearCross2050 = $ma2050['near_cross'] ?? false ? ' ⚠️ Near cross' : '';
-                
+
                 $message .= "  MA20/50: {$status2050} (gap: {$gapPct2050}){$nearCross2050}";
                 if ($ma2050['cross_found'] ?? false) {
                     $crossIcon = str_contains($ma2050['cross_type'], 'Golden') || str_contains($ma2050['cross_type'], 'Bullish') ? '🟡' : '⚫';
@@ -2711,7 +2822,7 @@ class CommandHandler
                 $status50200 = $ma50200['is_bullish'] ? '🟢 Bullish' : '🔴 Bearish';
                 $gapPct50200 = isset($ma50200['gap_pct']) ? sprintf("%.2f%%", $ma50200['gap_pct']) : 'N/A';
                 $nearCross50200 = $ma50200['near_cross'] ?? false ? ' ⚠️ Near cross' : '';
-                
+
                 $message .= "  MA50/200: {$status50200} (gap: {$gapPct50200}){$nearCross50200}";
                 if ($ma50200['cross_found'] ?? false) {
                     $crossIcon = str_contains($ma50200['cross_type'], 'Golden') ? '🟡' : '⚫';
@@ -3494,7 +3605,7 @@ class CommandHandler
 
         // Add quick price visualization
         $caption .= $this->generatePriceBar($data['price_change_24h']) . "\n\n";
-        $caption .= "🔴 Open link for live interactive chart!";
+        $caption .= "� Full DEX candlestick chart with live data!";
 
         // Create inline keyboard
         $keyboard = [
@@ -3514,12 +3625,20 @@ class CommandHandler
             ]
         ];
 
-        // Try to generate chart image
-        $chartImage = $this->generateDexScreenerChart($pairAddress);
+        // Generate DEXScreener chart snapshot with proper candlestick view
+        Log::info('Generating DEXScreener chart snapshot', ['pair' => $pairAddress]);
+        $chartImage = $this->generateDexScreenerSnapshot($pairAddress, $timeframe);
 
         if ($chartImage) {
-            $this->telegram->sendPhoto($chatId, $chartImage, $caption, $keyboard);
+            Log::info('Sending DEX chart photo');
+            try {
+                $this->telegram->sendPhoto($chatId, $chartImage, $caption, $keyboard);
+            } catch (\Exception $e) {
+                Log::error('Failed to send DEX chart photo', ['error' => $e->getMessage()]);
+                $this->telegram->sendMessage($chatId, $caption, $keyboard);
+            }
         } else {
+            Log::info('No chart image, sending text with link');
             $this->telegram->sendMessage($chatId, $caption, $keyboard);
         }
     }
@@ -3537,9 +3656,6 @@ class CommandHandler
 
         // Get interval in TradingView format
         $interval = $this->normalizeTimeframe($timeframe);
-
-        // Generate TradingView chart URL
-        $chartUrl = "https://www.tradingview.com/chart/?symbol={$tvSymbol}&interval={$interval}";
 
         // Try to get market data for current stats
         $marketData = null;
@@ -3582,7 +3698,9 @@ class CommandHandler
             $caption .= "\n";
         }
 
-        $caption .= "🔴 Open link for live interactive chart!";
+        // Generate TradingView chart URL for interactive viewing
+        $chartUrl = "https://www.tradingview.com/chart/?symbol={$tvSymbol}&interval={$interval}";
+        $caption .= "🟢 Full TradingView candlestick chart with tools!";
 
         // Create inline keyboard with timeframe options
         $keyboard = [
@@ -3607,31 +3725,81 @@ class CommandHandler
             ]
         ];
 
-        // Try to generate chart image
-        $chartImage = null;
-        if ($marketType === 'crypto') {
-            Log::info('Attempting to generate crypto chart', ['symbol' => $symbol, 'timeframe' => $timeframe]);
-            $chartImage = $this->generateCryptoChart($symbol, $timeframe);
-            Log::info('Chart generation result', ['has_image' => $chartImage !== null, 'url' => $chartImage ? substr($chartImage, 0, 100) . '...' : 'null']);
-        } else {
-            // For stocks/forex, try TradingView widget screenshot
-            Log::info('Attempting TradingView widget', ['symbol' => $tvSymbol]);
-            $chartImage = $this->generateTradingViewWidget($tvSymbol, $interval);
-        }
+        // Generate TradingView chart snapshot using TradingView Chart API
+        Log::info('Generating TradingView chart snapshot', ['symbol' => $tvSymbol, 'interval' => $interval]);
+        $chartImage = $this->generateTradingViewSnapshot($tvSymbol, $interval, $marketType);
 
         if ($chartImage) {
-            Log::info('Sending photo to Telegram', ['chat_id' => $chatId, 'url_length' => strlen($chartImage)]);
+            Log::info('Sending chart photo to Telegram', ['chat_id' => $chatId]);
             try {
                 $result = $this->telegram->sendPhoto($chatId, $chartImage, $caption, $keyboard);
-                Log::info('Telegram sendPhoto result', ['success' => true]);
+                Log::info('Chart photo sent successfully');
             } catch (\Exception $e) {
                 Log::error('Telegram sendPhoto failed', ['error' => $e->getMessage()]);
-                // Fallback to text
+                // Fallback to text with link
                 $this->telegram->sendMessage($chatId, $caption, $keyboard);
             }
         } else {
-            Log::info('No chart image generated, sending text only');
+            Log::info('No chart image generated, sending text with link');
             $this->telegram->sendMessage($chatId, $caption, $keyboard);
+        }
+    }
+
+    /**
+     * Generate TradingView chart snapshot with candlesticks
+     */
+    private function generateTradingViewSnapshot(string $symbol, string $interval, string $marketType): ?string
+    {
+        try {
+            // Use TradingView Advanced Chart widget with candlesticks
+            // This creates a URL that renders a proper candlestick chart
+            
+            $theme = 'dark';
+            $width = 1200;
+            $height = 675;
+            
+            // Build TradingView widget URL with candlestick chart
+            $widgetUrl = "https://www.tradingview.com/x/" . md5($symbol . $interval . time()) . "/";
+            
+            // Use screenshot service to capture the TradingView chart
+            // Option 1: Use QuickChart.io screenshot API (reliable, free)
+            $chartUrl = "https://quickchart.io/chart/render/sf-" . md5($symbol) . "?" . http_build_query([
+                'backgroundColor' => 'transparent',
+                'width' => $width,
+                'height' => $height,
+                'format' => 'png',
+                'version' => '4'
+            ]);
+            
+            // Option 2: Generate using TradingView's chart image API (better quality)
+            // Format: https://www.tradingview.com/x/{hash}/
+            $tvImageUrl = "https://s3.tradingview.com/snapshots/" . strtolower(str_replace(':', '/', $symbol)) . ".png";
+            
+            // Option 3: Use a screenshot service with TradingView embed
+            $embedUrl = "https://www.tradingview.com/embed-widget/advanced-chart/?" . http_build_query([
+                'symbol' => $symbol,
+                'interval' => $interval,
+                'theme' => $theme,
+                'style' => '1', // Candlestick
+                'locale' => 'en',
+                'enable_publishing' => false,
+                'hide_top_toolbar' => false,
+                'hide_legend' => false,
+                'save_image' => false,
+                'container_id' => 'tv_chart',
+                'width' => $width,
+                'height' => $height,
+            ]);
+            
+            // Use screenshot API to capture the embed
+            $screenshotUrl = "https://image.thum.io/get/width/{$width}/crop/{$height}/noanimate/{$embedUrl}";
+            
+            Log::info('Generated TradingView snapshot URL', ['url' => substr($screenshotUrl, 0, 100)]);
+            return $screenshotUrl;
+            
+        } catch (\Exception $e) {
+            Log::error('TradingView snapshot generation failed', ['error' => $e->getMessage()]);
+            return null;
         }
     }
 
@@ -3646,6 +3814,32 @@ class CommandHandler
             return $url;
         } catch (\Exception $e) {
             Log::debug('DEX chart generation failed', ['error' => $e->getMessage()]);
+            return null;
+        }
+    }
+
+    /**
+     * Generate DEXScreener snapshot with candlestick chart
+     */
+    private function generateDexScreenerSnapshot(string $pairAddress, string $timeframe): ?string
+    {
+        try {
+            $width = 1200;
+            $height = 675;
+            
+            // Build DEXScreener chart URL with proper candlestick view
+            $dexUrl = "https://dexscreener.com/ton/{$pairAddress}";
+            
+            // Use screenshot service to capture DEXScreener with candlesticks visible
+            // URL encode the target URL properly
+            $encodedUrl = urlencode($dexUrl);
+            $screenshotUrl = "https://image.thum.io/get/width/{$width}/crop/{$height}/wait/5/{$encodedUrl}";
+            
+            Log::info('Generated DEXScreener snapshot URL', ['pair' => $pairAddress, 'url' => $screenshotUrl]);
+            return $screenshotUrl;
+            
+        } catch (\Exception $e) {
+            Log::error('DEXScreener snapshot generation failed', ['error' => $e->getMessage()]);
             return null;
         }
     }
@@ -3926,21 +4120,6 @@ class CommandHandler
             $bar = str_repeat('🟥', $barLength) . str_repeat('⬜', $emptyLength);
             return "📊 " . $bar . " " . number_format($changePercent, 2) . "%";
         }
-    }
-
-    /**
-     * Format large numbers with K/M/B suffixes
-     */
-    private function formatLargeNumber(float $number): string
-    {
-        if ($number >= 1000000000) {
-            return number_format($number / 1000000000, 2) . 'B';
-        } elseif ($number >= 1000000) {
-            return number_format($number / 1000000, 2) . 'M';
-        } elseif ($number >= 1000) {
-            return number_format($number / 1000, 2) . 'K';
-        }
-        return number_format($number, 2);
     }
 
     /**

@@ -975,4 +975,231 @@ class MultiMarketDataService
             'trend' => 'Neutral',
         ];
     }
+
+    /**
+     * Get universal price data for any market (crypto, forex, stock)
+     * Returns comprehensive price info including market cap where available
+     */
+    public function getUniversalPriceData(string $symbol): array
+    {
+        $symbol = strtoupper($symbol);
+        $marketType = $this->detectMarketType($symbol);
+        $cacheKey = "price_data_{$symbol}";
+
+        return Cache::remember($cacheKey, 60, function () use ($symbol, $marketType) {
+            try {
+                if ($marketType === 'crypto') {
+                    return $this->getCryptoPriceData($symbol);
+                } elseif ($marketType === 'forex') {
+                    return $this->getForexPriceData($symbol);
+                } elseif ($marketType === 'stock') {
+                    return $this->getStockPriceData($symbol);
+                }
+
+                return ['error' => "Unable to determine market type for {$symbol}"];
+            } catch (\Exception $e) {
+                Log::error('Universal price data error', ['symbol' => $symbol, 'error' => $e->getMessage()]);
+                return ['error' => "Unable to fetch price data for {$symbol}"];
+            }
+        });
+    }
+
+    /**
+     * Get crypto price data with market cap from Binance and CoinGecko
+     */
+    private function getCryptoPriceData(string $symbol): array
+    {
+        // Normalize symbol for Binance
+        $quoteAssets = ['USDT', 'BUSD', 'USDC', 'BTC', 'ETH', 'BNB'];
+        $hasQuote = false;
+        foreach ($quoteAssets as $quote) {
+            // Only match if symbol is longer than the quote and ends with it
+            if (strlen($symbol) > strlen($quote) && str_ends_with($symbol, $quote)) {
+                $hasQuote = true;
+                break;
+            }
+        }
+        if (!$hasQuote) {
+            $symbol .= 'USDT';
+        }
+
+        // Get price from Binance
+        $ticker = $this->binance->get24hTicker($symbol);
+
+        if (!$ticker) {
+            return ['error' => "Unable to fetch {$symbol} from Binance"];
+        }
+
+        $result = [
+            'symbol' => $symbol,
+            'market_type' => 'crypto',
+            'source' => 'Binance',
+            'price' => floatval($ticker['lastPrice']),
+            'change_24h' => floatval($ticker['priceChangePercent']),
+            'volume_24h' => floatval($ticker['quoteVolume']),
+            'high_24h' => floatval($ticker['highPrice']),
+            'low_24h' => floatval($ticker['lowPrice']),
+            'updated_at' => gmdate('Y-m-d H:i') . ' UTC',
+        ];
+
+        // Try to get market cap from CoinGecko (for major coins)
+        try {
+            $baseAsset = str_replace(['USDT', 'BUSD', 'USDC'], '', $symbol);
+            $coinId = $this->getCoinGeckoId($baseAsset);
+
+            if ($coinId) {
+                $response = Http::timeout(5)->get("https://api.coingecko.com/api/v3/coins/{$coinId}", [
+                    'localization' => false,
+                    'tickers' => false,
+                    'community_data' => false,
+                    'developer_data' => false,
+                ]);
+
+                if ($response->successful()) {
+                    $data = $response->json();
+                    if (isset($data['market_data']['market_cap']['usd'])) {
+                        $result['market_cap'] = floatval($data['market_data']['market_cap']['usd']);
+                    }
+                }
+            }
+        } catch (\Exception $e) {
+            Log::debug('CoinGecko market cap fetch failed', ['symbol' => $symbol]);
+        }
+
+        return $result;
+    }
+
+    /**
+     * Get forex price data
+     */
+    private function getForexPriceData(string $pair): array
+    {
+        $data = $this->analyzeForexPair($pair);
+
+        if (isset($data['error'])) {
+            return $data;
+        }
+
+        return [
+            'symbol' => $pair,
+            'market_type' => 'forex',
+            'source' => 'ExchangeRate-API',
+            'price' => $data['price'],
+            'change_pct' => $data['change_percent'] ?? 0,
+            'updated_at' => gmdate('Y-m-d H:i') . ' UTC',
+        ];
+    }
+
+    /**
+     * Get stock price data with market cap from Alpha Vantage
+     */
+    private function getStockPriceData(string $symbol): array
+    {
+        // Try Alpha Vantage first
+        $quote = $this->getAlphaVantageQuote($symbol);
+
+        if (isset($quote['error'])) {
+            // Fallback to Yahoo Finance
+            return $this->getYahooFinanceData($symbol);
+        }
+
+        $result = [
+            'symbol' => $symbol,
+            'market_type' => 'stock',
+            'source' => 'Alpha Vantage',
+            'price' => $quote['price'],
+            'change_pct' => floatval($quote['change_percent']),
+            'volume_24h' => $quote['volume'],
+            'updated_at' => gmdate('Y-m-d H:i') . ' UTC',
+        ];
+
+        // Try to get market cap from Alpha Vantage overview
+        try {
+            $response = Http::timeout(10)->get('https://www.alphavantage.co/query', [
+                'function' => 'OVERVIEW',
+                'symbol' => $symbol,
+                'apikey' => $this->alphaVantageKey,
+            ]);
+
+            if ($response->successful()) {
+                $data = $response->json();
+                if (isset($data['MarketCapitalization'])) {
+                    $result['market_cap'] = floatval($data['MarketCapitalization']);
+                }
+            }
+        } catch (\Exception $e) {
+            Log::debug('Alpha Vantage market cap fetch failed', ['symbol' => $symbol]);
+        }
+
+        return $result;
+    }
+
+    /**
+     * Yahoo Finance fallback for stocks
+     */
+    private function getYahooFinanceData(string $symbol): array
+    {
+        try {
+            $response = Http::timeout(10)->get("https://query1.finance.yahoo.com/v8/finance/chart/{$symbol}", [
+                'interval' => '1d',
+                'range' => '1d',
+            ]);
+
+            if ($response->successful()) {
+                $data = $response->json();
+
+                if (isset($data['chart']['result'][0])) {
+                    $result = $data['chart']['result'][0];
+                    $meta = $result['meta'];
+
+                    return [
+                        'symbol' => $symbol,
+                        'market_type' => 'stock',
+                        'source' => 'Yahoo Finance',
+                        'price' => $meta['regularMarketPrice'] ?? 0,
+                        'change_pct' => (($meta['regularMarketPrice'] - $meta['previousClose']) / $meta['previousClose']) * 100,
+                        'volume_24h' => $meta['regularMarketVolume'] ?? 0,
+                        'high_24h' => $meta['regularMarketDayHigh'] ?? 0,
+                        'low_24h' => $meta['regularMarketDayLow'] ?? 0,
+                        'market_cap' => $meta['marketCap'] ?? null,
+                        'updated_at' => gmdate('Y-m-d H:i') . ' UTC',
+                    ];
+                }
+            }
+        } catch (\Exception $e) {
+            Log::error('Yahoo Finance error', ['symbol' => $symbol, 'error' => $e->getMessage()]);
+        }
+
+        return ['error' => "Unable to fetch {$symbol} stock data"];
+    }
+
+    /**
+     * Map crypto symbols to CoinGecko IDs
+     */
+    private function getCoinGeckoId(string $symbol): ?string
+    {
+        $map = [
+            'BTC' => 'bitcoin',
+            'ETH' => 'ethereum',
+            'BNB' => 'binancecoin',
+            'SOL' => 'solana',
+            'XRP' => 'ripple',
+            'ADA' => 'cardano',
+            'DOGE' => 'dogecoin',
+            'DOT' => 'polkadot',
+            'MATIC' => 'matic-network',
+            'AVAX' => 'avalanche-2',
+            'LINK' => 'chainlink',
+            'UNI' => 'uniswap',
+            'ATOM' => 'cosmos',
+            'LTC' => 'litecoin',
+            'BCH' => 'bitcoin-cash',
+            'NEAR' => 'near',
+            'APT' => 'aptos',
+            'ARB' => 'arbitrum',
+            'OP' => 'optimism',
+        ];
+
+        return $map[$symbol] ?? null;
+    }
 }

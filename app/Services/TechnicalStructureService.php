@@ -443,7 +443,7 @@ class TechnicalStructureService
                 if ($divergence) {
                     $priceDeltaAbs = abs($divergence['price_delta_pct']);
                     $rsiDeltaAbs = abs($divergence['rsi_delta']);
-                    
+
                     if ($priceDeltaAbs > 1.5 * $minPriceDeltaPct && $rsiDeltaAbs > 1.5 * $minRsiDelta) {
                         $confidence = 'High';
                         $confidenceReason = 'Strong deltas exceed 1.5× thresholds with clean pivots';
@@ -545,7 +545,7 @@ class TechnicalStructureService
             try {
                 // Normalize symbol
                 $symbol = $this->normalizeSymbol($symbol, $marketType);
-                
+
                 $klines = $this->getKlineData($symbol, $marketType);
 
                 if (isset($klines['error'])) {
@@ -567,7 +567,7 @@ class TechnicalStructureService
                         $ma20 = $this->calculateMA($klines[$tf], 20);
                         $ma50 = $this->calculateMA($klines[$tf], 50);
                         $ma200 = $this->calculateMA($klines[$tf], 200);
-                        
+
                         // Check 20/50 cross with detailed info
                         $cross2050 = $this->detectMACrossDetailed($klines[$tf], 20, 50, $tf, '20/50');
                         $cross2050['ma20_value'] = $ma20;
@@ -582,7 +582,7 @@ class TechnicalStructureService
                             'ma20_50' => $cross2050,
                             'ma50_200' => $cross50200,
                         ];
-                        
+
                         // Collect recent crosses
                         if ($cross2050['cross_found']) {
                             $recentCrosses[] = $cross2050['cross_info'];
@@ -593,7 +593,7 @@ class TechnicalStructureService
                     }
                 }
 
-                $source = match($marketType) {
+                $source = match ($marketType) {
                     'crypto' => 'Binance',
                     'forex' => 'ExchangeRate-API',
                     'stock' => 'Alpha Vantage',
@@ -1610,7 +1610,7 @@ class TechnicalStructureService
         $crossType = null;
         $crossAge = null;
         $crossTimestamp = null;
-        
+
         for ($i = 1; $i <= min(5, count($klines) - $slowPeriod); $i++) {
             $prevKlines = array_slice($klines, 0, -$i);
             $prevMaFast = $this->calculateMA($prevKlines, $fastPeriod);
@@ -1622,7 +1622,7 @@ class TechnicalStructureService
                     $crossFound = true;
                     $crossAge = $i;
                     $crossTimestamp = isset($klines[count($klines) - $i][0]) ? $klines[count($klines) - $i][0] : null;
-                    
+
                     // Determine cross name based on MA pair
                     if ($maPair === '50/200') {
                         $crossType = 'Golden Cross (50/200)';
@@ -1635,7 +1635,7 @@ class TechnicalStructureService
                     $crossFound = true;
                     $crossAge = $i;
                     $crossTimestamp = isset($klines[count($klines) - $i][0]) ? $klines[count($klines) - $i][0] : null;
-                    
+
                     // Determine cross name based on MA pair
                     if ($maPair === '50/200') {
                         $crossType = 'Death Cross (50/200)';
@@ -1685,7 +1685,7 @@ class TechnicalStructureService
 
         $closes = array_map(fn($k) => (float)$k[4], $klines);
         $slice = array_slice($closes, -$period);
-        
+
         return array_sum($slice) / count($slice);
     }
 
@@ -1720,16 +1720,16 @@ class TechnicalStructureService
         $midTerm = ['1h', '4h'];
         $longTerm = ['1d', '1w'];
 
-        $evaluateTrend = function($timeframes) use ($crosses) {
+        $evaluateTrend = function ($timeframes) use ($crosses) {
             $bullish = 0;
             $bearish = 0;
-            
+
             foreach ($timeframes as $tf) {
                 if (isset($crosses[$tf]['ma50_200']['is_bullish'])) {
                     $crosses[$tf]['ma50_200']['is_bullish'] ? $bullish++ : $bearish++;
                 }
             }
-            
+
             if ($bullish > $bearish) return 'bullish';
             if ($bearish > $bullish) return 'bearish';
             return 'mixed';
