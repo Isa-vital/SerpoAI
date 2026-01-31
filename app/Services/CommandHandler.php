@@ -36,6 +36,7 @@ class CommandHandler
     private WhaleAlertService $whaleAlert;
     private MultiMarketDataService $multiMarket;
     private BinanceAPIService $binance;
+    private TokenVerificationService $tokenVerify;
 
     public function __construct(
         TelegramBotService $telegram,
@@ -62,7 +63,8 @@ class CommandHandler
         HeatmapService $heatmap,
         WhaleAlertService $whaleAlert,
         MultiMarketDataService $multiMarket,
-        BinanceAPIService $binance
+        BinanceAPIService $binance,
+        TokenVerificationService $tokenVerify
     ) {
         $this->telegram = $telegram;
         $this->marketData = $marketData;
@@ -89,6 +91,7 @@ class CommandHandler
         $this->whaleAlert = $whaleAlert;
         $this->multiMarket = $multiMarket;
         $this->binance = $binance;
+        $this->tokenVerify = $tokenVerify;
     }
 
     /**
@@ -3740,14 +3743,14 @@ class CommandHandler
         try {
             // Use TradingView Advanced Chart widget with candlesticks
             // This creates a URL that renders a proper candlestick chart
-            
+
             $theme = 'dark';
             $width = 1200;
             $height = 675;
-            
+
             // Build TradingView widget URL with candlestick chart
             $widgetUrl = "https://www.tradingview.com/x/" . md5($symbol . $interval . time()) . "/";
-            
+
             // Use screenshot service to capture the TradingView chart
             // Option 1: Use QuickChart.io screenshot API (reliable, free)
             $chartUrl = "https://quickchart.io/chart/render/sf-" . md5($symbol) . "?" . http_build_query([
@@ -3757,11 +3760,11 @@ class CommandHandler
                 'format' => 'png',
                 'version' => '4'
             ]);
-            
+
             // Option 2: Generate using TradingView's chart image API (better quality)
             // Format: https://www.tradingview.com/x/{hash}/
             $tvImageUrl = "https://s3.tradingview.com/snapshots/" . strtolower(str_replace(':', '/', $symbol)) . ".png";
-            
+
             // Option 3: Use a screenshot service with TradingView embed
             $embedUrl = "https://www.tradingview.com/embed-widget/advanced-chart/?" . http_build_query([
                 'symbol' => $symbol,
@@ -3777,13 +3780,12 @@ class CommandHandler
                 'width' => $width,
                 'height' => $height,
             ]);
-            
+
             // Use screenshot API to capture the embed
             $screenshotUrl = "https://image.thum.io/get/width/{$width}/crop/{$height}/noanimate/{$embedUrl}";
-            
+
             Log::info('Generated TradingView snapshot URL', ['url' => substr($screenshotUrl, 0, 100)]);
             return $screenshotUrl;
-            
         } catch (\Exception $e) {
             Log::error('TradingView snapshot generation failed', ['error' => $e->getMessage()]);
             return null;
@@ -3813,18 +3815,17 @@ class CommandHandler
         try {
             $width = 1200;
             $height = 675;
-            
+
             // Build DEXScreener chart URL with proper candlestick view
             $dexUrl = "https://dexscreener.com/ton/{$pairAddress}";
-            
+
             // Use screenshot service to capture DEXScreener with candlesticks visible
             // URL encode the target URL properly
             $encodedUrl = urlencode($dexUrl);
             $screenshotUrl = "https://image.thum.io/get/width/{$width}/crop/{$height}/wait/5/{$encodedUrl}";
-            
+
             Log::info('Generated DEXScreener snapshot URL', ['pair' => $pairAddress, 'url' => $screenshotUrl]);
             return $screenshotUrl;
-            
         } catch (\Exception $e) {
             Log::error('DEXScreener snapshot generation failed', ['error' => $e->getMessage()]);
             return null;
@@ -4910,73 +4911,313 @@ class CommandHandler
     {
         if (empty($params)) {
             $message = "🧠 *SERPO Degen Scanner™*\n\n";
-            $message .= "Professional-grade token verification.\n\n";
+            $message .= "Professional-grade token verification with REAL blockchain data.\n\n";
             $message .= "*Usage:*\n";
-            $message .= "`/verify 0xABC123...`\n";
-            $message .= "`/verify SERPO`\n";
-            $message .= "`/verify new TON token`\n\n";
+            $message .= "`/verify EQCPeUzKknneMlA1Ubiv...`  (TON)\n";
+            $message .= "`/verify 0xdAC17F958D2ee523a2206206994597C13D831ec7`  (ETH/BSC)\n\n";
             $message .= "*Analyzes:*\n";
-            $message .= "✅ Contract verification\n";
-            $message .= "✅ Mint/burn functions\n";
-            $message .= "✅ Liquidity locks\n";
-            $message .= "✅ Holder distribution\n";
-            $message .= "✅ Wallet clustering\n";
-            $message .= "✅ Dev behavior patterns\n";
-            $message .= "✅ Rug probability score\n\n";
-            $message .= "🎯 Returns: Professional risk assessment";
+            $message .= "✅ Contract verification status\n";
+            $message .= "✅ Mint function (active/removed)\n";
+            $message .= "✅ Ownership (renounced/active)\n";
+            $message .= "✅ Top 10 holder distribution\n";
+            $message .= "✅ Wallet concentration analysis\n";
+            $message .= "✅ Source code availability\n";
+            $message .= "✅ Proxy/upgrade risks\n";
+            $message .= "✅ Risk score with flags\n\n";
+            $message .= "*Supported Chains:*\n";
+            $message .= "🔷 TON (Toncoin)\n";
+            $message .= "🔷 Ethereum\n";
+            $message .= "🔷 BSC (Binance Smart Chain)\n";
+            $message .= "🔷 Base\n\n";
+            $message .= "🎯 Returns: Real blockchain data + risk assessment";
 
             $this->telegram->sendMessage($chatId, $message);
             return;
         }
 
         $token = implode(' ', $params);
-        $this->telegram->sendMessage($chatId, "🧠 Analyzing token: \"{$token}\"...");
+
+        // Staged loading messages
+        $loadingMsg = $this->telegram->sendMessage($chatId, "🔍 *Stage 1/3:* Detecting blockchain...");
+        sleep(1);
+
+        // Detect chain
+        $chain = 'Ethereum'; // Default
+        if (str_starts_with($token, 'EQ')) {
+            $chain = 'TON';
+        } elseif (str_starts_with($token, '0x')) {
+            $chain = 'EVM (Ethereum/BSC/Base)';
+        }
+
+        $this->telegram->sendMessage($chatId, "✅ Chain: {$chain}\n\n📡 *Stage 2/3:* Fetching contract data...");
 
         try {
-            // Check if it's a contract address or symbol
-            $isAddress = str_starts_with($token, '0x') || str_starts_with($token, 'EQ');
+            // Get real verification data from blockchain
+            $data = $this->tokenVerify->verifyToken($token);
 
-            // Build verification prompt
-            $prompt = "You are a blockchain security expert specializing in token verification.\n\n";
-            $prompt .= "Token to analyze: {$token}\n\n";
-            $prompt .= "Provide a comprehensive risk assessment covering:\n\n";
-            $prompt .= "1. CONTRACT SECURITY\n";
-            $prompt .= "   - Verification status\n";
-            $prompt .= "   - Mint function (active/removed)\n";
-            $prompt .= "   - Ownership (renounced/active)\n";
-            $prompt .= "   - Hidden taxes or backdoors\n";
-            $prompt .= "   - Proxy/upgrade risks\n\n";
-            $prompt .= "2. LIQUIDITY ANALYSIS\n";
-            $prompt .= "   - LP locked or burned?\n";
-            $prompt .= "   - Lock duration\n";
-            $prompt .= "   - LP % vs total supply\n\n";
-            $prompt .= "3. HOLDER INTELLIGENCE\n";
-            $prompt .= "   - Wallet clustering patterns\n";
-            $prompt .= "   - Dev wallet behavior\n";
-            $prompt .= "   - Sniper bot detection\n";
-            $prompt .= "   - Top holder distribution\n\n";
-            $prompt .= "4. RISK SCORE (Low/Medium/High)\n";
-            $prompt .= "5. VERDICT: Investment recommendation\n\n";
-            $prompt .= "Be brutally honest. Flag red flags clearly.";
+            $this->telegram->sendMessage($chatId, "✅ Data retrieved\n\n🧮 *Stage 3/3:* Analyzing risk factors...");
 
-            $response = $this->openai->generateCompletion($prompt, 900);
-
-            if (!$response) {
-                Log::error('TokenVerify: AI returned null response', ['token' => $token]);
-                $this->telegram->sendMessage($chatId, "❌ AI service unavailable. Please try again in a moment.");
+            if (isset($data['error'])) {
+                $this->telegram->sendMessage($chatId, "❌ " . $data['error']);
                 return;
             }
 
-            $message = "🧠 *SERPO DEGEN VERIFICATION REPORT*\n\n";
-            $message .= "Token: `{$token}`\n\n";
-            $message .= $response;
-            $message .= "\n\n⚠️ _DYOR. Not financial advice._";
-
+            // Format comprehensive report
+            $message = $this->formatTokenVerificationReport($data);
             $this->telegram->sendMessage($chatId, $message);
         } catch (\Exception $e) {
-            Log::error('Token verify error', ['error' => $e->getMessage()]);
-            $this->telegram->sendMessage($chatId, "❌ Verification failed. Check token address/symbol.");
+            Log::error('Token verify error', ['error' => $e->getMessage(), 'token' => $token]);
+            $this->telegram->sendMessage($chatId, "❌ Verification failed: " . $e->getMessage());
         }
+    }
+
+    /**
+     * Format token verification report
+     */
+    private function formatTokenVerificationReport(array $data): string
+    {
+        $chain = $data['chain'] ?? 'Unknown';
+        $name = $data['name'] ?? 'Unknown';
+        $symbol = $data['symbol'] ?? 'N/A';
+        $address = $data['address'] ?? '';
+        $riskScore = $data['risk_score'] ?? 50;
+        $trustScore = $data['trust_score'] ?? 50;
+
+        // Header with data source
+        $message = "🧠 *TOKEN VERIFICATION REPORT*\n";
+        $message .= "_Data Source: " . ($data['limited_data'] ?? false ? 'Public APIs' : 'Blockchain Explorers') . "_\n\n";
+
+        $message .= "🔗 *Chain:* {$chain}\n";
+        $message .= "💎 *Token:* {$name} ({$symbol})\n";
+        $message .= "📍 *Address:* `" . $this->shortenAddress($address) . "`\n\n";
+
+        // Raw Metrics Section
+        $message .= "━━━━━━━━━━━━━━━━━━━━\n";
+        $message .= "📊 *RAW METRICS*\n\n";
+
+        if (isset($data['total_supply']) && $data['total_supply'] > 0) {
+            $supply = $this->formatLargeNumber($data['total_supply']);
+            $message .= "💰 Total Supply: {$supply}\n";
+        } else {
+            $message .= "💰 Total Supply: Unknown (requires API access)\n";
+        }
+
+        $holderCount = $data['holders_count'] ?? 0;
+        if ($holderCount > 0) {
+            $message .= "👥 Holder Count: " . number_format($holderCount) . "\n";
+        } else {
+            $message .= "👥 Holder Count: Unknown (requires API access)\n";
+        }
+
+        $verified = $data['verified'] ?? false;
+        $message .= "🔍 Contract Verified: " . ($verified ? "Yes" : "No") . "\n";
+
+        $hasSource = $data['has_source_code'] ?? false;
+        $message .= "📄 Source Code: " . ($hasSource ? "Available" : "Not available") . "\n";
+
+        $proxy = $data['proxy'] ?? false;
+        $message .= "🔄 Proxy Contract: " . ($proxy ? "Yes" : "No") . "\n";
+
+        // Ownership status with verification
+        $ownershipStatus = $data['ownership_status'] ?? 'unknown';
+        $ownershipText = match ($ownershipStatus) {
+            'renounced' => "Renounced ✅",
+            'active_owner' => "Active (centralized) ⚠️",
+            'unknown' => "Unknown (unverified)",
+            default => "Unknown"
+        };
+        $message .= "👤 Ownership: {$ownershipText}\n\n";
+
+        // Risk Assessment with Score Breakdown
+        $riskEmoji = $riskScore > 70 ? '🔴' : ($riskScore > 40 ? '🟡' : '🟢');
+        $riskLevel = $riskScore > 70 ? 'HIGH' : ($riskScore > 40 ? 'MEDIUM' : 'LOW');
+
+        $message .= "━━━━━━━━━━━━━━━━━━━━\n";
+        $message .= "📊 *RISK ASSESSMENT*\n\n";
+        $message .= "{$riskEmoji} *Risk Score:* {$riskScore}/100 ({$riskLevel})\n";
+        $message .= "🛡️ *Trust Score:* {$trustScore}/100\n\n";
+
+        // Score Breakdown
+        if (isset($data['score_breakdown']) && !empty($data['score_breakdown'])) {
+            $message .= "*Score Breakdown:*\n";
+            foreach ($data['score_breakdown'] as $item) {
+                $factor = $item['factor'];
+                $points = $item['points'];
+                $impact = $item['impact'] ?? 'neutral';
+
+                $impactEmoji = match ($impact) {
+                    'negative' => '❌',
+                    'positive' => '✅',
+                    default => '➖'
+                };
+
+                if ($points > 0) {
+                    $message .= "{$impactEmoji} {$factor}: +{$points} risk\n";
+                } else {
+                    $message .= "{$impactEmoji} {$factor}\n";
+                }
+            }
+            $message .= "\n";
+        }
+
+        // Green Flags
+        $greenFlags = $data['green_flags'] ?? [];
+        if (!empty($greenFlags)) {
+            $message .= "✅ *GREEN FLAGS*\n\n";
+            foreach ($greenFlags as $flag) {
+                $message .= "{$flag}\n";
+            }
+            $message .= "\n";
+        }
+
+        // Red Flags
+        $redFlags = $data['red_flags'] ?? [];
+        if (!empty($redFlags)) {
+            $message .= "❌ *RED FLAGS*\n\n";
+            foreach ($redFlags as $flag) {
+                $message .= "{$flag}\n";
+            }
+            $message .= "\n";
+        }
+
+        // Warnings (deduplicated - only show if not already in red flags)
+        $warnings = $data['warnings'] ?? [];
+        $riskFactors = $data['risk_factors'] ?? [];
+
+        // Filter out warnings that are already covered in risk factors
+        $filteredWarnings = array_filter($warnings, function ($warning) use ($riskFactors) {
+            foreach ($riskFactors as $factor) {
+                if (str_contains(strtolower($warning), strtolower($factor))) {
+                    return false; // Skip this warning
+                }
+            }
+            return true;
+        });
+
+        if (!empty($filteredWarnings)) {
+            $message .= "⚠️ *WARNINGS*\n\n";
+            foreach ($filteredWarnings as $warning) {
+                $message .= "{$warning}\n";
+            }
+            $message .= "\n";
+        }
+
+        // Profile Context (Differentiation)
+        if (isset($data['profile_context'])) {
+            $message .= "━━━━━━━━━━━━━━━━━━━━\n";
+            $message .= "📌 *PROFILE ANALYSIS*\n\n";
+            $message .= $data['profile_context'] . "\n\n";
+        }
+
+        // Holder Distribution (only if data available)
+        if (isset($data['holder_distribution']) && ($data['holder_distribution']['top_10_percentage'] ?? 0) > 0) {
+            $dist = $data['holder_distribution'];
+            $message .= "━━━━━━━━━━━━━━━━━━━━\n";
+            $message .= "📊 *HOLDER DISTRIBUTION*\n\n";
+
+            if (isset($dist['top_10_percentage'])) {
+                $pct = $dist['top_10_percentage'];
+                $emoji = $pct > 60 ? '🔴' : ($pct > 40 ? '🟡' : '🟢');
+                $message .= "{$emoji} Top 10 holders: {$pct}%\n";
+            }
+
+            if (isset($dist['whale_risk'])) {
+                $whaleRisk = ucfirst($dist['whale_risk']);
+                $whaleEmoji = $dist['whale_risk'] === 'high' ? '🐋🔴' : ($dist['whale_risk'] === 'medium' ? '🐋🟡' : '🐋🟢');
+                $message .= "{$whaleEmoji} Whale risk: {$whaleRisk}\n";
+            }
+
+            if (isset($dist['distribution_quality'])) {
+                $quality = ucfirst($dist['distribution_quality']);
+                $message .= "📈 Distribution quality: {$quality}\n";
+            }
+            $message .= "\n";
+        }
+
+        // Top Holders (only if data available)
+        if (!empty($data['top_holders']) && count($data['top_holders']) > 0) {
+            $message .= "━━━━━━━━━━━━━━━━━━━━\n";
+            $message .= "🐳 *TOP HOLDERS*\n\n";
+
+            $totalSupply = $data['total_supply'] ?? 0;
+            $displayCount = min(10, count($data['top_holders']));
+
+            for ($i = 0; $i < $displayCount; $i++) {
+                $holder = $data['top_holders'][$i];
+                $holderAddr = $holder['address'] ?? '';
+                $balance = $holder['balance'] ?? 0;
+
+                if ($totalSupply > 0 && $balance > 0) {
+                    $percentage = ($balance / $totalSupply) * 100;
+                    $shortAddr = $this->shortenAddress($holderAddr);
+                    $message .= ($i + 1) . ". `{$shortAddr}` - " . number_format($percentage, 2) . "%\n";
+                } elseif (isset($holder['tx_count'])) {
+                    // Ethereum fallback (transaction count)
+                    $shortAddr = $this->shortenAddress($holderAddr);
+                    $txCount = $holder['tx_count'];
+                    $message .= ($i + 1) . ". `{$shortAddr}` - {$txCount} txs\n";
+                }
+            }
+            $message .= "\n";
+        }
+
+        // Explorer Link
+        if (isset($data['explorer_url'])) {
+            $message .= "━━━━━━━━━━━━━━━━━━━━\n";
+            $message .= "🔗 [View Full Details on Explorer](" . $data['explorer_url'] . ")\n\n";
+        }
+
+        // Verdict
+        $message .= "━━━━━━━━━━━━━━━━━━━━\n";
+        $message .= "🎯 *VERDICT*\n\n";
+
+        if ($riskScore > 70) {
+            $message .= "🔴 *HIGH RISK* - Multiple red flags detected.\n";
+            $message .= "⚠️ *NOT RECOMMENDED* - High probability of loss.\n";
+        } elseif ($riskScore > 40) {
+            $message .= "🟡 *MEDIUM RISK* - Some concerns present.\n";
+            $message .= "⚠️ *USE EXTREME CAUTION* - Only invest what you can lose completely.\n";
+        } else {
+            $message .= "🟢 *LOW RISK* - Token appears more legitimate.\n";
+            $message .= "✅ Better risk profile, but always DYOR.\n";
+        }
+
+        // Add note if API keys would provide more data
+        if ($data['limited_data'] ?? false) {
+            $message .= "\n━━━━━━━━━━━━━━━━━━━━\n";
+            $message .= "ℹ️ *Limited Data Mode*\n\n";
+            $message .= "This verification used public blockchain data only.\n";
+            $message .= "For complete analysis including:\n";
+            $message .= "• Top holder addresses and percentages\n";
+            $message .= "• Detailed transaction history\n";
+            $message .= "• Holder count and distribution\n\n";
+            $message .= "Get FREE API keys from:\n";
+
+            $chain = strtolower($data['chain'] ?? '');
+            if (str_contains($chain, 'ethereum')) {
+                $message .= "• Etherscan: https://etherscan.io/apis\n";
+            } elseif (str_contains($chain, 'bsc')) {
+                $message .= "• BSCScan: https://bscscan.com/apis\n";
+            } elseif (str_contains($chain, 'base')) {
+                $message .= "• BaseScan: https://basescan.org/apis\n";
+            }
+        }
+
+        $message .= "\n⚠️ _This is blockchain data analysis, not financial advice._\n";
+        $message .= "_Always do your own research._";
+
+        return $message;
+    }
+
+    /**
+     * Shorten blockchain address for display
+     */
+    private function shortenAddress(string $address): string
+    {
+        if (strlen($address) <= 12) {
+            return $address;
+        }
+        return substr($address, 0, 6) . '...' . substr($address, -4);
     }
 
     /**
