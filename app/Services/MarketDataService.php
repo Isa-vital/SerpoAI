@@ -109,7 +109,7 @@ class MarketDataService
         try {
             // Fetch live historical prices
             $pricesArray = $this->fetchHistoricalPrices($symbol, $period + 1);
-            
+
             if (count($pricesArray) < $period + 1) {
                 return null;
             }
@@ -135,7 +135,7 @@ class MarketDataService
             if ($avgLoss == 0 && $avgGain == 0) {
                 return 50.0; // Neutral RSI for flat prices
             }
-            
+
             if ($avgLoss == 0) {
                 return 100;
             }
@@ -152,7 +152,7 @@ class MarketDataService
             return null;
         }
     }
-    
+
     /**
      * Fetch historical prices from various sources
      */
@@ -167,7 +167,7 @@ class MarketDataService
             }
             return [];
         }
-        
+
         // Try Binance for crypto symbols (e.g., BTCUSDT, ETHUSDT)
         if ($this->isCryptoSymbol($symbol)) {
             try {
@@ -176,7 +176,7 @@ class MarketDataService
                     'interval' => '1h',
                     'limit' => $limit
                 ]);
-                
+
                 if ($response->successful()) {
                     $klines = $response->json();
                     // Extract closing prices (index 4 in each kline)
@@ -186,7 +186,7 @@ class MarketDataService
                 Log::error("Failed to fetch Binance data for {$symbol}: " . $e->getMessage());
             }
         }
-        
+
         // Try Yahoo Finance for stocks (free, no API key required)
         try {
             // Yahoo Finance v8 API
@@ -194,7 +194,7 @@ class MarketDataService
                 'interval' => '1h',
                 'range' => '5d'
             ]);
-            
+
             if ($response->successful()) {
                 $data = $response->json();
                 if (isset($data['chart']['result'][0]['indicators']['quote'][0]['close'])) {
@@ -213,20 +213,20 @@ class MarketDataService
         } catch (\Exception $e) {
             Log::error("Failed to fetch Yahoo Finance data for {$symbol}: " . $e->getMessage());
         }
-        
+
         // Try as forex pair if it matches forex format
         if ($this->isForexSymbol($symbol)) {
             try {
                 $base = substr($symbol, 0, 3);
                 $quote = substr($symbol, 3, 3);
-                
+
                 // Use Yahoo Finance with =X suffix for forex
                 $forexSymbol = "{$base}{$quote}=X";
                 $response = Http::timeout(15)->get("https://query1.finance.yahoo.com/v8/finance/chart/{$forexSymbol}", [
                     'interval' => '1h',
                     'range' => '5d'
                 ]);
-                
+
                 if ($response->successful()) {
                     $data = $response->json();
                     if (isset($data['chart']['result'][0]['indicators']['quote'][0]['close'])) {
@@ -245,10 +245,10 @@ class MarketDataService
                 Log::error("Failed to fetch forex data for {$symbol}: " . $e->getMessage());
             }
         }
-        
+
         return [];
     }
-    
+
     /**
      * Detect market type for a symbol
      */
@@ -257,21 +257,21 @@ class MarketDataService
         if ($symbol === 'SERPO') {
             return 'token';
         }
-        
+
         // Check crypto first (ends with USDT, USDC, BTC, etc.)
         if ($this->isCryptoSymbol($symbol)) {
             return 'crypto';
         }
-        
+
         // Check forex (6 chars, currency pairs)
         if ($this->isForexSymbol($symbol)) {
             return 'forex';
         }
-        
+
         // Default to stock
         return 'stock';
     }
-    
+
     /**
      * Detect if symbol is a crypto pair
      */
@@ -286,7 +286,7 @@ class MarketDataService
         }
         return false;
     }
-    
+
     /**
      * Detect if symbol is a forex pair
      */
@@ -296,12 +296,12 @@ class MarketDataService
         if (strlen($symbol) !== 6) {
             return false;
         }
-        
+
         // Common currencies and metals
         $commonCurrencies = ['USD', 'EUR', 'GBP', 'JPY', 'CHF', 'AUD', 'CAD', 'NZD', 'XAU', 'XAG'];
         $base = substr($symbol, 0, 3);
         $quote = substr($symbol, 3, 3);
-        
+
         return in_array($base, $commonCurrencies) && in_array($quote, $commonCurrencies);
     }
 
@@ -368,7 +368,7 @@ class MarketDataService
         try {
             // Fetch live historical prices
             $pricesArray = $this->fetchHistoricalPrices($symbol, $period * 2);
-            
+
             if (count($pricesArray) < $period) {
                 return null;
             }
@@ -438,9 +438,9 @@ class MarketDataService
         // Detect market type
         $marketType = $this->detectMarketType($symbol);
         Log::info("Detected market type for {$symbol}: {$marketType}");
-        
+
         $currentPriceValue = null;
-        
+
         // Route to appropriate data source based on market type
         switch ($marketType) {
             case 'token':
@@ -448,13 +448,13 @@ class MarketDataService
                 $currentPriceValue = $dexData ? $dexData['price'] : null;
                 // Continue even if price is null - indicators might still work
                 break;
-                
+
             case 'crypto':
                 try {
                     $response = Http::timeout(10)->get('https://api.binance.com/api/v3/ticker/24hr', [
                         'symbol' => $symbol
                     ]);
-                    
+
                     if ($response->successful()) {
                         $data = $response->json();
                         $currentPriceValue = (float) $data['lastPrice'];
@@ -471,20 +471,20 @@ class MarketDataService
                     ];
                 }
                 break;
-                
+
             case 'forex':
                 try {
                     $base = substr($symbol, 0, 3);
                     $quote = substr($symbol, 3, 3);
                     $forexSymbol = "{$base}{$quote}=X";
-                    
+
                     Log::info("Fetching forex data for {$forexSymbol}");
-                    
+
                     $response = Http::timeout(15)->get("https://query1.finance.yahoo.com/v8/finance/chart/{$forexSymbol}", [
                         'interval' => '1d',
                         'range' => '1d'
                     ]);
-                    
+
                     if ($response->successful()) {
                         $data = $response->json();
                         if (isset($data['chart']['result'][0]['meta']['regularMarketPrice'])) {
@@ -512,7 +512,7 @@ class MarketDataService
                     ];
                 }
                 break;
-                
+
             case 'stock':
             default:
                 try {
@@ -520,7 +520,7 @@ class MarketDataService
                         'interval' => '1d',
                         'range' => '1d'
                     ]);
-                    
+
                     if ($response->successful()) {
                         $data = $response->json();
                         if (isset($data['chart']['result'][0]['meta']['regularMarketPrice'])) {
@@ -548,7 +548,7 @@ class MarketDataService
 
         $rsi = $this->calculateRSI($symbol);
         $macd = $this->calculateMACD($symbol);
-        
+
         // Check data sufficiency and quality
         $dataQuality = 'full';
         if ($rsi === null && $macd === null) {
@@ -557,7 +557,7 @@ class MarketDataService
                 'error' => "Insufficient candle data for {$symbol} analysis. Need at least 50 historical data points."
             ];
         }
-        
+
         // Detect flat/low-variance data
         $isDataFlat = false;
         if ($rsi === 50.0 && $macd !== null && abs($macd['macd']) < 0.00001) {
@@ -568,7 +568,7 @@ class MarketDataService
         $signals = [];
         $reasons = [];
         $flipConditions = [];
-        
+
         // Start confidence at 1 (baseline)
         $confidence = 1;
         $signalDirection = 0; // -1 bearish, 0 neutral, 1 bullish
@@ -627,7 +627,7 @@ class MarketDataService
                 $flipConditions[] = "Price rises above EMA12";
             }
         }
-        
+
         // Clamp confidence to 1-5 range
         $confidence = max(1, min(5, $confidence));
 
@@ -650,12 +650,12 @@ class MarketDataService
             $reasons[] = "Indicators conflict or neutral";
             $flipConditions[] = "Wait for clearer trend signals";
         }
-        
+
         // Format price based on market type
         $formattedPrice = $this->formatPrice($currentPriceValue, $marketType, $symbol);
-        
+
         // Determine data source
-        $source = match($marketType) {
+        $source = match ($marketType) {
             'token' => 'DexScreener',
             'crypto' => 'Binance',
             'forex' => 'Yahoo Finance (FX)',
@@ -682,7 +682,7 @@ class MarketDataService
             'is_data_flat' => $isDataFlat,
         ];
     }
-    
+
     /**
      * Format price based on market type
      */
@@ -691,15 +691,15 @@ class MarketDataService
         if ($price === null) {
             return 'N/A';
         }
-        
+
         if ($marketType === 'stock') {
             return '$' . number_format($price, 2);
         }
-        
+
         if ($marketType === 'forex') {
             return number_format($price, 5);
         }
-        
+
         if ($marketType === 'crypto') {
             // Extract quote currency (e.g., USDT from BTCUSDT)
             $quote = 'USD';
@@ -707,14 +707,14 @@ class MarketDataService
             elseif (str_ends_with($symbol, 'USDC')) $quote = 'USDC';
             elseif (str_ends_with($symbol, 'BTC')) $quote = 'BTC';
             elseif (str_ends_with($symbol, 'ETH')) $quote = 'ETH';
-            
+
             return number_format($price, 8) . ' ' . $quote;
         }
-        
+
         if ($marketType === 'token') {
             return '$' . number_format($price, 8);
         }
-        
+
         return number_format($price, 8);
     }
 }

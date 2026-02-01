@@ -618,12 +618,12 @@ class CommandHandler
         $message .= "\n*Overall Signal:*\n";
         $message .= $analysis['emoji'] . " *" . $analysis['recommendation'] . "*\n";
         $message .= "_Confidence: " . $analysis['confidence'] . "/5_\n";
-        
+
         // Add reasoning
         if (!empty($analysis['reasons'])) {
             $message .= "\n*Reasoning:* " . implode(', ', $analysis['reasons']) . "\n";
         }
-        
+
         // Add flip conditions
         if (!empty($analysis['flip_conditions'])) {
             $message .= "\n*Flip if:* " . implode(' OR ', $analysis['flip_conditions']) . "\n";
@@ -946,7 +946,7 @@ class CommandHandler
         $message .= "  • Confidence scoring: 1-5 (never negative)\n";
         $message .= "  • Signal reasoning & flip conditions\n";
         $message .= "  • Market metadata (source, timeframe, updated)\n\n";
-        
+
         $message .= "🔍 Enhanced Token Verification\n";
         $message .= "  • 7 weighted risk factors with breakdown\n";
         $message .= "  • RAW METRICS section (holder count, supply)\n";

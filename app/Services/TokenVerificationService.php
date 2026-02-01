@@ -418,38 +418,38 @@ class TokenVerificationService
     private function verifySolanaToken(string $address): array
     {
         $apiKey = env('SOLSCAN_API_KEY');
-        
+
         Log::info('Verifying Solana token', ['address' => $address, 'has_api_key' => !empty($apiKey)]);
-        
+
         // Try authenticated v2 API first
         if ($apiKey) {
             try {
                 $headers = ['token' => $apiKey];
                 $url = "https://pro-api.solscan.io/v2.0/token/meta?address={$address}";
-                
+
                 Log::info('Attempting Solscan v2 API', ['url' => $url]);
-                
+
                 $response = Http::timeout(20)
                     ->withHeaders($headers)
                     ->get($url);
-                
+
                 if ($response->successful()) {
                     $data = $response->json();
-                    
+
                     // Get token holders count
                     $holdersUrl = "https://pro-api.solscan.io/v2.0/token/holders?address={$address}&page=1&page_size=1";
                     $holdersResponse = Http::timeout(15)
                         ->withHeaders($headers)
                         ->get($holdersUrl);
-                    
+
                     $holdersCount = 0;
                     if ($holdersResponse->successful()) {
                         $holdersData = $holdersResponse->json();
                         $holdersCount = $holdersData['data']['total'] ?? 0;
                     }
-                    
+
                     Log::info('Solscan v2 API success', ['name' => $data['data']['name'] ?? 'Unknown']);
-                    
+
                     return [
                         'chain' => 'Solana',
                         'address' => $address,
@@ -464,25 +464,25 @@ class TokenVerificationService
                         'explorer_url' => "https://solscan.io/token/{$address}",
                     ];
                 }
-                
+
                 Log::warning('Solscan v2 API failed', ['status' => $response->status()]);
             } catch (\Exception $e) {
                 Log::warning('Solscan v2 API exception', ['error' => $e->getMessage()]);
             }
         }
-        
+
         // Fallback to public API v1 (no authentication required)
         try {
             Log::info('Falling back to Solscan public API');
-            
+
             $publicUrl = "https://public-api.solscan.io/token/meta?tokenAddress={$address}";
             $publicResponse = Http::timeout(20)->get($publicUrl);
-            
+
             if ($publicResponse->successful()) {
                 $data = $publicResponse->json();
-                
+
                 Log::info('Solscan public API success', ['name' => $data['name'] ?? 'Unknown']);
-                
+
                 return [
                     'chain' => 'Solana',
                     'address' => $address,
@@ -498,12 +498,12 @@ class TokenVerificationService
                     'limited_data' => true,
                 ];
             }
-            
+
             Log::error('Solscan public API failed', ['status' => $publicResponse->status()]);
         } catch (\Exception $e) {
             Log::error('Solscan public API exception', ['error' => $e->getMessage()]);
         }
-        
+
         // All APIs failed - return error
         return [
             'chain' => 'Solana',
@@ -896,9 +896,9 @@ class TokenVerificationService
     {
         // Trim and clean input
         $input = trim($input);
-        
+
         Log::info('Chain detection started', ['input' => $input, 'length' => strlen($input)]);
-        
+
         if (str_starts_with($input, 'EQ') || str_starts_with($input, 'UQ')) {
             Log::info('Detected TON chain');
             return 'ton';
@@ -908,17 +908,17 @@ class TokenVerificationService
             Log::info('Detected Ethereum chain (0x prefix)');
             return 'ethereum';
         }
-        
+
         // Solana addresses are base58 encoded, typically 32-44 characters, no 0x prefix
         // Base58 alphabet: 123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz
         $length = strlen($input);
         Log::info('Checking Solana pattern', ['length' => $length, 'in_range' => ($length >= 32 && $length <= 44)]);
-        
+
         if ($length >= 32 && $length <= 44) {
             // Check if it's valid base58 (no 0, O, I, l characters)
             $isBase58 = preg_match('/^[1-9A-HJ-NP-Za-km-z]{32,44}$/', $input);
             Log::info('Base58 pattern match', ['result' => $isBase58]);
-            
+
             if ($isBase58) {
                 Log::info('Detected Solana address', ['address' => $input, 'length' => $length]);
                 return 'solana';
@@ -937,7 +937,7 @@ class TokenVerificationService
         // Aggressively trim whitespace and newlines
         $input = trim($input);
         $input = preg_replace('/\s+/', '', $input);
-        
+
         return $input;
     }
 }
