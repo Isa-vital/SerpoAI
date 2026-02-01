@@ -212,46 +212,46 @@ class CommandHandler
         $message .= "Hello and welcome.\n";
         $message .= "_You're early — and that is intentional._\n\n";
         $message .= "SERPO AI is currently live in *preview mode* while we continue building a comprehensive multi-market trading intelligence platform. Below is an overview of what is coming next.\n\n";
-        
+
         $message .= "━━━━━━━━━━━━━━━━━━━━\n\n";
-        
+
         $message .= "🧠 *Core Intelligence* (Coming Soon)\n";
         $message .= "• Quant AI Engine\n";
         $message .= "• Multi-Market Scanner (Crypto, Forex, Stocks)\n";
         $message .= "• AI Trade Signals\n";
         $message .= "• Backtesting Lab\n";
         $message .= "• Risk Management Tools\n\n";
-        
+
         $message .= "🤖 *Automated Trading* (Under Construction)\n";
         $message .= "• Copy Trading\n";
         $message .= "• Grid Bots\n";
         $message .= "• DCA Bots\n";
         $message .= "• Arbitrage Systems\n";
         $message .= "• Forex Sniper Bots\n\n";
-        
+
         $message .= "⚙️ *Execution & Liquidity*\n";
         $message .= "• CEX & DEX Trading Access\n";
         $message .= "• Broker & Prop Firm Integrations\n";
         $message .= "• Liquidity Flow Tracking\n\n";
-        
+
         $message .= "🔍 *Transparency & Safety*\n";
         $message .= "• Whale Transaction Tracking\n";
         $message .= "• Token Verification Scanner\n";
         $message .= "• Trust & Risk Scores\n\n";
-        
+
         $message .= "📊 *Trader Workspace*\n";
         $message .= "• Strategy Builder\n";
         $message .= "• Performance Analytics\n";
         $message .= "• Trading Journal\n\n";
-        
+
         $message .= "🔐 *Premium Market Channels*\n";
         $message .= "• Crypto Premium\n";
         $message .= "• Forex Premium\n";
         $message .= "• Stocks Premium\n";
         $message .= "_(Unlockable via SerpoCoin with on-chain verification)_\n\n";
-        
+
         $message .= "━━━━━━━━━━━━━━━━━━━━\n\n";
-        
+
         $message .= "🚧 *What This Means for You*\n\n";
         $message .= "You are accessing SERPO AI *before* broader public rollout.\n";
         $message .= "Features will unlock progressively as modules go live.\n";
