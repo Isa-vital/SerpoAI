@@ -208,29 +208,67 @@ class CommandHandler
      */
     private function handleStart(int $chatId, User $user)
     {
-        $message = "🚀 *Welcome to SerpoAI!* 🚀\n\n";
-        $message .= "I'm your elite AI trading assistant with human-level intelligence.\n\n";
-        $message .= "*What Makes Me Different:*\n";
-        $message .= "🔥 Natural language search - ask anything\n";
-        $message .= "🔥 Strategy backtesting - text or screenshots\n";
-        $message .= "🔥 Token verification - pro-grade risk assessment\n";
-        $message .= "🔥 Cross-market analysis - 2000+ crypto, forex, stocks\n\n";
-        $message .= "📊 Real-time tracking across ALL markets\n";
-        $message .= "📈 AI-powered technical analysis\n";
-        $message .= "🔔 Smart alerts & whale tracking\n";
-        $message .= "🧠 Education - learn to trade like a pro\n\n";
-        $message .= "Type /help to explore all features!";
+        $message = "🤖 *Welcome to SERPO AI*\n\n";
+        $message .= "Hello and welcome.\n";
+        $message .= "_You're early — and that is intentional._\n\n";
+        $message .= "SERPO AI is currently live in *preview mode* while we continue building a comprehensive multi-market trading intelligence platform. Below is an overview of what is coming next.\n\n";
+        
+        $message .= "━━━━━━━━━━━━━━━━━━━━\n\n";
+        
+        $message .= "🧠 *Core Intelligence* (Coming Soon)\n";
+        $message .= "• Quant AI Engine\n";
+        $message .= "• Multi-Market Scanner (Crypto, Forex, Stocks)\n";
+        $message .= "• AI Trade Signals\n";
+        $message .= "• Backtesting Lab\n";
+        $message .= "• Risk Management Tools\n\n";
+        
+        $message .= "🤖 *Automated Trading* (Under Construction)\n";
+        $message .= "• Copy Trading\n";
+        $message .= "• Grid Bots\n";
+        $message .= "• DCA Bots\n";
+        $message .= "• Arbitrage Systems\n";
+        $message .= "• Forex Sniper Bots\n\n";
+        
+        $message .= "⚙️ *Execution & Liquidity*\n";
+        $message .= "• CEX & DEX Trading Access\n";
+        $message .= "• Broker & Prop Firm Integrations\n";
+        $message .= "• Liquidity Flow Tracking\n\n";
+        
+        $message .= "🔍 *Transparency & Safety*\n";
+        $message .= "• Whale Transaction Tracking\n";
+        $message .= "• Token Verification Scanner\n";
+        $message .= "• Trust & Risk Scores\n\n";
+        
+        $message .= "📊 *Trader Workspace*\n";
+        $message .= "• Strategy Builder\n";
+        $message .= "• Performance Analytics\n";
+        $message .= "• Trading Journal\n\n";
+        
+        $message .= "🔐 *Premium Market Channels*\n";
+        $message .= "• Crypto Premium\n";
+        $message .= "• Forex Premium\n";
+        $message .= "• Stocks Premium\n";
+        $message .= "_(Unlockable via SerpoCoin with on-chain verification)_\n\n";
+        
+        $message .= "━━━━━━━━━━━━━━━━━━━━\n\n";
+        
+        $message .= "🚧 *What This Means for You*\n\n";
+        $message .= "You are accessing SERPO AI *before* broader public rollout.\n";
+        $message .= "Features will unlock progressively as modules go live.\n";
+        $message .= "You are welcome to explore, ask questions, and follow development updates.\n\n";
+        $message .= "_There is no pressure — only progress._\n\n";
+        $message .= "Type /help to see available commands 🚀";
 
         $keyboard = [
             'inline_keyboard' => [
-                [['text' => '🔥 Elite Features', 'callback_data' => '/degen101']],
+                [['text' => '📚 View All Commands', 'callback_data' => '/help']],
                 [
-                    ['text' => '🔍 Deep Search', 'callback_data' => '/search'],
-                    ['text' => '📊 Backtest', 'callback_data' => '/backtest']
+                    ['text' => '🔍 Verify Token', 'callback_data' => '/verify'],
+                    ['text' => '📊 Trading Signals', 'callback_data' => '/signals']
                 ],
                 [
-                    ['text' => '🧠 Verify Token', 'callback_data' => '/verify'],
-                    ['text' => '📚 Help', 'callback_data' => '/help']
+                    ['text' => '📰 Latest News', 'callback_data' => '/news'],
+                    ['text' => '🐋 Whale Tracker', 'callback_data' => '/whales']
                 ],
             ]
         ];
@@ -246,71 +284,101 @@ class CommandHandler
         $message = "🤖 *SerpoAI Trading Assistant*\n";
         $message .= "━━━━━━━━━━━━━━━━━━━━\n\n";
 
-        $message .= "*� TRADING SIGNALS (NEW)*\n";
+        $message .= "*📊 TRADING SIGNALS*\n";
         $message .= "/signals [symbol] - Professional trading signals\n";
         $message .= "  • Crypto: `BTCUSDT`, `ETHUSDT`, `BNBUSDT`\n";
         $message .= "  • Stocks: `AAPL`, `TSLA`, `MSFT`\n";
         $message .= "  • Forex: `EURUSD`, `GBPUSD`, `XAUUSD`\n";
-        $message .= "  • Token: `SERPO`\n";
-        $message .= "Features: RSI, MACD, EMAs, confidence scoring (1-5)\n";
-        $message .= "Includes: Reasoning, flip conditions, market metadata\n\n";
+        $message .= "  • Token: `SERPO`\n\n";
 
         $message .= "*🔍 TOKEN VERIFICATION*\n";
         $message .= "/verify [address] - Professional token analysis\n";
-        $message .= "  • Transparent risk scoring (7 weighted factors)\n";
-        $message .= "  • RAW METRICS: holder count, supply, verification\n";
-        $message .= "  • Ownership detection (renounced/active/unknown)\n";
-        $message .= "  • Profile analysis & differentiation\n";
-        $message .= "  • Works without API keys (public endpoints)\n\n";
+        $message .= "  • Transparent risk scoring (7 factors)\n";
+        $message .= "  • RAW METRICS: holder count, supply, verification\n\n";
 
-        $message .= "*📊 Market Intelligence*\n";
+        $message .= "*📊 MARKET INTELLIGENCE*\n";
         $message .= "/price [symbol] - Current price (all markets)\n";
         $message .= "/chart [symbol] [tf] - TradingView charts\n";
         $message .= "/analyze [symbol] - AI-powered analysis\n";
         $message .= "/sentiment [symbol] - Market sentiment\n";
+        $message .= "/scan - Market scanner\n";
         $message .= "/radar - Top movers & market radar\n\n";
 
-        $message .= "*📈 Technical Analysis*\n";
+        $message .= "*📈 TECHNICAL ANALYSIS*\n";
         $message .= "/sr [symbol] - Support/Resistance levels\n";
         $message .= "/rsi [symbol] - Multi-timeframe RSI\n";
-        $message .= "/oi [symbol] - Open interest (crypto)\n\n";
+        $message .= "/oi [symbol] - Open interest (crypto)\n";
+        $message .= "/divergence [symbol] - Divergence detection\n";
+        $message .= "/cross [symbol] - Moving average crossovers\n";
+        $message .= "/trends [symbol] - Trend analysis\n";
+        $message .= "/fibo [symbol] - Fibonacci retracements\n\n";
 
-        $message .= "*� Alerts & Notifications*\n";
+        $message .= "*💰 DERIVATIVES & MONEY FLOW*\n";
+        $message .= "/flow [symbol] - Money flow analysis\n";
+        $message .= "/rates [symbol] - Funding rates\n";
+        $message .= "/liquidation [symbol] - Liquidation data\n";
+        $message .= "/orderbook [symbol] - Order book depth\n\n";
+
+        $message .= "*🔔 ALERTS*\n";
         $message .= "/alerts - Manage price alerts\n";
         $message .= "/setalert [symbol] [price] - Set alert\n";
         $message .= "/myalerts - View active alerts\n\n";
 
-        $message .= "*🎭 AI Features*\n";
+        $message .= "*🤖 AI FEATURES*\n";
         $message .= "/predict [symbol] - AI price predictions\n";
-        $message .= "/aisentiment [symbol] - Social sentiment\n";
-        $message .= "/ask [question] - Ask trading questions\n\n";
+        $message .= "/aisentiment [symbol] - AI social sentiment\n";
+        $message .= "/ask [question] - Ask trading questions\n";
+        $message .= "/explain [topic] - Explain trading concepts\n";
+        $message .= "/query [question] - Natural language search\n";
+        $message .= "/recommend - Get recommendations\n\n";
 
-        $message .= "*📰 News & Information*\n";
+        $message .= "*🔎 ELITE FEATURES*\n";
+        $message .= "/search [query] - Deep market search\n";
+        $message .= "/backtest [strategy] - Strategy backtesting\n";
+        $message .= "/degen101 - Degen trading guide\n\n";
+
+        $message .= "*📰 NEWS & RESEARCH*\n";
         $message .= "/news - Latest crypto news\n";
-        $message .= "/whales - Whale transaction tracker\n\n";
+        $message .= "/calendar - Economic calendar\n";
+        $message .= "/daily - Daily market report\n";
+        $message .= "/weekly - Weekly market report\n";
+        $message .= "/whales - Whale tracker\n";
+        $message .= "/whale [params] - Custom whale alerts\n\n";
 
-        $message .= "*👤 Account*\n";
+        $message .= "*📊 CHARTS & VISUALIZATION*\n";
+        $message .= "/charts [symbol] - Advanced charts\n";
+        $message .= "/supercharts [symbol] - Super charts\n";
+        $message .= "/heatmap [type] - Market heatmaps\n\n";
+
+        $message .= "*📚 LEARNING*\n";
+        $message .= "/learn [topic] - Educational content\n";
+        $message .= "/glossary [term] - Trading glossary\n\n";
+
+        $message .= "*💼 PORTFOLIO & TRADING*\n";
+        $message .= "/portfolio - View your portfolio\n";
+        $message .= "/addwallet [address] - Add wallet\n";
+        $message .= "/removewallet [address] - Remove wallet\n";
+        $message .= "/copy - Copy trading\n";
+        $message .= "/trader [id] - Trader profile\n";
+        $message .= "/trendcoins - Trending coins\n\n";
+
+        $message .= "*🔐 TOKEN METRICS*\n";
+        $message .= "/unlock [symbol] - Token unlocks\n";
+        $message .= "/burn [symbol] - Token burns\n\n";
+
+        $message .= "*👤 ACCOUNT*\n";
         $message .= "/profile - Your trading profile\n";
         $message .= "/settings - Bot settings\n";
+        $message .= "/language - Change language\n";
+        $message .= "/premium - Premium features\n";
         $message .= "/about - About SerpoAI\n\n";
 
         $message .= "━━━━━━━━━━━━━━━━━━━━\n";
-        $message .= "💡 *Quick Start Examples:*\n";
-        $message .= "• `/signals BTCUSDT` - Bitcoin trading signals\n";
-        $message .= "• `/signals AAPL` - Apple stock signals\n";
-        $message .= "• `/signals EURUSD` - EUR/USD forex signals\n";
-        $message .= "• `/signals SERPO` - SERPO token signals\n";
-        $message .= "• `/verify 0xAddress` - Verify any token\n";
-        $message .= "• `/chart BTCUSDT 1H` - Bitcoin hourly chart\n";
-        $message .= "• `/price SERPO` - Current SERPO price\n";
-        $message .= "• `/analyze ETHUSDT` - AI Ethereum analysis\n\n";
-
-        $message .= "✨ *Key Features:*\n";
-        $message .= "✅ Multi-market support (Crypto/Stocks/Forex)\n";
-        $message .= "✅ Professional confidence scoring (1-5)\n";
-        $message .= "✅ Transparent risk analysis with raw data\n";
-        $message .= "✅ Real-time data from Binance, Yahoo Finance\n";
-        $message .= "✅ Free to use, no API keys required\n\n";
+        $message .= "💡 *Quick Start:*\n";
+        $message .= "• `/signals BTCUSDT` - Bitcoin signals\n";
+        $message .= "• `/verify 0xAddress` - Verify token\n";
+        $message .= "• `/chart BTCUSDT 1H` - Bitcoin chart\n";
+        $message .= "• `/rsi BTC binance` - RSI analysis\n\n";
 
         $message .= "Type any command to get started! 🚀";
 
