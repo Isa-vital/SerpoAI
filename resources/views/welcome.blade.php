@@ -14,14 +14,14 @@
 
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-            background: #0a0e27;
+            background: #050a1f;
             color: #ffffff;
             line-height: 1.6;
             overflow-x: hidden;
             position: relative;
         }
 
-        /* Starfield effect */
+        /* Enhanced Circuit Board Pattern */
         body::after {
             content: '';
             position: fixed;
@@ -29,32 +29,42 @@
             left: 0;
             width: 100%;
             height: 100%;
-            background:
-                radial-gradient(2px 2px at 20px 30px, rgba(0, 255, 255, 0.3), transparent),
-                radial-gradient(2px 2px at 60px 70px, rgba(0, 255, 255, 0.3), transparent),
-                radial-gradient(1px 1px at 50px 50px, rgba(0, 255, 0, 0.3), transparent),
-                radial-gradient(1px 1px at 130px 80px, rgba(0, 255, 255, 0.3), transparent),
-                radial-gradient(2px 2px at 90px 10px, rgba(0, 255, 0, 0.3), transparent);
-            background-size: 200px 200px;
-            background-position: 0 0, 40px 60px, 130px 270px, 70px 100px, 150px 50px;
+            background-image: 
+                linear-gradient(90deg, rgba(0, 255, 255, 0.03) 1px, transparent 1px),
+                linear-gradient(rgba(0, 255, 255, 0.03) 1px, transparent 1px),
+                radial-gradient(2px 2px at 20px 30px, rgba(0, 255, 255, 0.4), transparent),
+                radial-gradient(2px 2px at 60px 70px, rgba(0, 255, 255, 0.4), transparent),
+                radial-gradient(1px 1px at 50px 50px, rgba(0, 255, 0, 0.4), transparent),
+                radial-gradient(1px 1px at 130px 80px, rgba(0, 255, 255, 0.4), transparent),
+                radial-gradient(2px 2px at 90px 10px, rgba(0, 255, 0, 0.4), transparent);
+            background-size: 
+                100px 100px,
+                100px 100px,
+                200px 200px,
+                200px 200px,
+                200px 200px,
+                200px 200px,
+                200px 200px;
+            background-position: 
+                -1px -1px,
+                -1px -1px,
+                0 0, 40px 60px, 130px 270px, 70px 100px, 150px 50px;
             pointer-events: none;
             z-index: 0;
-            animation: twinkle 3s ease-in-out infinite;
+            animation: twinkle 3s ease-in-out infinite, gridMove 20s linear infinite;
         }
 
         @keyframes twinkle {
-
-            0%,
-            100% {
-                opacity: 0.3;
-            }
-
-            50% {
-                opacity: 0.6;
-            }
+            0%, 100% { opacity: 0.4; }
+            50% { opacity: 0.7; }
         }
 
-        /* Background gradient overlay */
+        @keyframes gridMove {
+            0% { background-position: -1px -1px, -1px -1px, 0 0, 40px 60px, 130px 270px, 70px 100px, 150px 50px; }
+            100% { background-position: -1px -1px, -1px -1px, 200px 200px, 240px 260px, 330px 470px, 270px 300px, 350px 250px; }
+        }
+
+        /* Background gradient overlay with animated pulse */
         body::before {
             content: '';
             position: fixed;
@@ -62,9 +72,17 @@
             left: 0;
             width: 100%;
             height: 100%;
-            background: radial-gradient(ellipse at center, rgba(0, 255, 255, 0.08) 0%, transparent 70%);
+            background: 
+                radial-gradient(ellipse at 20% 30%, rgba(0, 255, 255, 0.12) 0%, transparent 50%),
+                radial-gradient(ellipse at 80% 70%, rgba(0, 255, 0, 0.08) 0%, transparent 50%);
             pointer-events: none;
             z-index: 0;
+            animation: pulse 8s ease-in-out infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 0.6; }
+            50% { opacity: 1; }
         }
 
         .container {
@@ -75,10 +93,101 @@
             z-index: 1;
         }
 
+        /* Candlestick Background Pattern */
+        .container::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -200px;
+            width: 100%;
+            height: 400px;
+            background-image: 
+                /* Candlesticks */
+                linear-gradient(to bottom, transparent 45%, rgba(0, 255, 0, 0.1) 45%, rgba(0, 255, 0, 0.1) 55%, transparent 55%),
+                linear-gradient(to bottom, transparent 35%, rgba(255, 0, 0, 0.1) 35%, rgba(255, 0, 0, 0.1) 65%, transparent 65%),
+                linear-gradient(to bottom, transparent 50%, rgba(0, 255, 0, 0.1) 50%, rgba(0, 255, 0, 0.1) 70%, transparent 70%),
+                linear-gradient(to bottom, transparent 40%, rgba(255, 0, 0, 0.1) 40%, rgba(255, 0, 0, 0.1) 50%, transparent 50%),
+                linear-gradient(to bottom, transparent 30%, rgba(0, 255, 0, 0.1) 30%, rgba(0, 255, 0, 0.1) 55%, transparent 55%);
+            background-size: 30px 100%, 30px 100%, 30px 100%, 30px 100%, 30px 100%;
+            background-position: 0 0, 40px 0, 80px 0, 120px 0, 160px 0;
+            opacity: 0.3;
+            pointer-events: none;
+            z-index: -1;
+            animation: slideCandles 20s linear infinite;
+        }
+
+        @keyframes slideCandles {
+            0% { transform: translateX(0); }
+            100% { transform: translateX(200px); }
+        }
+
+        /* Trading Chart Line */
+        .chart-line {
+            position: fixed;
+            top: 20%;
+            right: 0;
+            width: 40%;
+            height: 200px;
+            opacity: 0.15;
+            pointer-events: none;
+            z-index: 0;
+        }
+
+        .chart-line::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(to bottom right, 
+                transparent 0%, transparent 40%,
+                rgba(0, 255, 255, 0.4) 41%, rgba(0, 255, 255, 0.4) 42%,
+                transparent 43%, transparent 48%,
+                rgba(0, 255, 255, 0.4) 49%, rgba(0, 255, 255, 0.4) 50%,
+                transparent 51%, transparent 100%
+            );
+            animation: chartPulse 3s ease-in-out infinite;
+        }
+
+        @keyframes chartPulse {
+            0%, 100% { opacity: 0.5; }
+            50% { opacity: 1; }
+        }
+
         /* Header */
         header {
             padding: 20px 0;
-            border-bottom: 1px solid rgba(0, 255, 255, 0.2);
+            border-bottom: 2px solid transparent;
+            border-image: linear-gradient(90deg, transparent, rgba(0, 255, 255, 0.5), transparent) 1;
+            backdrop-filter: blur(10px);
+            background: rgba(10, 14, 39, 0.6);
+            position: relative;
+            overflow: hidden;
+        }
+
+        /* Price Ticker Animation */
+        header::before {
+            content: '📊 BTC $98,234 +2.4% • ETH $3,456 +1.8% • SOL $145 +5.2% • SERPO $0.0034 +12.7% • BTC $98,234 +2.4% • ETH $3,456 +1.8%';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 200%;
+            height: 20px;
+            background: rgba(0, 255, 255, 0.05);
+            font-size: 11px;
+            color: rgba(0, 255, 255, 0.6);
+            display: flex;
+            align-items: center;
+            white-space: nowrap;
+            animation: tickerScroll 30s linear infinite;
+            font-family: 'Courier New', monospace;
+            letter-spacing: 1px;
+        }
+
+        @keyframes tickerScroll {
+            0% { transform: translateX(0); }
+            100% { transform: translateX(-50%); }
         }
 
         .header-content {
@@ -101,10 +210,17 @@
         .logo-text {
             font-size: 24px;
             font-weight: bold;
-            background: linear-gradient(90deg, #00ffff 0%, #00ff00 100%);
+            background: linear-gradient(135deg, #00ffff 0%, #00ff00 100%);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
             background-clip: text;
+            text-shadow: 0 0 30px rgba(0, 255, 255, 0.5);
+            animation: glow 2s ease-in-out infinite;
+        }
+
+        @keyframes glow {
+            0%, 100% { filter: brightness(1); }
+            50% { filter: brightness(1.3); }
         }
 
         /* Beta Banner */
@@ -147,6 +263,19 @@
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
             background-clip: text;
+            position: relative;
+        }
+
+        .hero h1::after {
+            content: '';
+            position: absolute;
+            bottom: -10px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 200px;
+            height: 2px;
+            background: linear-gradient(90deg, transparent, #00ffff, #00ff00, transparent);
+            box-shadow: 0 0 10px rgba(0, 255, 255, 0.5);
         }
 
         .hero p {
@@ -177,24 +306,62 @@
         }
 
         .btn-primary {
-            background: linear-gradient(90deg, #00ffff 0%, #00ff00 100%);
+            background: linear-gradient(135deg, #00ffff 0%, #00ff00 100%);
             color: #0a0e27;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .btn-primary::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.3), transparent);
+            transition: left 0.5s;
+        }
+
+        .btn-primary:hover::before {
+            left: 100%;
         }
 
         .btn-primary:hover {
-            box-shadow: 0 0 30px rgba(0, 255, 255, 0.5);
-            transform: translateY(-2px);
+            box-shadow: 0 0 40px rgba(0, 255, 255, 0.6), 0 0 60px rgba(0, 255, 255, 0.3);
+            transform: translateY(-3px);
         }
 
         .btn-secondary {
             background: rgba(10, 14, 39, 0.8);
             color: #00ffff;
-            border: 1px solid #00ffff;
+            border: 2px solid #00ffff;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .btn-secondary::after {
+            content: '';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 0;
+            height: 0;
+            border-radius: 50%;
+            background: rgba(0, 255, 255, 0.2);
+            transform: translate(-50%, -50%);
+            transition: width 0.6s, height 0.6s;
+        }
+
+        .btn-secondary:hover::after {
+            width: 300px;
+            height: 300px;
         }
 
         .btn-secondary:hover {
-            background: rgba(0, 255, 255, 0.1);
-            box-shadow: 0 0 20px rgba(0, 255, 255, 0.3);
+            background: rgba(0, 255, 255, 0.15);
+            box-shadow: 0 0 30px rgba(0, 255, 255, 0.4);
+            border-color: #00ff00;
         }
 
         /* Features Section */
@@ -220,17 +387,49 @@
         }
 
         .feature-card {
-            background: rgba(10, 14, 39, 0.8);
+            background: rgba(10, 14, 39, 0.9);
             border: 1px solid rgba(0, 255, 255, 0.2);
             border-radius: 12px;
             padding: 30px;
-            transition: all 0.3s ease;
+            transition: all 0.4s ease;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .feature-card::before {
+            content: '';
+            position: absolute;
+            top: -2px;
+            left: -2px;
+            right: -2px;
+            bottom: -2px;
+            background: linear-gradient(45deg, #00ffff, #00ff00, #00ffff);
+            border-radius: 12px;
+            opacity: 0;
+            z-index: -1;
+            transition: opacity 0.4s;
+        }
+
+        .feature-card:hover::before {
+            opacity: 1;
+        }
+
+        .feature-card::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(10, 14, 39, 0.95);
+            border-radius: 12px;
+            z-index: -1;
         }
 
         .feature-card:hover {
-            border-color: rgba(0, 255, 255, 0.5);
-            box-shadow: 0 0 30px rgba(0, 255, 255, 0.2);
-            transform: translateY(-5px);
+            border-color: transparent;
+            box-shadow: 0 0 40px rgba(0, 255, 255, 0.3);
+            transform: translateY(-8px);
         }
 
         .feature-icon {
@@ -299,6 +498,23 @@
             overflow: hidden;
             transition: all 0.4s ease;
             position: relative;
+        }
+
+        .showcase-card::after {
+            content: '';
+            position: absolute;
+            bottom: 10px;
+            right: 10px;
+            width: 60px;
+            height: 40px;
+            background: 
+                linear-gradient(to bottom, transparent 40%, rgba(0, 255, 0, 0.2) 40%, rgba(0, 255, 0, 0.2) 60%, transparent 60%),
+                linear-gradient(to bottom, transparent 30%, rgba(255, 0, 0, 0.2) 30%, rgba(255, 0, 0, 0.2) 50%, transparent 50%),
+                linear-gradient(to bottom, transparent 50%, rgba(0, 255, 0, 0.2) 50%, rgba(0, 255, 0, 0.2) 70%, transparent 70%);
+            background-size: 15px 100%;
+            background-position: 0 0, 20px 0, 40px 0;
+            opacity: 0.3;
+            pointer-events: none;
         }
 
         .showcase-card:hover {
@@ -554,6 +770,9 @@
 </head>
 
 <body>
+    <!-- Trading Chart Line Decoration -->
+    <div class="chart-line"></div>
+    
     <header>
         <div class="container">
             <div class="header-content">
@@ -673,20 +892,21 @@
                 Experience real bot interactions and see how SERPO AI delivers professional-grade trading intelligence
             </p>
 
-            <h3 style="text-align: center; color: #00ff00; font-size: 20px; margin-top: 50px; margin-bottom: 30px;">✨ Available Now</h3>
+            <h3 style="text-align: center; color: #00ff00; font-size: 20px; margin-top: 50px; margin-bottom: 30px; text-shadow: 0 0 20px rgba(0, 255, 0, 0.5);">✨ Live Features - Available Now</h3>
             
             <div class="showcase-grid">
                 <div class="showcase-card">
                     <img src="/images/photo_1_2026-02-01_08-46-47.jpg" alt="Multi-Market Signals" class="showcase-image">
                     <div class="showcase-content">
                         <span class="showcase-badge live">⚡ Live</span>
-                        <h3 class="showcase-title">Multi-Market Signals</h3>
+                        <h3 class="showcase-title">Multi-Market Trading Signals</h3>
                         <p class="showcase-description">
-                            Professional trading signals across Crypto, Forex, and Stocks with AI-powered confidence scoring
+                            Professional trading signals across Crypto, Forex, and Stocks with AI-powered confidence scoring from 1 to 5
                         </p>
                         <ul class="showcase-features">
-                            <li>1-5 confidence scoring system</li>
+                            <li>Confidence scoring system (1-5)</li>
                             <li>Clear reasoning & flip conditions</li>
+                            <li>RSI, MACD, EMA analysis</li>
                             <li>Real-time market metadata</li>
                         </ul>
                     </div>
@@ -696,14 +916,15 @@
                     <img src="/images/photo_2_2026-02-01_08-46-47.jpg" alt="Token Verification" class="showcase-image">
                     <div class="showcase-content">
                         <span class="showcase-badge live">⚡ Live</span>
-                        <h3 class="showcase-title">Token Verification</h3>
+                        <h3 class="showcase-title">Token Verification Scanner</h3>
                         <p class="showcase-description">
-                            Transparent risk assessment with professional-grade scoring across 7 weighted factors
+                            Transparent risk assessment with professional-grade scoring across 7 weighted factors for any blockchain token
                         </p>
                         <ul class="showcase-features">
+                            <li>7-factor risk scoring</li>
                             <li>Raw metrics & holder analysis</li>
-                            <li>Ownership detection</li>
-                            <li>Works without API keys</li>
+                            <li>Ownership detection (renounced/active)</li>
+                            <li>Works on Solana, Ethereum, BSC, Polygon</li>
                         </ul>
                     </div>
                 </div>
@@ -714,12 +935,13 @@
                         <span class="showcase-badge live">⚡ Live</span>
                         <h3 class="showcase-title">Advanced Technical Analysis</h3>
                         <p class="showcase-description">
-                            Multi-timeframe RSI, support/resistance, and comprehensive indicator suite
+                            Multi-timeframe RSI heatmaps, support/resistance levels, and comprehensive indicator suite for precise entries
                         </p>
                         <ul class="showcase-features">
-                            <li>RSI heatmaps across timeframes</li>
-                            <li>Fibonacci & divergence detection</li>
-                            <li>Moving average crossovers</li>
+                            <li>RSI heatmaps (15m, 1H, 4H, 1D)</li>
+                            <li>Support & resistance detection</li>
+                            <li>Fibonacci retracements</li>
+                            <li>Divergence & crossover alerts</li>
                         </ul>
                     </div>
                 </div>
@@ -730,12 +952,13 @@
                         <span class="showcase-badge live">⚡ Live</span>
                         <h3 class="showcase-title">Whale Transaction Tracker</h3>
                         <p class="showcase-description">
-                            Real-time monitoring of large transactions and whale movements across multiple chains
+                            Real-time monitoring of large transactions and whale movements across multiple chains with instant alerts
                         </p>
                         <ul class="showcase-features">
-                            <li>Instant whale alerts</li>
+                            <li>Instant whale alerts (>$100K moves)</li>
                             <li>Transaction value & destination</li>
                             <li>Historical whale activity</li>
+                            <li>Multi-chain coverage</li>
                         </ul>
                     </div>
                 </div>
@@ -746,19 +969,20 @@
                         <span class="showcase-badge live">⚡ Live</span>
                         <h3 class="showcase-title">Derivatives & Open Interest</h3>
                         <p class="showcase-description">
-                            Track open interest, funding rates, and liquidation data for informed trading decisions
+                            Track open interest, funding rates, and liquidation data across all major crypto futures for informed trading
                         </p>
                         <ul class="showcase-features">
                             <li>Real-time OI tracking</li>
                             <li>Funding rate analysis</li>
                             <li>Liquidation heatmaps</li>
+                            <li>Long/short ratio monitoring</li>
                         </ul>
                     </div>
                 </div>
             </div>
 
             <div class="section-divider">
-                <span>More Features Coming Soon</span>
+                <span>🚧 Under Construction - Coming Soon</span>
             </div>
 
             <div class="showcase-grid">
@@ -768,12 +992,13 @@
                         <span class="showcase-badge coming">🚀 Coming Soon</span>
                         <h3 class="showcase-title">Automated Trading Bots</h3>
                         <p class="showcase-description">
-                            Copy trading, grid bots, DCA bots, and arbitrage systems for automated profit generation
+                            Copy trading, grid bots, DCA bots, and arbitrage systems for fully automated profit generation
                         </p>
                         <ul class="showcase-features">
                             <li>Set & forget automation</li>
                             <li>Risk-managed strategies</li>
                             <li>Multi-exchange support</li>
+                            <li>24/7 execution</li>
                         </ul>
                     </div>
                 </div>
@@ -784,12 +1009,13 @@
                         <span class="showcase-badge coming">🚀 Coming Soon</span>
                         <h3 class="showcase-title">Strategy Backtesting Lab</h3>
                         <p class="showcase-description">
-                            Test your strategies against historical data with detailed performance analytics
+                            Test your strategies against years of historical data with detailed performance analytics and optimization
                         </p>
                         <ul class="showcase-features">
                             <li>Historical data simulation</li>
-                            <li>Performance metrics</li>
-                            <li>Strategy optimization</li>
+                            <li>Win rate & profit metrics</li>
+                            <li>Strategy optimization tools</li>
+                            <li>Risk/reward analysis</li>
                         </ul>
                     </div>
                 </div>
@@ -800,12 +1026,13 @@
                         <span class="showcase-badge coming">🚀 Coming Soon</span>
                         <h3 class="showcase-title">Quant AI Engine</h3>
                         <p class="showcase-description">
-                            Machine learning-powered predictions and quantitative analysis for edge trading
+                            Machine learning-powered predictions and quantitative analysis giving you the edge in any market
                         </p>
                         <ul class="showcase-features">
-                            <li>ML-powered predictions</li>
-                            <li>Pattern recognition</li>
-                            <li>Adaptive algorithms</li>
+                            <li>ML-powered price predictions</li>
+                            <li>Pattern recognition algorithms</li>
+                            <li>Adaptive learning strategies</li>
+                            <li>Sentiment integration</li>
                         </ul>
                     </div>
                 </div>
@@ -816,12 +1043,13 @@
                         <span class="showcase-badge coming">🚀 Coming Soon</span>
                         <h3 class="showcase-title">Professional Trader Workspace</h3>
                         <p class="showcase-description">
-                            Complete trading suite with strategy builder, analytics, and performance journal
+                            Complete trading suite with visual strategy builder, performance analytics dashboard, and trading journal
                         </p>
                         <ul class="showcase-features">
-                            <li>Visual strategy builder</li>
-                            <li>Performance analytics</li>
+                            <li>Drag & drop strategy builder</li>
+                            <li>Performance analytics dashboard</li>
                             <li>Trading journal & notes</li>
+                            <li>Portfolio tracking</li>
                         </ul>
                     </div>
                 </div>
@@ -832,12 +1060,13 @@
                         <span class="showcase-badge coming">🚀 Coming Soon</span>
                         <h3 class="showcase-title">Premium Market Channels</h3>
                         <p class="showcase-description">
-                            Exclusive crypto, forex, and stock signals unlockable via SerpoCoin with on-chain verification
+                            Exclusive crypto, forex, and stock signals unlockable via SerpoCoin with blockchain-verified access
                         </p>
                         <ul class="showcase-features">
                             <li>On-chain token verification</li>
                             <li>Exclusive high-conviction signals</li>
                             <li>Priority support access</li>
+                            <li>Early feature access</li>
                         </ul>
                     </div>
                 </div>

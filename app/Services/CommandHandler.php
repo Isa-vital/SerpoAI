@@ -5096,9 +5096,19 @@ class CommandHandler
             $message .= "*Supported Chains:*\n";
             $message .= "🔷 TON (Toncoin)\n";
             $message .= "🔷 Ethereum\n";
+            $message .= "🔷 Solana\n";
             $message .= "🔷 BSC (Binance Smart Chain)\n";
+            $message .= "🔷 Polygon\n";
+            $message .= "🔷 Arbitrum\n";
+            $message .= "🔷 Optimism\n";
+            $message .= "🔷 Avalanche\n";
             $message .= "🔷 Base\n\n";
-            $message .= "🎯 Returns: Real blockchain data + risk assessment";
+            $message .= "🎯 Returns: Multi-source blockchain data + risk analysis\n\n";
+            $message .= "*Data Sources:*\n";
+            $message .= "• DexScreener (DEX data, 50+ chains)\n";
+            $message .= "• GeckoTerminal (CoinGecko DEX API)\n";
+            $message .= "• CoinGecko (market data, social metrics)\n";
+            $message .= "• Chain explorers (contract verification)";
 
             $this->telegram->sendMessage($chatId, $message);
             return;
@@ -5110,12 +5120,17 @@ class CommandHandler
         $loadingMsg = $this->telegram->sendMessage($chatId, "🔍 *Stage 1/3:* Detecting blockchain...");
         sleep(1);
 
-        // Detect chain
-        $chain = 'Ethereum'; // Default
-        if (str_starts_with($token, 'EQ')) {
+        // Detect chain (properly handle Solana base58 addresses)
+        $chain = 'Unknown';
+        if (str_starts_with($token, 'EQ') || str_starts_with($token, 'UQ')) {
             $chain = 'TON';
         } elseif (str_starts_with($token, '0x')) {
             $chain = 'EVM (Ethereum/BSC/Base)';
+        } elseif (preg_match('/^[1-9A-HJ-NP-Za-km-z]{32,44}$/', $token)) {
+            // Solana addresses are base58 encoded (32-44 chars, no 0, O, I, l)
+            $chain = 'Solana';
+        } else {
+            $chain = 'Ethereum'; // Fallback
         }
 
         $this->telegram->sendMessage($chatId, "✅ Chain: {$chain}\n\n📡 *Stage 2/3:* Fetching contract data...");
@@ -5126,8 +5141,17 @@ class CommandHandler
 
             $this->telegram->sendMessage($chatId, "✅ Data retrieved\n\n🧮 *Stage 3/3:* Analyzing risk factors...");
 
+            // If error but we have market data, show report with warning
             if (isset($data['error'])) {
-                $this->telegram->sendMessage($chatId, "❌ " . $data['error']);
+                if (isset($data['market_data']) && !empty($data['market_data'])) {
+                    // Show market data report with blockchain verification warning
+                    $message = $this->formatTokenVerificationReport($data);
+                    $message .= "\n\n⚠️ *Blockchain Verification Issue:*\n" . $data['error'];
+                    $this->telegram->sendMessage($chatId, $message);
+                } else {
+                    // No market data either - show error
+                    $this->telegram->sendMessage($chatId, "❌ " . $data['error']);
+                }
                 return;
             }
 
@@ -5151,51 +5175,130 @@ class CommandHandler
         $address = $data['address'] ?? '';
         $riskScore = $data['risk_score'] ?? 50;
         $trustScore = $data['trust_score'] ?? 50;
+        $hasMarketData = isset($data['market_data']) && !empty($data['market_data']);
 
-        // Header with data source
+        // Header with data sources
+        $dataSources = $data['data_sources'] ?? ['Blockchain Explorer'];
+        $sourceList = implode(', ', $dataSources);
         $message = "🧠 *TOKEN VERIFICATION REPORT*\n";
-        $message .= "_Data Source: " . ($data['limited_data'] ?? false ? 'Public APIs' : 'Blockchain Explorers') . "_\n\n";
+        $message .= "_Sources: {$sourceList}_\n\n";
 
         $message .= "🔗 *Chain:* {$chain}\n";
         $message .= "💎 *Token:* {$name} ({$symbol})\n";
         $message .= "📍 *Address:* `" . $this->shortenAddress($address) . "`\n\n";
 
-        // Raw Metrics Section
+        // MARKET DATA SECTION (if available)
+        if ($hasMarketData) {
+            $market = $data['market_data'];
+            $message .= "━━━━━━━━━━━━━━━━━━━━\n";
+            $message .= "💰 *MARKET DATA*\n\n";
+
+            if (isset($market['price_usd']) && $market['price_usd'] > 0) {
+                $message .= "💵 Price: $" . number_format($market['price_usd'], 8) . "\n";
+            }
+
+            // Calculate market cap from on-chain supply if available (more accurate for specific chain)
+            // ALWAYS prioritize supply-based calculation over API market cap for accuracy
+            $marketCap = null;
+            if (isset($data['total_supply']) && $data['total_supply'] > 0 && isset($market['price_usd']) && $market['price_usd'] > 0) {
+                $marketCap = $data['total_supply'] * $market['price_usd'];
+                $message .= "📊 Market Cap: $" . $this->formatLargeNumber($marketCap) . " (on-chain supply)\n";
+            } elseif (isset($market['market_cap']) && $market['market_cap'] > 0) {
+                $marketCap = $market['market_cap'];
+                $message .= "📊 Market Cap: $" . $this->formatLargeNumber($market['market_cap']) . " (aggregated)\n";
+            }
+
+            if (isset($market['liquidity_usd']) && $market['liquidity_usd'] > 0) {
+                $message .= "💧 Liquidity: $" . $this->formatLargeNumber($market['liquidity_usd']) . "\n";
+            }
+
+            if (isset($market['volume_24h']) && $market['volume_24h'] > 0) {
+                $message .= "📈 24h Volume: $" . $this->formatLargeNumber($market['volume_24h']) . "\n";
+            }
+
+            // Price changes
+            if (isset($market['price_change_24h'])) {
+                $change = $market['price_change_24h'];
+                $emoji = $change > 0 ? "📈" : "📉";
+                $prefix = $change > 0 ? "+" : "";
+                $message .= "⏱ 24h Change: {$emoji} {$prefix}" . number_format($change, 2) . "%\n";
+            }
+
+            // Key metrics (skip for stablecoins - not relevant)
+            $isStablecoin = isset($data['market_data']['token_type']['is_stablecoin']) && $data['market_data']['token_type']['is_stablecoin'];
+
+            if (!$isStablecoin && isset($market['liquidity_to_mcap_ratio'])) {
+                $ratio = $market['liquidity_to_mcap_ratio'];
+                $message .= "🔒 Liq/MCap: " . number_format($ratio, 2) . "% ";
+                $message .= ($ratio >= 10 ? "✅" : ($ratio >= 5 ? "⚠️" : "❌")) . "\n";
+            }
+
+            $message .= "\n";
+        }
+
+        // CONTRACT VERIFICATION SECTION
         $message .= "━━━━━━━━━━━━━━━━━━━━\n";
-        $message .= "📊 *RAW METRICS*\n\n";
+        $message .= "🔍 *CONTRACT DATA*\n\n";
 
         if (isset($data['total_supply']) && $data['total_supply'] > 0) {
             $supply = $this->formatLargeNumber($data['total_supply']);
             $message .= "💰 Total Supply: {$supply}\n";
-        } else {
-            $message .= "💰 Total Supply: Unknown (requires API access)\n";
         }
 
         $holderCount = $data['holders_count'] ?? 0;
         if ($holderCount > 0) {
-            $message .= "👥 Holder Count: " . number_format($holderCount) . "\n";
-        } else {
-            $message .= "👥 Holder Count: Unknown (requires API access)\n";
+            $message .= "👥 Holders: " . number_format($holderCount) . "\n";
         }
 
         $verified = $data['verified'] ?? false;
-        $message .= "🔍 Contract Verified: " . ($verified ? "Yes" : "No") . "\n";
+        $message .= "✅ Verified: " . ($verified ? "Yes" : "No") . "\n";
 
-        $hasSource = $data['has_source_code'] ?? false;
-        $message .= "📄 Source Code: " . ($hasSource ? "Available" : "Not available") . "\n";
+        // Source code availability (chain-aware)
+        $isSolana = isset($data['is_spl_token']) && $data['is_spl_token'];
+        $isTon = strtolower($chain) === 'ton';
 
-        $proxy = $data['proxy'] ?? false;
-        $message .= "🔄 Proxy Contract: " . ($proxy ? "Yes" : "No") . "\n";
+        if ($isSolana) {
+            $message .= "🔧 Token Program: SPL Token Program\n";
+        } elseif ($isTon) {
+            $message .= "🔧 Token Standard: Jetton\n";
+        } else {
+            $hasSource = $data['has_source_code'] ?? false;
+            $message .= "📄 Source Code: " . ($hasSource ? "Available" : "Not available") . "\n";
+        }
 
-        // Ownership status with verification
+        // Ownership status (chain-aware)
         $ownershipStatus = $data['ownership_status'] ?? 'unknown';
-        $ownershipText = match ($ownershipStatus) {
-            'renounced' => "Renounced ✅",
-            'active_owner' => "Active (centralized) ⚠️",
-            'unknown' => "Unknown (unverified)",
-            default => "Unknown"
-        };
-        $message .= "👤 Ownership: {$ownershipText}\n\n";
+
+        if ($isSolana) {
+            // SPL token authority display
+            $hasMintAuth = !empty($data['mint_authority']);
+            $hasFreezeAuth = !empty($data['freeze_authority']);
+
+            if ($ownershipStatus === 'immutable') {
+                $message .= "🔒 Mint Authority: Revoked ✅\n";
+                $message .= "🔒 Freeze Authority: Revoked ✅\n";
+            } elseif ($hasMintAuth) {
+                $mintAddr = $this->shortenAddress($data['mint_authority']);
+                $message .= "⚠️ Mint Authority: `{$mintAddr}` (active)\n";
+                if ($hasFreezeAuth) {
+                    $freezeAddr = $this->shortenAddress($data['freeze_authority']);
+                    $message .= "⚠️ Freeze Authority: `{$freezeAddr}` (active)\n";
+                }
+            }
+        } else {
+            // EVM ownership display
+            $ownershipText = match ($ownershipStatus) {
+                'renounced' => "Renounced ✅",
+                'active_owner' => "Active ⚠️",
+                'immutable' => "Immutable ✅",
+                'active_mint_authority' => "Active (Centralized) ⚠️",
+                'unknown' => "Unknown",
+                default => "Unknown"
+            };
+            $message .= "👤 Ownership: {$ownershipText}\n";
+        }
+
+        $message .= "\n";
 
         // Risk Assessment with Score Breakdown
         $riskEmoji = $riskScore > 70 ? '🔴' : ($riskScore > 40 ? '🟡' : '🟢');
@@ -5330,10 +5433,11 @@ class CommandHandler
             $message .= "\n";
         }
 
-        // Explorer Link
+        // Explorer Link (use actual chain-specific explorer)
         if (isset($data['explorer_url'])) {
+            $explorerName = $this->getExplorerName($chain);
             $message .= "━━━━━━━━━━━━━━━━━━━━\n";
-            $message .= "🔗 [View Full Details on Explorer](" . $data['explorer_url'] . ")\n\n";
+            $message .= "🔗 [View on {$explorerName}](" . $data['explorer_url'] . ")\n\n";
         }
 
         // Verdict
@@ -5351,8 +5455,11 @@ class CommandHandler
             $message .= "✅ Better risk profile, but always DYOR.\n";
         }
 
-        // Add note if API keys would provide more data
-        if ($data['limited_data'] ?? false) {
+        // Only show 'Limited Data Mode' for unknown/risky tokens (not for major known assets)
+        $isKnownAsset = isset($data['market_data']['token_type']['is_known_asset']) && $data['market_data']['token_type']['is_known_asset'];
+        $showLimitedDataWarning = ($data['limited_data'] ?? false) && !$isKnownAsset && ($riskScore > 30);
+
+        if ($showLimitedDataWarning) {
             $message .= "\n━━━━━━━━━━━━━━━━━━━━\n";
             $message .= "ℹ️ *Limited Data Mode*\n\n";
             $message .= "This verification used public blockchain data only.\n";
@@ -5387,6 +5494,27 @@ class CommandHandler
             return $address;
         }
         return substr($address, 0, 6) . '...' . substr($address, -4);
+    }
+
+    /**
+     * Get explorer name based on chain
+     */
+    private function getExplorerName(string $chain): string
+    {
+        $explorers = [
+            'ethereum' => 'Etherscan',
+            'bsc' => 'BSCScan',
+            'polygon' => 'PolygonScan',
+            'arbitrum' => 'Arbiscan',
+            'optimism' => 'Optimistic Etherscan',
+            'avalanche' => 'SnowTrace',
+            'fantom' => 'FTMScan',
+            'base' => 'BaseScan',
+            'solana' => 'Solscan',
+            'ton' => 'TONScan',
+        ];
+
+        return $explorers[strtolower($chain)] ?? 'Explorer';
     }
 
     /**

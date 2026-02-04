@@ -14,18 +14,18 @@ class NewsService
     public function getLatestNews(): string
     {
         $news = $this->fetchNewsFromAllSources();
-        
+
         if (empty($news)) {
             return "📰 *CRYPTO NEWS*\n\n❌ Unable to fetch news at the moment. Please try again later.";
         }
 
         $message = "📰 *LATEST CRYPTO NEWS*\n\n";
-        
+
         foreach ($news as $index => $item) {
             $number = $index + 1;
             $source = $item['source'] ?? 'Unknown';
             $time = $this->formatTime($item['published'] ?? '');
-            
+
             $message .= "{$number}. {$item['title']}\n";
             $message .= "   📍 {$source}";
             if ($time) {
@@ -37,7 +37,7 @@ class NewsService
             }
             $message .= "\n";
         }
-        
+
         $message .= "🔄 _Updates from CryptoPanic, CoinGecko, Twitter, and RSS feeds_";
 
         return $message;
@@ -91,7 +91,7 @@ class NewsService
 
         // Shuffle to mix sources
         shuffle($allNews);
-        
+
         return array_slice($allNews, 0, 8); // Return max 8 items
     }
 
@@ -101,7 +101,7 @@ class NewsService
     private function fetchCryptoPanic(int $limit = 2): array
     {
         $apiKey = env('CRYPTOPANIC_API_KEY');
-        
+
         if (!$apiKey) {
             Log::info('CryptoPanic API key not configured');
             return [];
@@ -127,13 +127,13 @@ class NewsService
             }
 
             $results = $response->json()['results'] ?? [];
-            
+
             if (empty($results)) {
                 Log::info('CryptoPanic returned no results');
                 return [];
             }
-            
-            return collect($results)->take($limit)->map(function($item) {
+
+            return collect($results)->take($limit)->map(function ($item) {
                 return [
                     'title' => $item['title'] ?? 'No title',
                     'url' => $item['url'] ?? '',
@@ -165,14 +165,14 @@ class NewsService
 
             $json = $response->json();
             $coins = $json['coins'] ?? [];
-            
+
             if (empty($coins)) {
                 Log::warning('CoinGecko returned empty coins', ['response' => $json]);
                 return [];
             }
-            
+
             // Convert trending coins to news-like format
-            return collect($coins)->take($limit)->map(function($item) {
+            return collect($coins)->take($limit)->map(function ($item) {
                 $coin = $item['item'] ?? $item;
                 return [
                     'title' => "🔥 Trending: " . ($coin['name'] ?? 'Unknown') . " (" . ($coin['symbol'] ?? '') . ") - Rank #" . ($coin['market_cap_rank'] ?? 'N/A'),
@@ -194,11 +194,11 @@ class NewsService
     {
         // Using Reddit as free alternative since Twitter search requires paid tier
         // Fetching from r/CryptoCurrency and r/Bitcoin
-        
+
         try {
             $subreddits = ['CryptoCurrency', 'Bitcoin'];
             $allPosts = [];
-            
+
             foreach ($subreddits as $subreddit) {
                 try {
                     $response = Http::timeout(10)
@@ -211,7 +211,7 @@ class NewsService
 
                     if ($response->successful()) {
                         $posts = $response->json()['data']['children'] ?? [];
-                        
+
                         foreach ($posts as $post) {
                             $data = $post['data'] ?? [];
                             if (!empty($data['title']) && !$data['stickied']) {
@@ -229,10 +229,10 @@ class NewsService
                     Log::warning("Reddit r/{$subreddit} fetch failed", ['error' => $e->getMessage()]);
                 }
             }
-            
+
             // Sort by score and return top items
             usort($allPosts, fn($a, $b) => $b['score'] - $a['score']);
-            
+
             return array_slice($allPosts, 0, $limit);
         } catch (\Exception $e) {
             Log::warning('Reddit fetch failed', ['error' => $e->getMessage()]);
@@ -261,20 +261,20 @@ class NewsService
             if (count($allItems) >= $limit) {
                 break;
             }
-            
+
             try {
                 $response = Http::timeout(8)->get($feedUrl); // Increased timeout
-                
+
                 if ($response->successful()) {
                     $xml = @simplexml_load_string($response->body());
-                    
+
                     if ($xml && isset($xml->channel->item)) {
                         $count = 0;
                         foreach ($xml->channel->item as $item) {
                             if ($count >= $itemsPerFeed) {
                                 break;
                             }
-                            
+
                             $allItems[] = [
                                 'title' => (string)$item->title,
                                 'url' => (string)$item->link,

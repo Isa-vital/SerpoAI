@@ -21,42 +21,8 @@ class TelegramBotService
      */
     private function escapeMarkdown(string $text): string
     {
-        // Escape special Markdown characters that aren't part of intended formatting
-        // But preserve intended formatting like *bold* and _italic_
-
-        // First, protect already formatted text by temporarily replacing it
-        $text = preg_replace_callback('/\*([^*]+)\*/', function ($matches) {
-            return '⚡BOLD⚡' . base64_encode($matches[1]) . '⚡ENDBOLD⚡';
-        }, $text);
-
-        $text = preg_replace_callback('/_([^_]+)_/', function ($matches) {
-            return '⚡ITALIC⚡' . base64_encode($matches[1]) . '⚡ENDITALIC⚡';
-        }, $text);
-
-        $text = preg_replace_callback('/`([^`]+)`/', function ($matches) {
-            return '⚡CODE⚡' . base64_encode($matches[1]) . '⚡ENDCODE⚡';
-        }, $text);
-
-        // Escape special characters in the remaining text
-        $text = str_replace(
-            ['\\', '_', '*', '[', ']', '(', ')'],
-            ['\\\\', '\\_', '\\*', '\\[', '\\]', '\\(', '\\)'],
-            $text
-        );
-
-        // Restore the protected formatting
-        $text = preg_replace_callback('/⚡BOLD⚡([^⚡]+)⚡ENDBOLD⚡/', function ($matches) {
-            return '*' . base64_decode($matches[1]) . '*';
-        }, $text);
-
-        $text = preg_replace_callback('/⚡ITALIC⚡([^⚡]+)⚡ENDITALIC⚡/', function ($matches) {
-            return '_' . base64_decode($matches[1]) . '_';
-        }, $text);
-
-        $text = preg_replace_callback('/⚡CODE⚡([^⚡]+)⚡ENDCODE⚡/', function ($matches) {
-            return '`' . base64_decode($matches[1]) . '`';
-        }, $text);
-
+        // Don't escape markdown - Telegram's Markdown parser handles it correctly
+        // Only escape if there are special characters that could break parsing
         return $text;
     }
 

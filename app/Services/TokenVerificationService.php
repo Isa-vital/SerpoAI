@@ -11,10 +11,12 @@ class TokenVerificationService
     private const CACHE_TTL = 300; // 5 minutes
 
     private AssetTypeDetector $assetDetector;
+    private UniversalTokenDataService $universalData;
 
     public function __construct()
     {
         $this->assetDetector = app(AssetTypeDetector::class);
+        $this->universalData = app(UniversalTokenDataService::class);
     }
 
     /**
@@ -58,31 +60,44 @@ class TokenVerificationService
             return $cached;
         }
 
-        // Fetch data based on chain
+        // NEW: Get universal market data first (price, volume, liquidity)
+        $marketData = $this->universalData->getTokenData($address, $chain);
+
+        // Fetch blockchain-specific verification data
         $data = match ($chain) {
             'ton' => $this->verifyTonToken($address),
             'ethereum', 'eth' => $this->verifyEthereumToken($address),
             'bsc' => $this->verifyBscToken($address),
             'base' => $this->verifyBaseToken($address),
             'solana', 'sol' => $this->verifySolanaToken($address),
+            'polygon' => $this->verifyPolygonToken($address),
+            'arbitrum' => $this->verifyArbitrumToken($address),
+            'optimism' => $this->verifyOptimismToken($address),
+            'avalanche' => $this->verifyAvalancheToken($address),
             default => $this->getGenericTokenInfo($input, $chain)
         };
 
-        // Add asset type information
-        $data['asset_type_info'] = $assetType;
+        // Merge market data with verification data (market data takes precedence for name/symbol if available)
+        if ($marketData['found']) {
+            // If verification didn't find name/symbol but market data has it, use market data
+            if ((!isset($data['name']) || $data['name'] === 'Unknown') && !empty($marketData['data']['name'])) {
+                $data['name'] = $marketData['data']['name'];
+            }
+            if ((!isset($data['symbol']) || $data['symbol'] === 'Unknown') && !empty($marketData['data']['symbol'])) {
+                $data['symbol'] = $marketData['data']['symbol'];
+            }
+
+            $data['market_data'] = $marketData['data'];
+            $data['data_sources'] = $marketData['sources'];
+        }
 
         // Calculate risk score with breakdown
-        $scoring = $this->calculateRiskScoreWithBreakdown($data);
-        $data['risk_score'] = $scoring['total_score'];
-        $data['trust_score'] = 100 - $data['risk_score'];
-        $data['score_breakdown'] = $scoring['breakdown'];
-        $data['risk_factors'] = $scoring['factors'];
+        $riskResult = $this->calculateRiskScoreWithBreakdown($data);
+        $data['risk_score'] = $riskResult['total_score'];
+        $data['trust_score'] = 100 - $riskResult['total_score'];
+        $data['score_breakdown'] = $riskResult['breakdown'];
+        $data['risk_factors'] = $riskResult['factors'];
 
-        // Properly detect ownership status
-        $data['ownership_status'] = $this->determineOwnershipStatus($data);
-
-        // Add flags
-        $data['green_flags'] = $this->getGreenFlags($data);
         $data['red_flags'] = $this->getRedFlags($data);
         $data['warnings'] = $this->getWarnings($data);
 
@@ -413,6 +428,183 @@ class TokenVerificationService
     }
 
     /**
+     * Verify Polygon token
+     */
+    private function verifyPolygonToken(string $address): array
+    {
+        $apiKey = env('POLYGONSCAN_API_KEY');
+
+        try {
+            $params = [
+                'module' => 'contract',
+                'action' => 'getsourcecode',
+                'address' => $address,
+            ];
+
+            if ($apiKey) {
+                $params['apikey'] = $apiKey;
+            }
+
+            $response = Http::timeout(15)->get('https://api.polygonscan.com/api', $params);
+
+            if (!$response->successful()) {
+                return [
+                    'chain' => 'Polygon',
+                    'address' => $address,
+                    'name' => 'Unknown',
+                    'verified' => false,
+                    'explorer_url' => "https://polygonscan.com/token/{$address}",
+                    'limited_data' => !$apiKey,
+                ];
+            }
+
+            $contractData = $response->json('result')[0] ?? [];
+
+            return [
+                'chain' => 'Polygon',
+                'address' => $address,
+                'name' => $contractData['ContractName'] ?? 'Unknown',
+                'verified' => !empty($contractData['SourceCode'] ?? ''),
+                'has_source_code' => !empty($contractData['SourceCode'] ?? ''),
+                'explorer_url' => "https://polygonscan.com/token/{$address}",
+            ];
+        } catch (\Exception $e) {
+            return ['chain' => 'Polygon', 'error' => 'Failed to verify: ' . $e->getMessage()];
+        }
+    }
+
+    /**
+     * Verify Arbitrum token
+     */
+    private function verifyArbitrumToken(string $address): array
+    {
+        $apiKey = env('ARBISCAN_API_KEY');
+
+        try {
+            $params = [
+                'module' => 'contract',
+                'action' => 'getsourcecode',
+                'address' => $address,
+            ];
+
+            if ($apiKey) {
+                $params['apikey'] = $apiKey;
+            }
+
+            $response = Http::timeout(15)->get('https://api.arbiscan.io/api', $params);
+
+            if ($response->successful()) {
+                $contractData = $response->json('result')[0] ?? [];
+                return [
+                    'chain' => 'Arbitrum',
+                    'address' => $address,
+                    'name' => $contractData['ContractName'] ?? 'Unknown',
+                    'verified' => !empty($contractData['SourceCode'] ?? ''),
+                    'has_source_code' => !empty($contractData['SourceCode'] ?? ''),
+                    'explorer_url' => "https://arbiscan.io/token/{$address}",
+                ];
+            }
+
+            return [
+                'chain' => 'Arbitrum',
+                'address' => $address,
+                'name' => 'Unknown',
+                'verified' => false,
+                'explorer_url' => "https://arbiscan.io/token/{$address}",
+            ];
+        } catch (\Exception $e) {
+            return ['chain' => 'Arbitrum', 'error' => 'Failed to verify: ' . $e->getMessage()];
+        }
+    }
+
+    /**
+     * Verify Optimism token
+     */
+    private function verifyOptimismToken(string $address): array
+    {
+        try {
+            $apiKey = env('OPTIMISM_API_KEY');
+            $params = [
+                'module' => 'contract',
+                'action' => 'getsourcecode',
+                'address' => $address,
+            ];
+
+            if ($apiKey) {
+                $params['apikey'] = $apiKey;
+            }
+
+            $response = Http::timeout(15)->get('https://api-optimistic.etherscan.io/api', $params);
+
+            if ($response->successful()) {
+                $contractData = $response->json('result')[0] ?? [];
+                return [
+                    'chain' => 'Optimism',
+                    'address' => $address,
+                    'name' => $contractData['ContractName'] ?? 'Unknown',
+                    'verified' => !empty($contractData['SourceCode'] ?? ''),
+                    'has_source_code' => !empty($contractData['SourceCode'] ?? ''),
+                    'explorer_url' => "https://optimistic.etherscan.io/token/{$address}",
+                ];
+            }
+
+            return [
+                'chain' => 'Optimism',
+                'address' => $address,
+                'name' => 'Unknown',
+                'verified' => false,
+                'explorer_url' => "https://optimistic.etherscan.io/token/{$address}",
+            ];
+        } catch (\Exception $e) {
+            return ['chain' => 'Optimism', 'error' => 'Failed to verify: ' . $e->getMessage()];
+        }
+    }
+
+    /**
+     * Verify Avalanche token
+     */
+    private function verifyAvalancheToken(string $address): array
+    {
+        try {
+            $apiKey = env('SNOWTRACE_API_KEY');
+            $params = [
+                'module' => 'contract',
+                'action' => 'getsourcecode',
+                'address' => $address,
+            ];
+
+            if ($apiKey) {
+                $params['apikey'] = $apiKey;
+            }
+
+            $response = Http::timeout(15)->get('https://api.snowtrace.io/api', $params);
+
+            if ($response->successful()) {
+                $contractData = $response->json('result')[0] ?? [];
+                return [
+                    'chain' => 'Avalanche',
+                    'address' => $address,
+                    'name' => $contractData['ContractName'] ?? 'Unknown',
+                    'verified' => !empty($contractData['SourceCode'] ?? ''),
+                    'has_source_code' => !empty($contractData['SourceCode'] ?? ''),
+                    'explorer_url' => "https://snowtrace.io/token/{$address}",
+                ];
+            }
+
+            return [
+                'chain' => 'Avalanche',
+                'address' => $address,
+                'name' => 'Unknown',
+                'verified' => false,
+                'explorer_url' => "https://snowtrace.io/token/{$address}",
+            ];
+        } catch (\Exception $e) {
+            return ['chain' => 'Avalanche', 'error' => 'Failed to verify: ' . $e->getMessage()];
+        }
+    }
+
+
+    /**
      * Verify Solana token using Solscan API
      */
     private function verifySolanaToken(string $address): array
@@ -421,53 +613,111 @@ class TokenVerificationService
 
         Log::info('Verifying Solana token', ['address' => $address, 'has_api_key' => !empty($apiKey)]);
 
-        // Try authenticated v2 API first
-        if ($apiKey) {
-            try {
-                $headers = ['token' => $apiKey];
-                $url = "https://pro-api.solscan.io/v2.0/token/meta?address={$address}";
+        // Try Jupiter API first (most comprehensive Solana token registry, no auth)
+        try {
+            Log::info('Trying Jupiter API for Solana token');
 
-                Log::info('Attempting Solscan v2 API', ['url' => $url]);
+            $response = Http::timeout(15)
+                ->withHeaders([
+                    'User-Agent' => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                    'Accept' => 'application/json',
+                ])
+                ->get("https://tokens.jup.ag/token/{$address}");
 
-                $response = Http::timeout(20)
-                    ->withHeaders($headers)
-                    ->get($url);
+            if ($response->successful()) {
+                $data = $response->json();
 
-                if ($response->successful()) {
-                    $data = $response->json();
-
-                    // Get token holders count
-                    $holdersUrl = "https://pro-api.solscan.io/v2.0/token/holders?address={$address}&page=1&page_size=1";
-                    $holdersResponse = Http::timeout(15)
-                        ->withHeaders($headers)
-                        ->get($holdersUrl);
-
-                    $holdersCount = 0;
-                    if ($holdersResponse->successful()) {
-                        $holdersData = $holdersResponse->json();
-                        $holdersCount = $holdersData['data']['total'] ?? 0;
-                    }
-
-                    Log::info('Solscan v2 API success', ['name' => $data['data']['name'] ?? 'Unknown']);
+                if (!empty($data) && isset($data['symbol'])) {
+                    Log::info('Jupiter API success', ['name' => $data['name'] ?? 'Unknown', 'symbol' => $data['symbol']]);
 
                     return [
                         'chain' => 'Solana',
                         'address' => $address,
-                        'name' => $data['data']['name'] ?? 'Unknown',
-                        'symbol' => $data['data']['symbol'] ?? 'Unknown',
-                        'decimals' => $data['data']['decimals'] ?? 9,
-                        'total_supply' => $data['data']['supply'] ?? 0,
-                        'holders_count' => $holdersCount,
-                        'verified' => !empty($data['data']['name']),
+                        'name' => $data['name'] ?? 'Unknown',
+                        'symbol' => $data['symbol'] ?? 'Unknown',
+                        'decimals' => $data['decimals'] ?? 9,
+                        'verified' => true,
                         'has_source_code' => false,
                         'is_token' => true,
+                        'logo_uri' => $data['logoURI'] ?? null,
+                        'tags' => $data['tags'] ?? [],
                         'explorer_url' => "https://solscan.io/token/{$address}",
+                        'data_source' => 'Jupiter Token Registry',
                     ];
                 }
+            }
+        } catch (\Exception $e) {
+            Log::warning('Jupiter API failed', ['error' => $e->getMessage()]);
+        }
 
-                Log::warning('Solscan v2 API failed', ['status' => $response->status()]);
-            } catch (\Exception $e) {
-                Log::warning('Solscan v2 API exception', ['error' => $e->getMessage()]);
+        // Try authenticated v2 API if key available (supports both FREE and PRO tiers)
+        if ($apiKey) {
+            // Try FREE tier endpoint first, then PRO endpoint
+            $v2Endpoints = [
+                ['url' => 'https://api.solscan.io/v2.0', 'tier' => 'free'],
+                ['url' => 'https://pro-api.solscan.io/v2.0', 'tier' => 'pro'],
+            ];
+
+            foreach ($v2Endpoints as $endpoint) {
+                try {
+                    $headers = [
+                        'token' => $apiKey,
+                        'User-Agent' => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                        'Accept' => 'application/json',
+                        'Accept-Language' => 'en-US,en;q=0.9',
+                        'Accept-Encoding' => 'gzip, deflate, br',
+                        'Origin' => 'https://solscan.io',
+                        'Referer' => 'https://solscan.io/',
+                    ];
+                    $baseUrl = $endpoint['url'];
+                    $url = "{$baseUrl}/token/meta?address={$address}";
+
+                    Log::info('Attempting Solscan v2 API', ['url' => $url, 'tier' => $endpoint['tier']]);
+
+                    $response = Http::timeout(20)
+                        ->withHeaders($headers)
+                        ->get($url);
+
+                    if ($response->successful()) {
+                        $data = $response->json();
+
+                        Log::info('Solscan v2 API success', ['tier' => $endpoint['tier'], 'name' => $data['data']['name'] ?? 'Unknown']);
+
+                        // Get token holders count
+                        $holdersUrl = "{$baseUrl}/token/holders?address={$address}&page=1&page_size=1";
+                        $holdersResponse = Http::timeout(15)
+                            ->withHeaders($headers)
+                            ->get($holdersUrl);
+
+                        $holdersCount = 0;
+                        if ($holdersResponse->successful()) {
+                            $holdersData = $holdersResponse->json();
+                            $holdersCount = $holdersData['data']['total'] ?? 0;
+                        }
+
+                        return [
+                            'chain' => 'Solana',
+                            'address' => $address,
+                            'name' => $data['data']['name'] ?? 'Unknown',
+                            'symbol' => $data['data']['symbol'] ?? 'Unknown',
+                            'decimals' => $data['data']['decimals'] ?? 9,
+                            'total_supply' => $data['data']['supply'] ?? 0,
+                            'holders_count' => $holdersCount,
+                            'verified' => !empty($data['data']['name']),
+                            'has_source_code' => false,
+                            'is_token' => true,
+                            'is_spl_token' => true,
+                            'explorer_url' => "https://solscan.io/token/{$address}",
+                            'data_source' => 'Solscan v2 API (' . $endpoint['tier'] . ')',
+                        ];
+                    }
+
+                    Log::warning('Solscan v2 API failed', ['tier' => $endpoint['tier'], 'status' => $response->status()]);
+                } catch (\Exception $e) {
+                    Log::warning('Solscan v2 API exception', ['tier' => $endpoint['tier'], 'error' => $e->getMessage()]);
+                    // Continue to next endpoint
+                    continue;
+                }
             }
         }
 
@@ -476,7 +726,15 @@ class TokenVerificationService
             Log::info('Falling back to Solscan public API');
 
             $publicUrl = "https://public-api.solscan.io/token/meta?tokenAddress={$address}";
-            $publicResponse = Http::timeout(20)->get($publicUrl);
+            $publicHeaders = [
+                'User-Agent' => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept' => 'application/json',
+                'Accept-Language' => 'en-US,en;q=0.9',
+                'Referer' => 'https://solscan.io/',
+            ];
+            $publicResponse = Http::timeout(20)
+                ->withHeaders($publicHeaders)
+                ->get($publicUrl);
 
             if ($publicResponse->successful()) {
                 $data = $publicResponse->json();
@@ -496,22 +754,121 @@ class TokenVerificationService
                     'is_token' => true,
                     'explorer_url' => "https://solscan.io/token/{$address}",
                     'limited_data' => true,
+                    'data_source' => 'Solscan Public API',
                 ];
             }
 
-            Log::error('Solscan public API failed', ['status' => $publicResponse->status()]);
+            Log::warning('Solscan public API failed', ['status' => $publicResponse->status()]);
         } catch (\Exception $e) {
             Log::error('Solscan public API exception', ['error' => $e->getMessage()]);
         }
 
-        // All APIs failed - return error
+        // Try public Solana RPC with multiple fallback endpoints
+        $rpcEndpoints = [
+            'https://api.mainnet-beta.solana.com',
+            'https://solana-api.projectserum.com',
+            'https://rpc.ankr.com/solana',
+        ];
+
+        foreach ($rpcEndpoints as $index => $rpcUrl) {
+            try {
+                Log::info('Trying public Solana RPC for token mint data', ['endpoint' => $rpcUrl, 'attempt' => $index + 1]);
+
+                // Get mint account info (includes mint authority, freeze authority, supply, decimals)
+                $rpcResponse = Http::timeout(15)
+                    ->retry(2, 100) // Retry twice with 100ms delay
+                    ->post($rpcUrl, [
+                        'jsonrpc' => '2.0',
+                        'id' => 1,
+                        'method' => 'getAccountInfo',
+                        'params' => [
+                            $address,
+                            ['encoding' => 'jsonParsed']
+                        ]
+                    ]);
+
+                if ($rpcResponse->successful()) {
+                    $result = $rpcResponse->json();
+                    $accountData = $result['result']['value'] ?? null;
+
+                    if ($accountData && isset($accountData['data']['parsed'])) {
+                        $parsedData = $accountData['data']['parsed'];
+                        $info = $parsedData['info'] ?? [];
+
+                        if ($parsedData['type'] === 'mint' && !empty($info)) {
+                            Log::info('Solana RPC success - mint account found', [
+                                'supply' => $info['supply'] ?? 0,
+                                'decimals' => $info['decimals'] ?? 0,
+                                'has_mint_authority' => !empty($info['mintAuthority']),
+                                'has_freeze_authority' => !empty($info['freezeAuthority'])
+                            ]);
+
+                            $supply = $info['supply'] ?? '0';
+                            $decimals = $info['decimals'] ?? 9;
+                            $mintAuthority = $info['mintAuthority'] ?? null;
+                            $freezeAuthority = $info['freezeAuthority'] ?? null;
+
+                            // Calculate actual supply
+                            $actualSupply = floatval($supply) / pow(10, $decimals);
+
+                            // Determine ownership status based on authorities
+                            $ownershipStatus = 'unknown';
+                            if ($mintAuthority === null && $freezeAuthority === null) {
+                                $ownershipStatus = 'immutable';
+                            } elseif ($mintAuthority !== null) {
+                                $ownershipStatus = 'active_mint_authority';
+                            }
+
+                            return [
+                                'chain' => 'Solana',
+                                'address' => $address,
+                                'name' => 'Unknown', // Will be filled by market data
+                                'symbol' => 'Unknown', // Will be filled by market data
+                                'decimals' => $decimals,
+                                'total_supply' => $actualSupply,
+                                'mint_authority' => $mintAuthority,
+                                'freeze_authority' => $freezeAuthority,
+                                'ownership_status' => $ownershipStatus,
+                                'verified' => true,
+                                'has_source_code' => false, // SPL tokens use Token Program
+                                'is_token' => true,
+                                'is_spl_token' => true,
+                                'token_program' => 'SPL Token Program',
+                                'explorer_url' => "https://solscan.io/token/{$address}",
+                                'limited_data' => true,
+                                'data_source' => 'Solana RPC (' . parse_url($rpcUrl, PHP_URL_HOST) . ')',
+                            ];
+                        }
+                    }
+                }
+
+                Log::warning('Solana RPC: Not a valid mint account or no data', ['endpoint' => $rpcUrl]);
+            } catch (\Exception $e) {
+                Log::error('Solana RPC failed', ['endpoint' => $rpcUrl, 'error' => $e->getMessage()]);
+                // Continue to next RPC endpoint
+                continue;
+            }
+        }
+
+        // All RPC endpoints failed
+        Log::error('All Solana RPC endpoints failed', ['attempted' => count($rpcEndpoints)]);
+
+        // All APIs failed
+        $errorMsg = 'Unable to verify Solana token.';
+
+        if ($apiKey) {
+            $errorMsg .= ' Solscan API key returned 401 (regenerate at https://pro-api.solscan.io/).';
+        }
+
+        $errorMsg .= ' Token may not exist or is not indexed. Check: https://solscan.io/token/' . $address;
+
         return [
             'chain' => 'Solana',
             'address' => $address,
             'name' => 'Unknown',
             'verified' => false,
             'has_source_code' => false,
-            'error' => 'Unable to connect to Solscan API. Please check your network connection.',
+            'error' => $errorMsg,
             'limited_data' => true,
             'explorer_url' => "https://solscan.io/token/{$address}",
         ];
@@ -601,67 +958,141 @@ class TokenVerificationService
             ];
         }
 
-        // CONTRACT VERIFICATION (±25 points)
-        if (!($data['verified'] ?? false)) {
-            $points = 25;
-            $score += $points;
-            $breakdown[] = ['factor' => 'Contract Not Verified', 'points' => $points, 'impact' => 'negative'];
-            $factors[] = 'Unverified contract';
-        } else {
-            $breakdown[] = ['factor' => 'Contract Verified', 'points' => 0, 'impact' => 'neutral'];
+        // NEW: Check for token type and apply risk modifier
+        $tokenType = $data['market_data']['token_type'] ?? null;
+        $riskModifier = 0;
+
+        Log::info('Risk calculation starting', [
+            'has_market_data' => isset($data['market_data']),
+            'has_token_type' => isset($data['market_data']['token_type']),
+            'token_type' => $tokenType,
+            'symbol' => $data['symbol'] ?? 'Unknown',
+            'name' => $data['name'] ?? 'Unknown'
+        ]);
+
+        if ($tokenType) {
+            $riskModifier = $tokenType['risk_modifier'] ?? 0;
+
+            // For known assets (stablecoins, wrapped tokens), skip EVM-centric checks
+            if ($tokenType['is_known_asset'] ?? false) {
+                $breakdown[] = ['factor' => 'Known Asset Type: ' . ucfirst($tokenType['type']), 'points' => 0, 'impact' => 'positive'];
+
+                // For stablecoins, verify price is in range
+                if ($tokenType['is_stablecoin'] ?? false) {
+                    Log::info('Stablecoin detected in risk calculation', [
+                        'symbol' => $data['symbol'] ?? 'Unknown',
+                        'price_validation' => $data['market_data']['price_validation'] ?? null
+                    ]);
+
+                    $priceValidation = $data['market_data']['price_validation'] ?? null;
+                    if ($priceValidation && !$priceValidation['valid']) {
+                        $score += 40; // Major red flag if stablecoin is de-pegged
+                        $breakdown[] = ['factor' => 'Stablecoin De-Pegged', 'points' => 40, 'impact' => 'negative'];
+                        $factors[] = 'Price deviation from $1.00';
+                    } else {
+                        // Stablecoin with normal peg = low risk
+                        Log::info('Returning low risk for stablecoin', ['score' => max(0, 10 + $riskModifier)]);
+                        return [
+                            'total_score' => max(0, 10 + $riskModifier),
+                            'breakdown' => [
+                                ['factor' => 'Stablecoin (USDC)', 'points' => 0, 'impact' => 'positive'],
+                                ['factor' => 'Price pegged to $1.00', 'points' => 0, 'impact' => 'positive'],
+                                ['factor' => 'Widely trusted asset', 'points' => -30, 'impact' => 'positive']
+                            ],
+                            'factors' => []
+                        ];
+                    }
+                } else {
+                    // Wrapped asset or liquid staking = low risk
+                    return [
+                        'total_score' => max(0, 15 + $riskModifier),
+                        'breakdown' => $breakdown,
+                        'factors' => []
+                    ];
+                }
+            }
         }
 
-        // SOURCE CODE AVAILABILITY (±20 points)
-        if (isset($data['has_source_code'])) {
-            if (!$data['has_source_code']) {
+        // Get security model for chain
+        $chain = $data['chain'] ?? 'unknown';
+        $detector = app(TokenTypeDetector::class);
+        $securityModel = $detector->getSecurityModel($chain);
+
+        // CONTRACT VERIFICATION (±25 points) - EVM ONLY
+        if ($securityModel === 'evm') {
+            if (!($data['verified'] ?? false)) {
+                $points = 25;
+                $score += $points;
+                $breakdown[] = ['factor' => 'Contract Not Verified', 'points' => $points, 'impact' => 'negative'];
+                $factors[] = 'Unverified contract';
+            } else {
+                $breakdown[] = ['factor' => 'Contract Verified', 'points' => 0, 'impact' => 'neutral'];
+            }
+
+            // SOURCE CODE AVAILABILITY (±20 points) - EVM ONLY
+            if (isset($data['has_source_code'])) {
+                if (!$data['has_source_code']) {
+                    $points = 20;
+                    $score += $points;
+                    $breakdown[] = ['factor' => 'No Source Code', 'points' => $points, 'impact' => 'negative'];
+                    $factors[] = 'Source code unavailable';
+                } else {
+                    $breakdown[] = ['factor' => 'Source Code Available', 'points' => 0, 'impact' => 'positive'];
+                }
+            }
+
+            // OWNERSHIP STATUS (±20 points) - EVM ONLY
+            $ownershipStatus = $this->determineOwnershipStatus($data);
+            if ($ownershipStatus === 'active_owner') {
                 $points = 20;
                 $score += $points;
-                $breakdown[] = ['factor' => 'No Source Code', 'points' => $points, 'impact' => 'negative'];
-                $factors[] = 'Source code unavailable';
-            } else {
-                $breakdown[] = ['factor' => 'Source Code Available', 'points' => 0, 'impact' => 'positive'];
-            }
-        }
-
-        // OWNERSHIP STATUS (±20 points)
-        $ownershipStatus = $this->determineOwnershipStatus($data);
-        if ($ownershipStatus === 'active_owner') {
-            $points = 20;
-            $score += $points;
-            $breakdown[] = ['factor' => 'Active Owner/Admin', 'points' => $points, 'impact' => 'negative'];
-            $factors[] = 'Centralized ownership';
-        } elseif ($ownershipStatus === 'renounced') {
-            $breakdown[] = ['factor' => 'Ownership Renounced', 'points' => 0, 'impact' => 'positive'];
-        } elseif ($ownershipStatus === 'unknown') {
-            $points = 15;
-            $score += $points;
-            $breakdown[] = ['factor' => 'Ownership Unknown', 'points' => $points, 'impact' => 'negative'];
-            $factors[] = 'Cannot verify ownership';
-        }
-
-        // PROXY/UPGRADEABLE (±15 points)
-        if ($data['proxy'] ?? false) {
-            $points = 15;
-            $score += $points;
-            $breakdown[] = ['factor' => 'Proxy/Upgradeable', 'points' => $points, 'impact' => 'negative'];
-            $factors[] = 'Contract can be upgraded';
-        } else {
-            $breakdown[] = ['factor' => 'Not Proxy', 'points' => 0, 'impact' => 'neutral'];
-        }
-
-        // MINTABLE (±15 points)
-        if (isset($data['mintable'])) {
-            if ($data['mintable']) {
+                $breakdown[] = ['factor' => 'Active Owner/Admin', 'points' => $points, 'impact' => 'negative'];
+                $factors[] = 'Centralized ownership';
+            } elseif ($ownershipStatus === 'renounced') {
+                $breakdown[] = ['factor' => 'Ownership Renounced', 'points' => 0, 'impact' => 'positive'];
+            } elseif ($ownershipStatus === 'unknown') {
                 $points = 15;
                 $score += $points;
-                $breakdown[] = ['factor' => 'Mintable (Inflation Risk)', 'points' => $points, 'impact' => 'negative'];
+                $breakdown[] = ['factor' => 'Ownership Unknown', 'points' => $points, 'impact' => 'negative'];
+                $factors[] = 'Cannot verify ownership';
+            }
+
+            // PROXY/UPGRADEABLE (±15 points) - EVM ONLY
+            if ($data['proxy'] ?? false) {
+                $points = 15;
+                $score += $points;
+                $breakdown[] = ['factor' => 'Proxy/Upgradeable', 'points' => $points, 'impact' => 'negative'];
+                $factors[] = 'Contract can be upgraded';
+            } else {
+                $breakdown[] = ['factor' => 'Not Proxy', 'points' => 0, 'impact' => 'neutral'];
+            }
+
+            // MINTABLE (±15 points) - EVM ONLY
+            if (isset($data['mintable'])) {
+                if ($data['mintable']) {
+                    $points = 15;
+                    $score += $points;
+                    $breakdown[] = ['factor' => 'Mintable (Inflation Risk)', 'points' => $points, 'impact' => 'negative'];
+                    $factors[] = 'Supply can be increased';
+                } else {
+                    $breakdown[] = ['factor' => 'Fixed Supply', 'points' => 0, 'impact' => 'positive'];
+                }
+            }
+        } elseif ($securityModel === 'spl') {
+            // SOLANA SPL TOKEN CHECKS
+            // Check mint authority
+            $mintAuth = $data['mint_authority'] ?? null;
+            if ($mintAuth && !empty($mintAuth)) {
+                $points = 10;
+                $score += $points;
+                $breakdown[] = ['factor' => 'Mint Authority Present', 'points' => $points, 'impact' => 'negative'];
                 $factors[] = 'Supply can be increased';
             } else {
-                $breakdown[] = ['factor' => 'Fixed Supply', 'points' => 0, 'impact' => 'positive'];
+                $breakdown[] = ['factor' => 'Mint Authority Revoked', 'points' => 0, 'impact' => 'positive'];
             }
         }
 
-        // HOLDER DISTRIBUTION (±20 points)
+        // HOLDER DISTRIBUTION (±20 points) - ALL CHAINS
         $holderDist = $data['holder_distribution'] ?? [];
         $top10Pct = $holderDist['top_10_percentage'] ?? 0;
         $holderCount = $data['holders_count'] ?? 0;
@@ -680,7 +1111,7 @@ class TokenVerificationService
             $breakdown[] = ['factor' => 'Holder Distribution', 'points' => 0, 'impact' => 'neutral'];
         }
 
-        // LOW HOLDER COUNT (±10 points)
+        // LOW HOLDER COUNT (±10 points) - ALL CHAINS
         if ($holderCount > 0 && $holderCount < 50) {
             $points = 10;
             $score += $points;
@@ -695,8 +1126,11 @@ class TokenVerificationService
             $breakdown[] = ['factor' => 'Holder Count', 'points' => 0, 'impact' => 'neutral'];
         }
 
+        // Apply token type risk modifier
+        $finalScore = max(0, min(100, $score + $riskModifier));
+
         return [
-            'total_score' => min(100, $score),
+            'total_score' => $finalScore,
             'breakdown' => $breakdown,
             'factors' => $factors
         ];
@@ -746,6 +1180,19 @@ class TokenVerificationService
         $holderCount = $data['holders_count'] ?? 0;
         $hasSource = $data['has_source_code'] ?? false;
         $riskScore = $data['risk_score'] ?? 50;
+
+        // Special context for known assets (stablecoins, wrapped tokens)
+        $tokenType = $data['market_data']['token_type'] ?? null;
+        if ($tokenType && ($tokenType['is_known_asset'] ?? false)) {
+            if ($tokenType['is_stablecoin'] ?? false) {
+                $symbol = $data['symbol'] ?? 'Unknown';
+                return "🏦 **Stablecoin Detected**: {$symbol} is a stablecoin designed to maintain a stable value pegged to a fiat currency (typically USD). These are widely used in DeFi for trading, lending, and as a store of value.";
+            } elseif ($tokenType['is_wrapped'] ?? false) {
+                return "🔄 **Wrapped Asset**: This is a tokenized representation of another asset, allowing it to be used on this blockchain. Widely used in DeFi.";
+            } elseif ($tokenType['is_liquid_staking'] ?? false) {
+                return "💧 **Liquid Staking Derivative**: This token represents staked assets and accrues staking rewards while remaining liquid and tradeable.";
+            }
+        }
 
         if (!$verified && !$hasSource && $holderCount < 100) {
             return "This profile matches early-stage unverified contracts with minimal on-chain history and limited holder base.";
@@ -818,42 +1265,76 @@ class TokenVerificationService
     {
         $flags = [];
 
-        if (!($data['verified'] ?? false)) {
-            $flags[] = '❌ Contract NOT verified - cannot audit code';
+        // Get chain and security model
+        $chain = $data['chain'] ?? 'unknown';
+        $detector = app(TokenTypeDetector::class);
+        $securityModel = $detector->getSecurityModel($chain);
+
+        // Check if this is a known asset
+        $tokenType = $data['market_data']['token_type'] ?? null;
+        $isKnownAsset = $tokenType['is_known_asset'] ?? false;
+
+        // For known assets (stablecoins, wrapped), don't show generic red flags
+        if ($isKnownAsset) {
+            // Only check for price de-peg for stablecoins
+            if ($tokenType['is_stablecoin'] ?? false) {
+                $priceValidation = $data['market_data']['price_validation'] ?? null;
+                if ($priceValidation && !$priceValidation['valid']) {
+                    foreach ($priceValidation['warnings'] as $warning) {
+                        $flags[] = '❌ ' . $warning;
+                    }
+                }
+            }
+            return $flags; // Skip other checks for known assets
         }
 
-        if ($data['mintable'] ?? false) {
-            $flags[] = '❌ Minting ACTIVE - supply can be inflated';
+        // EVM-specific flags
+        if ($securityModel === 'evm') {
+            if (!($data['verified'] ?? false)) {
+                $flags[] = '❌ Contract NOT verified - cannot audit code';
+            }
+
+            if ($data['mintable'] ?? false) {
+                $flags[] = '❌ Minting ACTIVE - supply can be inflated';
+            }
+
+            // Ownership flags based on verified status
+            $ownershipStatus = $data['ownership_status'] ?? $this->determineOwnershipStatus($data);
+            if ($ownershipStatus === 'active_owner') {
+                $adminAddr = substr($data['admin'] ?? 'Unknown', 0, 10) . '...';
+                $flags[] = "❌ Active owner/admin ({$adminAddr}) - centralized control";
+            } elseif ($ownershipStatus === 'unknown' && ($data['verified'] ?? false)) {
+                $flags[] = '❌ Ownership status UNKNOWN';
+            }
+
+            if ($data['proxy'] ?? false) {
+                $flags[] = '❌ Proxy contract detected - upgrade risk';
+            }
+
+            if (isset($data['has_source_code']) && !$data['has_source_code'] && ($data['verified'] ?? false)) {
+                $flags[] = '❌ Source code not published';
+            }
+        }
+        // SPL (Solana) specific flags
+        elseif ($securityModel === 'spl') {
+            $mintAuth = $data['mint_authority'] ?? null;
+            if ($mintAuth && !empty($mintAuth)) {
+                $flags[] = '❌ Mint authority active - supply can be inflated';
+            }
+
+            // Don't show "source code unavailable" for SPL tokens - they use Token Program
         }
 
-        // Ownership flags based on verified status
-        $ownershipStatus = $data['ownership_status'] ?? $this->determineOwnershipStatus($data);
-        if ($ownershipStatus === 'active_owner') {
-            $adminAddr = substr($data['admin'], 0, 10) . '...';
-            $flags[] = "❌ Active owner/admin ({$adminAddr}) - centralized control";
-        } elseif ($ownershipStatus === 'unknown') {
-            $flags[] = '❌ Ownership status UNKNOWN - contract not verified';
-        }
-
-        if ($data['proxy'] ?? false) {
-            $flags[] = '❌ Proxy contract detected - upgrade risk';
-        }
-
+        // Universal flags (all chains)
         $holderDist = $data['holder_distribution'] ?? [];
         if ($holderDist['concentrated'] ?? false) {
             $pct = $holderDist['top_10_percentage'] ?? 0;
             $flags[] = "❌ Highly concentrated - top 10 holders own {$pct}%";
         }
 
-        if (isset($data['has_source_code']) && !$data['has_source_code']) {
-            $flags[] = '❌ No source code available';
-        }
-
         $holderCount = $data['holders_count'] ?? 0;
         if ($holderCount > 0 && $holderCount < 50) {
             $flags[] = "❌ Very low holder count ({$holderCount}) - early/risky stage";
-        } elseif ($holderCount === 0) {
-            $flags[] = '❌ Holder count unavailable - cannot assess distribution';
         }
 
         return $flags;
