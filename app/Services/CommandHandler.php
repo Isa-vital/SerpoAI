@@ -5177,13 +5177,28 @@ class CommandHandler
         $trustScore = $data['trust_score'] ?? 50;
         $hasMarketData = isset($data['market_data']) && !empty($data['market_data']);
 
+        // Format chain name properly
+        $chainNames = [
+            'ethereum' => 'Ethereum',
+            'bsc' => 'BNB Chain',
+            'polygon' => 'Polygon',
+            'arbitrum' => 'Arbitrum',
+            'optimism' => 'Optimism',
+            'avalanche' => 'Avalanche',
+            'fantom' => 'Fantom',
+            'base' => 'Base',
+            'solana' => 'Solana',
+            'ton' => 'TON',
+        ];
+        $chainDisplay = $chainNames[strtolower($chain)] ?? ucfirst($chain);
+
         // Header with data sources
         $dataSources = $data['data_sources'] ?? ['Blockchain Explorer'];
         $sourceList = implode(', ', $dataSources);
         $message = "🧠 *TOKEN VERIFICATION REPORT*\n";
         $message .= "_Sources: {$sourceList}_\n\n";
 
-        $message .= "🔗 *Chain:* {$chain}\n";
+        $message .= "🔗 *Chain:* {$chainDisplay}\n";
         $message .= "💎 *Token:* {$name} ({$symbol})\n";
         $message .= "📍 *Address:* `" . $this->shortenAddress($address) . "`\n\n";
 

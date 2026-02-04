@@ -87,6 +87,44 @@ class TokenVerificationService
                 $data['symbol'] = $marketData['data']['symbol'];
             }
 
+            // CRITICAL: Update chain from market data if available (DexScreener knows the actual chain)
+            if (!empty($marketData['data']['chain'])) {
+                $detectedChain = $marketData['data']['chain'];
+                if ($detectedChain !== $chain) {
+                    $chain = $detectedChain;
+                    $data['chain'] = $chain;
+
+                    // Update explorer URL for the correct chain
+                    $explorerMap = [
+                        'ethereum' => 'etherscan.io',
+                        'bsc' => 'bscscan.com',
+                        'polygon' => 'polygonscan.com',
+                        'arbitrum' => 'arbiscan.io',
+                        'optimism' => 'optimistic.etherscan.io',
+                        'avalanche' => 'snowtrace.io',
+                        'fantom' => 'ftmscan.com',
+                        'base' => 'basescan.org',
+                        'solana' => 'solscan.io',
+                        'ton' => 'tonscan.org',
+                    ];
+
+                    $explorerDomain = $explorerMap[strtolower($chain)] ?? 'etherscan.io';
+
+                    if ($chain === 'solana') {
+                        $data['explorer_url'] = "https://{$explorerDomain}/token/{$address}";
+                    } elseif ($chain === 'ton') {
+                        $data['explorer_url'] = "https://{$explorerDomain}/jetton/{$address}";
+                    } else {
+                        $data['explorer_url'] = "https://{$explorerDomain}/token/{$address}";
+                    }
+
+                    Log::info('Chain and explorer updated from market data', [
+                        'new_chain' => $chain,
+                        'explorer_url' => $data['explorer_url']
+                    ]);
+                }
+            }
+
             $data['market_data'] = $marketData['data'];
             $data['data_sources'] = $marketData['sources'];
         }
@@ -1191,6 +1229,10 @@ class TokenVerificationService
                 return "🔄 **Wrapped Asset**: This is a tokenized representation of another asset, allowing it to be used on this blockchain. Widely used in DeFi.";
             } elseif ($tokenType['is_liquid_staking'] ?? false) {
                 return "💧 **Liquid Staking Derivative**: This token represents staked assets and accrues staking rewards while remaining liquid and tradeable.";
+            } elseif ($tokenType['is_defi'] ?? false) {
+                $symbol = $data['symbol'] ?? 'Unknown';
+                $name = $data['name'] ?? 'DeFi Token';
+                return "🏛️ **Established DeFi Protocol**: {$symbol} is the native token of {$name}, a well-known decentralized finance protocol with proven track record.";
             }
         }
 

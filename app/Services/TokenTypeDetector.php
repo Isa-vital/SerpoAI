@@ -59,6 +59,25 @@ class TokenTypeDetector
         'bSOL'
     ];
 
+    // Major DeFi tokens (well-known, legitimate projects)
+    private const DEFI_TOKENS = [
+        'UNI',      // Uniswap
+        'CAKE',     // PancakeSwap
+        'AAVE',     // Aave
+        'COMP',     // Compound
+        'MKR',      // Maker
+        'CRV',      // Curve
+        'SNX',      // Synthetix
+        'SUSHI',    // SushiSwap
+        'BAL',      // Balancer
+        'YFI',      // Yearn Finance
+        'LDO',      // Lido
+        'GMX',      // GMX
+        'JUP',      // Jupiter
+        'RAY',      // Raydium
+        'ORCA',     // Orca
+    ];
+
     /**
      * Detect token type and characteristics
      */
@@ -102,6 +121,12 @@ class TokenTypeDetector
             $riskModifier = -15;
             $isKnownAsset = true;
         }
+        // Detect major DeFi tokens
+        elseif (in_array($upperSymbol, self::DEFI_TOKENS)) {
+            $type = 'defi';
+            $riskModifier = -25; // Lower risk for established DeFi protocols
+            $isKnownAsset = true;
+        }
         // Detect governance token (common patterns)
         elseif (
             str_ends_with($upperSymbol, 'DAO') ||
@@ -116,6 +141,7 @@ class TokenTypeDetector
             'is_stablecoin' => $type === 'stablecoin',
             'is_wrapped' => $type === 'wrapped',
             'is_liquid_staking' => $type === 'liquid_staking',
+            'is_defi' => $type === 'defi',
             'is_known_asset' => $isKnownAsset,
             'expected_price_range' => $expectedPriceRange,
             'risk_modifier' => $riskModifier,
