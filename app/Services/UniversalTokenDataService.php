@@ -20,7 +20,7 @@ class UniversalTokenDataService
     private const CACHE_TTL = 300; // 5 minutes
 
     private const SUPPORTED_CHAINS = [
-        // EVM Chains
+        // Major EVM Chains
         'ethereum' => ['id' => 'ethereum', 'name' => 'Ethereum', 'explorer' => 'etherscan.io'],
         'bsc' => ['id' => 'bsc', 'name' => 'BNB Chain', 'explorer' => 'bscscan.com'],
         'polygon' => ['id' => 'polygon', 'name' => 'Polygon', 'explorer' => 'polygonscan.com'],
@@ -29,6 +29,20 @@ class UniversalTokenDataService
         'avalanche' => ['id' => 'avalanche', 'name' => 'Avalanche', 'explorer' => 'snowtrace.io'],
         'fantom' => ['id' => 'fantom', 'name' => 'Fantom', 'explorer' => 'ftmscan.com'],
         'base' => ['id' => 'base', 'name' => 'Base', 'explorer' => 'basescan.org'],
+
+        // Additional EVM Chains
+        'cronos' => ['id' => 'cronos', 'name' => 'Cronos', 'explorer' => 'cronoscan.com'],
+        'gnosis' => ['id' => 'gnosis', 'name' => 'Gnosis', 'explorer' => 'gnosisscan.io'],
+        'celo' => ['id' => 'celo', 'name' => 'Celo', 'explorer' => 'celoscan.io'],
+        'moonbeam' => ['id' => 'moonbeam', 'name' => 'Moonbeam', 'explorer' => 'moonscan.io'],
+        'moonriver' => ['id' => 'moonriver', 'name' => 'Moonriver', 'explorer' => 'moonriver.moonscan.io'],
+        'zksync' => ['id' => 'zksync', 'name' => 'zkSync Era', 'explorer' => 'era.zksync.network'],
+        'linea' => ['id' => 'linea', 'name' => 'Linea', 'explorer' => 'lineascan.build'],
+        'mantle' => ['id' => 'mantle', 'name' => 'Mantle', 'explorer' => 'mantlescan.xyz'],
+        'scroll' => ['id' => 'scroll', 'name' => 'Scroll', 'explorer' => 'scrollscan.com'],
+        'pulsechain' => ['id' => 'pulsechain', 'name' => 'PulseChain', 'explorer' => 'scan.pulsechain.com'],
+        'metis' => ['id' => 'metis', 'name' => 'Metis', 'explorer' => 'andromeda-explorer.metis.io'],
+        'harmony' => ['id' => 'harmony', 'name' => 'Harmony', 'explorer' => 'explorer.harmony.one'],
 
         // Non-EVM Chains
         'solana' => ['id' => 'solana', 'name' => 'Solana', 'explorer' => 'solscan.io'],
@@ -363,6 +377,19 @@ class UniversalTokenDataService
             'fantom' => 'ftm',
             'base' => 'base',
             'solana' => 'solana',
+            'ton' => 'ton',
+            'cronos' => 'cronos',
+            'gnosis' => 'xdai',
+            'celo' => 'celo',
+            'moonbeam' => 'moonbeam',
+            'moonriver' => 'moonriver',
+            'zksync' => 'zksync',
+            'linea' => 'linea',
+            'mantle' => 'mantle',
+            'scroll' => 'scroll',
+            'pulsechain' => 'pulsechain',
+            'metis' => 'metis',
+            'harmony' => 'harmony',
         ];
 
         return $mapping[$chain] ?? $chain;
@@ -383,6 +410,19 @@ class UniversalTokenDataService
             'fantom' => 'fantom',
             'base' => 'base',
             'solana' => 'solana',
+            'ton' => 'the-open-network',
+            'cronos' => 'cronos',
+            'gnosis' => 'xdai',
+            'celo' => 'celo',
+            'moonbeam' => 'moonbeam',
+            'moonriver' => 'moonriver',
+            'zksync' => 'zksync',
+            'linea' => 'linea',
+            'mantle' => 'mantle',
+            'scroll' => 'scroll',
+            'pulsechain' => 'pulsechain',
+            'metis' => 'metis-andromeda',
+            'harmony' => 'harmony-shard-0',
         ];
 
         return $mapping[$chain] ?? $chain;

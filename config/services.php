@@ -130,6 +130,71 @@ return [
         'api_url' => env('BASESCAN_API_URL', 'https://api.basescan.org/api'),
     ],
 
+    'polygonscan' => [
+        'api_key' => env('POLYGONSCAN_API_KEY'),
+        'api_url' => env('POLYGONSCAN_API_URL', 'https://api.polygonscan.com/api'),
+    ],
+
+    'arbiscan' => [
+        'api_key' => env('ARBISCAN_API_KEY'),
+        'api_url' => env('ARBISCAN_API_URL', 'https://api.arbiscan.io/api'),
+    ],
+
+    'optimism_etherscan' => [
+        'api_key' => env('OPTIMISM_ETHERSCAN_API_KEY'),
+        'api_url' => env('OPTIMISM_ETHERSCAN_API_URL', 'https://api-optimistic.etherscan.io/api'),
+    ],
+
+    'snowtrace' => [
+        'api_key' => env('SNOWTRACE_API_KEY'),
+        'api_url' => env('SNOWTRACE_API_URL', 'https://api.snowtrace.io/api'),
+    ],
+
+    'ftmscan' => [
+        'api_key' => env('FTMSCAN_API_KEY'),
+        'api_url' => env('FTMSCAN_API_URL', 'https://api.ftmscan.com/api'),
+    ],
+
+    'cronoscan' => [
+        'api_key' => env('CRONOSCAN_API_KEY'),
+        'api_url' => env('CRONOSCAN_API_URL', 'https://api.cronoscan.com/api'),
+    ],
+
+    'gnosisscan' => [
+        'api_key' => env('GNOSISSCAN_API_KEY'),
+        'api_url' => env('GNOSISSCAN_API_URL', 'https://api.gnosisscan.io/api'),
+    ],
+
+    'celoscan' => [
+        'api_key' => env('CELOSCAN_API_KEY'),
+        'api_url' => env('CELOSCAN_API_URL', 'https://api.celoscan.io/api'),
+    ],
+
+    'moonscan' => [
+        'api_key' => env('MOONSCAN_API_KEY'),
+        'api_url' => env('MOONSCAN_API_URL', 'https://api-moonbeam.moonscan.io/api'),
+    ],
+
+    'lineascan' => [
+        'api_key' => env('LINEASCAN_API_KEY'),
+        'api_url' => env('LINEASCAN_API_URL', 'https://api.lineascan.build/api'),
+    ],
+
+    'scrollscan' => [
+        'api_key' => env('SCROLLSCAN_API_KEY'),
+        'api_url' => env('SCROLLSCAN_API_URL', 'https://api.scrollscan.com/api'),
+    ],
+
+    'mantlescan' => [
+        'api_key' => env('MANTLESCAN_API_KEY'),
+        'api_url' => env('MANTLESCAN_API_URL', 'https://api.mantlescan.xyz/api'),
+    ],
+
+    'zksync' => [
+        'api_key' => env('ZKSYNC_API_KEY'),
+        'api_url' => env('ZKSYNC_API_URL', 'https://block-explorer-api.mainnet.zksync.io/api'),
+    ],
+
     'solscan' => [
         'api_key' => env('SOLSCAN_API_KEY'),
         'api_url' => env('SOLSCAN_API_URL', 'https://api.solscan.io'),

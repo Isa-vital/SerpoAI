@@ -60,67 +60,77 @@ class TokenVerificationService
             return $cached;
         }
 
-        // NEW: Get universal market data first (price, volume, liquidity)
+        // NEW: Get universal market data FIRST (DexScreener auto-detects the actual chain)
         $marketData = $this->universalData->getTokenData($address, $chain);
 
-        // Fetch blockchain-specific verification data
+        // CRITICAL: Update chain from DexScreener BEFORE routing to chain-specific verification
+        // DexScreener is chain-agnostic and knows the actual chain (bsc, polygon, etc.)
+        if ($marketData['found'] && !empty($marketData['data']['chain'])) {
+            $detectedChain = strtolower($marketData['data']['chain']);
+            if ($detectedChain !== $chain && $detectedChain !== 'unknown') {
+                Log::info('Chain corrected by DexScreener', ['original' => $chain, 'corrected' => $detectedChain]);
+                $chain = $detectedChain;
+            }
+        }
+
+        // Fetch blockchain-specific verification data using the CORRECT chain
         $data = match ($chain) {
             'ton' => $this->verifyTonToken($address),
-            'ethereum', 'eth' => $this->verifyEthereumToken($address),
-            'bsc' => $this->verifyBscToken($address),
-            'base' => $this->verifyBaseToken($address),
             'solana', 'sol' => $this->verifySolanaToken($address),
-            'polygon' => $this->verifyPolygonToken($address),
-            'arbitrum' => $this->verifyArbitrumToken($address),
-            'optimism' => $this->verifyOptimismToken($address),
-            'avalanche' => $this->verifyAvalancheToken($address),
-            default => $this->getGenericTokenInfo($input, $chain)
+            // All EVM chains use universal EVM verification
+            'ethereum', 'eth' => $this->verifyEvmToken($address, 'ethereum'),
+            'bsc' => $this->verifyEvmToken($address, 'bsc'),
+            'base' => $this->verifyEvmToken($address, 'base'),
+            'polygon' => $this->verifyEvmToken($address, 'polygon'),
+            'arbitrum' => $this->verifyEvmToken($address, 'arbitrum'),
+            'optimism' => $this->verifyEvmToken($address, 'optimism'),
+            'avalanche' => $this->verifyEvmToken($address, 'avalanche'),
+            'fantom' => $this->verifyEvmToken($address, 'fantom'),
+            'cronos' => $this->verifyEvmToken($address, 'cronos'),
+            'gnosis' => $this->verifyEvmToken($address, 'gnosis'),
+            'celo' => $this->verifyEvmToken($address, 'celo'),
+            'moonbeam' => $this->verifyEvmToken($address, 'moonbeam'),
+            'moonriver' => $this->verifyEvmToken($address, 'moonriver'),
+            'zksync' => $this->verifyEvmToken($address, 'zksync'),
+            'linea' => $this->verifyEvmToken($address, 'linea'),
+            'mantle' => $this->verifyEvmToken($address, 'mantle'),
+            'scroll' => $this->verifyEvmToken($address, 'scroll'),
+            default => $this->getGenericTokenInfo($address, $chain)
         };
 
-        // Merge market data with verification data (market data takes precedence for name/symbol if available)
+        // Merge market data with verification data
         if ($marketData['found']) {
-            // If verification didn't find name/symbol but market data has it, use market data
-            if ((!isset($data['name']) || $data['name'] === 'Unknown') && !empty($marketData['data']['name'])) {
+            // ALWAYS prefer DexScreener market name/symbol over contract name
+            // Contract names are often technical (e.g., "GovernanceToken" instead of "Optimism")
+            if (!empty($marketData['data']['name'])) {
                 $data['name'] = $marketData['data']['name'];
             }
-            if ((!isset($data['symbol']) || $data['symbol'] === 'Unknown') && !empty($marketData['data']['symbol'])) {
+            if (!empty($marketData['data']['symbol'])) {
                 $data['symbol'] = $marketData['data']['symbol'];
             }
 
             // CRITICAL: Update chain from market data if available (DexScreener knows the actual chain)
             if (!empty($marketData['data']['chain'])) {
-                $detectedChain = $marketData['data']['chain'];
-                if ($detectedChain !== $chain) {
+                $detectedChain = strtolower($marketData['data']['chain']);
+                if ($detectedChain !== $chain && $detectedChain !== 'unknown') {
                     $chain = $detectedChain;
                     $data['chain'] = $chain;
 
                     // Update explorer URL for the correct chain
-                    $explorerMap = [
-                        'ethereum' => 'etherscan.io',
-                        'bsc' => 'bscscan.com',
-                        'polygon' => 'polygonscan.com',
-                        'arbitrum' => 'arbiscan.io',
-                        'optimism' => 'optimistic.etherscan.io',
-                        'avalanche' => 'snowtrace.io',
-                        'fantom' => 'ftmscan.com',
-                        'base' => 'basescan.org',
-                        'solana' => 'solscan.io',
-                        'ton' => 'tonscan.org',
-                    ];
+                    $explorerMap = $this->getExplorerDomainMap();
+                    $explorerDomain = $explorerMap[$chain] ?? null;
 
-                    $explorerDomain = $explorerMap[strtolower($chain)] ?? 'etherscan.io';
-
-                    if ($chain === 'solana') {
-                        $data['explorer_url'] = "https://{$explorerDomain}/token/{$address}";
-                    } elseif ($chain === 'ton') {
-                        $data['explorer_url'] = "https://{$explorerDomain}/jetton/{$address}";
-                    } else {
-                        $data['explorer_url'] = "https://{$explorerDomain}/token/{$address}";
+                    if ($explorerDomain) {
+                        if ($chain === 'ton') {
+                            $data['explorer_url'] = "https://{$explorerDomain}/jetton/{$address}";
+                        } else {
+                            $data['explorer_url'] = "https://{$explorerDomain}/token/{$address}";
+                        }
                     }
 
                     Log::info('Chain and explorer updated from market data', [
                         'new_chain' => $chain,
-                        'explorer_url' => $data['explorer_url']
+                        'explorer_url' => $data['explorer_url'] ?? 'none'
                     ]);
                 }
             }
@@ -137,6 +147,7 @@ class TokenVerificationService
         $data['risk_factors'] = $riskResult['factors'];
 
         $data['red_flags'] = $this->getRedFlags($data);
+        $data['green_flags'] = $this->getGreenFlags($data);
         $data['warnings'] = $this->getWarnings($data);
 
         // Add differentiation context
@@ -181,8 +192,20 @@ class TokenVerificationService
             $holders = $holdersResponse->successful() ? $holdersResponse->json('addresses', []) : [];
 
             // Calculate holder distribution
-            $totalSupply = (float) ($data['total_supply'] ?? 0);
+            $decimals = (int) ($data['metadata']['decimals'] ?? 9);
+            $rawTotalSupply = (float) ($data['total_supply'] ?? 0);
+            // CRITICAL: Normalize total_supply from raw units to human-readable
+            $totalSupply = $decimals > 0 ? $rawTotalSupply / pow(10, $decimals) : $rawTotalSupply;
+
+            // Normalize holder balances from raw units too
             $topHolders = array_slice($holders, 0, 10);
+            foreach ($topHolders as &$holder) {
+                if (isset($holder['balance'])) {
+                    $holder['balance'] = $decimals > 0 ? (float)$holder['balance'] / pow(10, $decimals) : (float)$holder['balance'];
+                }
+            }
+            unset($holder);
+
             $holderAnalysis = $this->analyzeHolderDistribution($topHolders, $totalSupply);
 
             return [
@@ -190,7 +213,7 @@ class TokenVerificationService
                 'address' => $address,
                 'name' => $data['metadata']['name'] ?? 'Unknown',
                 'symbol' => $data['metadata']['symbol'] ?? 'N/A',
-                'decimals' => $data['metadata']['decimals'] ?? 9,
+                'decimals' => $decimals,
                 'total_supply' => $totalSupply,
                 'holders_count' => $data['holders_count'] ?? count($holders),
                 'verified' => $data['verification'] === 'whitelist',
@@ -643,6 +666,550 @@ class TokenVerificationService
 
 
     /**
+     * Universal EVM token verification - works with ANY Etherscan-compatible explorer
+     * Uses Etherscan V2 unified API as primary, falls back to individual chain APIs
+     */
+    private function verifyEvmToken(string $address, string $chain): array
+    {
+        // Map chain to explorer API URL, domain, API key config, and display name
+        $chainConfig = $this->getEvmChainConfig($chain);
+        $apiUrl = $chainConfig['api_url'];
+        $explorerDomain = $chainConfig['explorer_domain'];
+        $displayName = $chainConfig['display_name'];
+        $apiKey = $chainConfig['api_key'];
+        $chainId = $chainConfig['chain_id'] ?? null;
+
+        try {
+            $contractData = [];
+
+            // Step 1: Try Etherscan V2 unified API FIRST (works for all chains with one key)
+            if ($chainId && $apiKey) {
+                $v2Response = Http::timeout(15)->get('https://api.etherscan.io/v2/api', [
+                    'chainid' => $chainId,
+                    'module' => 'contract',
+                    'action' => 'getsourcecode',
+                    'address' => $address,
+                    'apikey' => $apiKey,
+                ]);
+                if ($v2Response->successful()) {
+                    $v2Result = $v2Response->json('result', []);
+                    if (is_array($v2Result) && !empty($v2Result) && is_array($v2Result[0] ?? null) && !empty($v2Result[0]['SourceCode'] ?? '')) {
+                        $contractData = $v2Result[0];
+                        Log::info("Etherscan V2 API returned contract data for {$chain}", ['contract' => $contractData['ContractName'] ?? 'Unknown']);
+                    }
+                }
+            }
+
+            // Step 1b: Fallback to individual chain API if V2 returned empty
+            if (empty($contractData['SourceCode'] ?? '')) {
+                $params = [
+                    'module' => 'contract',
+                    'action' => 'getsourcecode',
+                    'address' => $address,
+                ];
+                if ($apiKey) {
+                    $params['apikey'] = $apiKey;
+                }
+
+                $response = Http::timeout(15)->get($apiUrl, $params);
+                if ($response->successful()) {
+                    $result = $response->json('result', []);
+                    if (is_array($result) && !empty($result) && is_array($result[0] ?? null)) {
+                        if (!empty($result[0]['SourceCode'] ?? '')) {
+                            $contractData = $result[0];
+                            Log::info("Individual chain API returned contract data for {$chain}", ['contract' => $contractData['ContractName'] ?? 'Unknown']);
+                        }
+                    }
+                }
+            }
+
+            // Step 2: If primary returned empty (no API key / rate limited), try Routescan as free fallback
+            $routescanChainId = $this->getRoutescanChainId($chain);
+            if (empty($contractData['SourceCode'] ?? '') && $routescanChainId) {
+                Log::info("Primary API returned empty for {$chain}, trying Routescan fallback", ['address' => $address]);
+                $routescanUrl = "https://api.routescan.io/v2/network/mainnet/evm/{$routescanChainId}/etherscan/api";
+                $routescanResponse = Http::timeout(15)->get($routescanUrl, [
+                    'module' => 'contract',
+                    'action' => 'getsourcecode',
+                    'address' => $address,
+                ]);
+
+                if ($routescanResponse->successful()) {
+                    $routeResult = $routescanResponse->json('result', []);
+                    if (is_array($routeResult) && !empty($routeResult) && is_array($routeResult[0] ?? null)) {
+                        if (!empty($routeResult[0]['SourceCode'] ?? '')) {
+                            $contractData = $routeResult[0];
+                            Log::info("Routescan provided contract data for {$chain}", ['contract' => $contractData['ContractName'] ?? 'Unknown']);
+                        }
+                    }
+                }
+            }
+
+            $result = [
+                'chain' => $chain,
+                'address' => $address,
+                'name' => $contractData['ContractName'] ?? 'Unknown',
+                'verified' => !empty($contractData['SourceCode'] ?? ''),
+                'has_source_code' => !empty($contractData['SourceCode'] ?? ''),
+                'compiler_version' => $contractData['CompilerVersion'] ?? null,
+                'optimization_used' => ($contractData['OptimizationUsed'] ?? '0') === '1',
+                'proxy' => str_contains(strtolower($contractData['Implementation'] ?? ''), '0x'),
+                'explorer_url' => "https://{$explorerDomain}/token/{$address}",
+                'limited_data' => empty($apiKey),
+            ];
+
+            // Step 3: Get holder count & top holders from Blockscout v2 API (chain-independent, free, no key needed)
+            $blockscoutUrl = $this->getBlockscoutApiUrl($chain);
+            if ($blockscoutUrl) {
+                $this->fetchBlockscoutHolderData($blockscoutUrl, $address, $result);
+            }
+
+            // Step 4: If still no holder count, try Etherscan V2 tokenholdercount API
+            if (empty($result['holders_count']) && $apiKey && $chainId) {
+                try {
+                    $holderCountResponse = Http::timeout(10)->get('https://api.etherscan.io/v2/api', [
+                        'chainid' => $chainId,
+                        'module' => 'token',
+                        'action' => 'tokenholdercount',
+                        'contractaddress' => $address,
+                        'apikey' => $apiKey,
+                    ]);
+                    if ($holderCountResponse->successful()) {
+                        $hcResult = $holderCountResponse->json('result');
+                        if (is_numeric($hcResult) && (int) $hcResult > 0) {
+                            $result['holders_count'] = (int) $hcResult;
+                            Log::info("Etherscan V2 tokenholdercount provided holder count for {$chain}", ['count' => $result['holders_count']]);
+                        }
+                    }
+                } catch (\Exception $e) {
+                    Log::debug("V2 tokenholdercount failed for {$chain}", ['error' => $e->getMessage()]);
+                }
+            }
+
+            // Step 5: If no Blockscout top holders, try Etherscan V2 tokentx (with API key)
+            if (empty($result['top_holders']) && $apiKey && $chainId) {
+                try {
+                    $holdersResponse = Http::timeout(15)->get('https://api.etherscan.io/v2/api', [
+                        'chainid' => $chainId,
+                        'module' => 'account',
+                        'action' => 'tokentx',
+                        'contractaddress' => $address,
+                        'page' => 1,
+                        'offset' => 100,
+                        'sort' => 'desc',
+                        'apikey' => $apiKey,
+                    ]);
+
+                    if ($holdersResponse->successful()) {
+                        $txResult = $holdersResponse->json('result', []);
+                        if (is_array($txResult) && !empty($txResult)) {
+                            $result['top_holders'] = $this->extractTopHoldersFromTransactions($txResult);
+                            Log::info("Etherscan V2 tokentx provided top holders for {$chain}");
+                        }
+                    }
+                } catch (\Exception $e) {
+                    Log::debug("V2 tokentx failed for {$chain}", ['error' => $e->getMessage()]);
+                }
+            }
+
+            // Step 6: If still no total supply, try GeckoTerminal API (free, supports many chains)
+            if (empty($result['total_supply'])) {
+                try {
+                    $geckoChain = $this->getGeckoTerminalChain($chain);
+                    if ($geckoChain) {
+                        $geckoResponse = Http::timeout(10)
+                            ->withHeaders(['Accept' => 'application/json', 'User-Agent' => 'SerpoAI/1.0'])
+                            ->get("https://api.geckoterminal.com/api/v2/networks/{$geckoChain}/tokens/{$address}");
+                        if ($geckoResponse->successful()) {
+                            $geckoData = $geckoResponse->json('data.attributes', []);
+                            // Use normalized_total_supply (already divided by decimals)
+                            if (!empty($geckoData['normalized_total_supply'])) {
+                                $result['total_supply'] = (float) $geckoData['normalized_total_supply'];
+                                Log::info("GeckoTerminal provided total supply for {$chain}", ['supply' => $result['total_supply']]);
+                            } elseif (!empty($geckoData['total_supply']) && isset($geckoData['decimals'])) {
+                                $decimals = (int) $geckoData['decimals'];
+                                if ($decimals > 0) {
+                                    $result['total_supply'] = (float) bcdiv($geckoData['total_supply'], bcpow('10', (string) $decimals, 0), 4);
+                                } else {
+                                    $result['total_supply'] = (float) $geckoData['total_supply'];
+                                }
+                                Log::info("GeckoTerminal provided raw total supply for {$chain}", ['supply' => $result['total_supply']]);
+                            }
+                        }
+                    }
+                } catch (\Exception $e) {
+                    Log::debug("GeckoTerminal total supply failed for {$chain}", ['error' => $e->getMessage()]);
+                }
+            }
+
+            // Step 7: Last resort for total supply - direct RPC totalSupply() call
+            if (empty($result['total_supply'])) {
+                try {
+                    $rpcUrl = $this->getPublicRpcUrl($chain);
+                    if ($rpcUrl) {
+                        $rpcResponse = Http::timeout(10)->post($rpcUrl, [
+                            'jsonrpc' => '2.0',
+                            'method' => 'eth_call',
+                            'params' => [
+                                ['to' => $address, 'data' => '0x18160ddd'], // totalSupply() selector
+                                'latest',
+                            ],
+                            'id' => 1,
+                        ]);
+                        if ($rpcResponse->successful()) {
+                            $hex = $rpcResponse->json('result');
+                            if ($hex && strlen($hex) > 2) {
+                                // Convert hex to float, assume 18 decimals if unknown
+                                $rawSupply = hexdec(substr($hex, 2));
+                                $result['total_supply'] = $rawSupply / 1e18;
+                                Log::info("RPC totalSupply() provided supply for {$chain}", ['supply' => $result['total_supply']]);
+                            }
+                        }
+                    }
+                } catch (\Exception $e) {
+                    Log::debug("RPC totalSupply() failed for {$chain}", ['error' => $e->getMessage()]);
+                }
+            }
+
+            return $result;
+        } catch (\Exception $e) {
+            Log::error("{$displayName} token verification failed", ['error' => $e->getMessage(), 'address' => $address]);
+            
+            // Return basic data even on failure (DexScreener will fill the gaps)
+            return [
+                'chain' => $chain,
+                'address' => $address,
+                'name' => 'Unknown',
+                'symbol' => 'N/A',
+                'verified' => null, // null = unknown, not false
+                'explorer_url' => "https://{$explorerDomain}/token/{$address}",
+                'limited_data' => true,
+                'market_data_only' => true,
+            ];
+        }
+    }
+
+    /**
+     * Get Routescan chain ID for free contract verification fallback
+     */
+    private function getRoutescanChainId(string $chain): ?int
+    {
+        $chainIds = [
+            'ethereum' => 1,
+            'bsc' => 56,
+            'polygon' => 137,
+            'arbitrum' => 42161,
+            'optimism' => 10,
+            'avalanche' => 43114,
+            'fantom' => 250,
+            'base' => 8453,
+            'cronos' => 25,
+            'gnosis' => 100,
+            'celo' => 42220,
+            'moonbeam' => 1284,
+            'moonriver' => 1285,
+            'zksync' => 324,
+            'linea' => 59144,
+            'mantle' => 5000,
+            'scroll' => 534352,
+            'harmony' => 1666600000,
+        ];
+        return $chainIds[$chain] ?? null;
+    }
+
+    /**
+     * Get Blockscout v2 API base URL for a chain (free, no key needed)
+     * Blockscout provides holder count + top holder list with actual balances
+     */
+    private function getBlockscoutApiUrl(string $chain): ?string
+    {
+        $blockscoutUrls = [
+            'mantle' => 'https://explorer.mantle.xyz/api/v2',
+            'gnosis' => 'https://gnosis.blockscout.com/api/v2',
+            'celo' => 'https://explorer.celo.org/mainnet/api/v2',
+            'scroll' => 'https://scroll.blockscout.com/api/v2',
+            'zksync' => 'https://block-explorer-api.mainnet.zksync.io/api',
+            'base' => 'https://base.blockscout.com/api/v2',
+            'optimism' => 'https://optimism.blockscout.com/api/v2',
+            'arbitrum' => 'https://arbitrum.blockscout.com/api/v2',
+            'polygon' => 'https://polygon.blockscout.com/api/v2',
+            'ethereum' => 'https://eth.blockscout.com/api/v2',
+            'linea' => 'https://linea.blockscout.com/api/v2',
+        ];
+        return $blockscoutUrls[$chain] ?? null;
+    }
+
+    /**
+     * Fetch holder count and top holders from Blockscout v2 API
+     */
+    private function fetchBlockscoutHolderData(string $blockscoutUrl, string $address, array &$result): void
+    {
+        try {
+            // Get token info (includes holder count)
+            $tokenResponse = Http::timeout(10)->get("{$blockscoutUrl}/tokens/{$address}");
+            if ($tokenResponse->successful()) {
+                $tokenData = $tokenResponse->json();
+                // Try multiple field names for holder count (varies by Blockscout version)
+                $holderCount = $tokenData['holders'] ?? $tokenData['holder_count'] ?? $tokenData['holders_count'] ?? null;
+                if ($holderCount !== null && (int) $holderCount > 0) {
+                    $result['holders_count'] = (int) $holderCount;
+                }
+                if (isset($tokenData['total_supply']) && isset($tokenData['decimals'])) {
+                    $decimals = (int) $tokenData['decimals'];
+                    $rawSupply = $tokenData['total_supply'];
+                    if ($decimals > 0) {
+                        $result['total_supply'] = (float) bcdiv($rawSupply, bcpow('10', (string) $decimals, 0), $decimals);
+                    } else {
+                        $result['total_supply'] = (float) $rawSupply;
+                    }
+                }
+            }
+
+            // Get top holders with actual balances
+            $holdersResponse = Http::timeout(10)->get("{$blockscoutUrl}/tokens/{$address}/holders");
+            if ($holdersResponse->successful()) {
+                $holdersData = $holdersResponse->json();
+                $items = $holdersData['items'] ?? [];
+
+                if (!empty($items)) {
+                    $topHolders = [];
+                    $decimals = (int) ($result['decimals'] ?? $holdersData['items'][0]['token']['decimals'] ?? 18);
+
+                    foreach (array_slice($items, 0, 10) as $holder) {
+                        $holderAddress = $holder['address']['hash'] ?? '';
+                        $rawBalance = $holder['value'] ?? '0';
+                        $balance = $decimals > 0 ? (float) bcdiv($rawBalance, bcpow('10', (string) $decimals, 0), 4) : (float) $rawBalance;
+
+                        $topHolders[] = [
+                            'address' => $holderAddress,
+                            'balance' => $balance,
+                            'tx_count' => 0,
+                        ];
+                    }
+
+                    $result['top_holders'] = $topHolders;
+
+                    // Calculate holder distribution
+                    $totalSupply = $result['total_supply'] ?? 0;
+                    if ($totalSupply > 0 && count($topHolders) > 0) {
+                        $top10Balance = array_sum(array_column($topHolders, 'balance'));
+                        $top10Pct = ($top10Balance / $totalSupply) * 100;
+
+                        $result['holder_distribution'] = [
+                            'top_10_percentage' => round($top10Pct, 2),
+                            'whale_risk' => $top10Pct > 60 ? 'high' : ($top10Pct > 40 ? 'medium' : 'low'),
+                            'distribution_quality' => $top10Pct > 60 ? 'poor' : ($top10Pct > 40 ? 'moderate' : 'good'),
+                        ];
+                    }
+                }
+            }
+
+            Log::info('Blockscout holder data fetched', [
+                'holders_count' => $result['holders_count'] ?? 0,
+                'top_holders_count' => count($result['top_holders'] ?? []),
+            ]);
+        } catch (\Exception $e) {
+            Log::warning('Blockscout holder data fetch failed', ['error' => $e->getMessage()]);
+        }
+    }
+
+    /**
+     * Map internal chain name to GeckoTerminal network slug
+     */
+    private function getGeckoTerminalChain(string $chain): ?string
+    {
+        $map = [
+            'ethereum' => 'eth',
+            'bsc' => 'bsc',
+            'polygon' => 'polygon_pos',
+            'arbitrum' => 'arbitrum',
+            'optimism' => 'optimism',
+            'avalanche' => 'avax',
+            'fantom' => 'ftm',
+            'base' => 'base',
+            'cronos' => 'cro',
+            'gnosis' => 'xdai',
+            'celo' => 'celo',
+            'moonbeam' => 'moonbeam',
+            'zksync' => 'zksync',
+            'linea' => 'linea',
+            'mantle' => 'mantle',
+            'scroll' => 'scroll',
+            'pulsechain' => 'pulsechain',
+            'blast' => 'blast',
+        ];
+        return $map[$chain] ?? null;
+    }
+
+    /**
+     * Get a public free RPC URL for a chain (for totalSupply() calls)
+     */
+    private function getPublicRpcUrl(string $chain): ?string
+    {
+        $rpcs = [
+            'ethereum' => 'https://eth.llamarpc.com',
+            'bsc' => 'https://bsc-dataseed.binance.org/',
+            'polygon' => 'https://polygon-rpc.com',
+            'arbitrum' => 'https://arb1.arbitrum.io/rpc',
+            'optimism' => 'https://mainnet.optimism.io',
+            'avalanche' => 'https://api.avax.network/ext/bc/C/rpc',
+            'fantom' => 'https://rpc.ftm.tools',
+            'base' => 'https://mainnet.base.org',
+            'cronos' => 'https://evm.cronos.org',
+            'gnosis' => 'https://rpc.gnosischain.com',
+            'celo' => 'https://forno.celo.org',
+            'moonbeam' => 'https://rpc.api.moonbeam.network',
+            'zksync' => 'https://mainnet.era.zksync.io',
+            'linea' => 'https://rpc.linea.build',
+            'mantle' => 'https://rpc.mantle.xyz',
+            'scroll' => 'https://rpc.scroll.io',
+            'blast' => 'https://rpc.blast.io',
+        ];
+        return $rpcs[$chain] ?? null;
+    }
+
+    /**
+     * Get EVM chain configuration for explorer API
+     * Now uses Etherscan V2 unified API (api.etherscan.io/v2/api?chainid=X) as primary
+     * Falls back to individual chain APIs for chains not on V2
+     */
+    private function getEvmChainConfig(string $chain): array
+    {
+        $apiKey = config('services.etherscan.api_key'); // Single key works for ALL chains via V2
+
+        $configs = [
+            'ethereum' => [
+                'chain_id' => 1,
+                'api_url' => 'https://api.etherscan.io/api',
+                'explorer_domain' => 'etherscan.io',
+                'display_name' => 'Ethereum',
+                'api_key' => $apiKey,
+            ],
+            'bsc' => [
+                'chain_id' => 56,
+                'api_url' => 'https://api.bscscan.com/api',
+                'explorer_domain' => 'bscscan.com',
+                'display_name' => 'BNB Chain',
+                'api_key' => $apiKey,
+            ],
+            'base' => [
+                'chain_id' => 8453,
+                'api_url' => 'https://api.basescan.org/api',
+                'explorer_domain' => 'basescan.org',
+                'display_name' => 'Base',
+                'api_key' => $apiKey,
+            ],
+            'polygon' => [
+                'chain_id' => 137,
+                'api_url' => 'https://api.polygonscan.com/api',
+                'explorer_domain' => 'polygonscan.com',
+                'display_name' => 'Polygon',
+                'api_key' => $apiKey,
+            ],
+            'arbitrum' => [
+                'chain_id' => 42161,
+                'api_url' => 'https://api.arbiscan.io/api',
+                'explorer_domain' => 'arbiscan.io',
+                'display_name' => 'Arbitrum',
+                'api_key' => $apiKey,
+            ],
+            'optimism' => [
+                'chain_id' => 10,
+                'api_url' => 'https://api-optimistic.etherscan.io/api',
+                'explorer_domain' => 'optimistic.etherscan.io',
+                'display_name' => 'Optimism',
+                'api_key' => $apiKey,
+            ],
+            'avalanche' => [
+                'chain_id' => 43114,
+                'api_url' => 'https://api.snowtrace.io/api',
+                'explorer_domain' => 'snowtrace.io',
+                'display_name' => 'Avalanche',
+                'api_key' => $apiKey,
+            ],
+            'fantom' => [
+                'chain_id' => 250,
+                'api_url' => 'https://api.ftmscan.com/api',
+                'explorer_domain' => 'ftmscan.com',
+                'display_name' => 'Fantom',
+                'api_key' => $apiKey,
+            ],
+            'cronos' => [
+                'chain_id' => 25,
+                'api_url' => 'https://api.cronoscan.com/api',
+                'explorer_domain' => 'cronoscan.com',
+                'display_name' => 'Cronos',
+                'api_key' => $apiKey,
+            ],
+            'gnosis' => [
+                'chain_id' => 100,
+                'api_url' => 'https://api.gnosisscan.io/api',
+                'explorer_domain' => 'gnosisscan.io',
+                'display_name' => 'Gnosis',
+                'api_key' => $apiKey,
+            ],
+            'celo' => [
+                'chain_id' => 42220,
+                'api_url' => 'https://api.celoscan.io/api',
+                'explorer_domain' => 'celoscan.io',
+                'display_name' => 'Celo',
+                'api_key' => $apiKey,
+            ],
+            'moonbeam' => [
+                'chain_id' => 1284,
+                'api_url' => 'https://api-moonbeam.moonscan.io/api',
+                'explorer_domain' => 'moonbeam.moonscan.io',
+                'display_name' => 'Moonbeam',
+                'api_key' => $apiKey,
+            ],
+            'moonriver' => [
+                'chain_id' => 1285,
+                'api_url' => 'https://api-moonriver.moonscan.io/api',
+                'explorer_domain' => 'moonriver.moonscan.io',
+                'display_name' => 'Moonriver',
+                'api_key' => $apiKey,
+            ],
+            'zksync' => [
+                'chain_id' => 324,
+                'api_url' => 'https://block-explorer-api.mainnet.zksync.io/api',
+                'explorer_domain' => 'explorer.zksync.io',
+                'display_name' => 'zkSync Era',
+                'api_key' => $apiKey,
+            ],
+            'linea' => [
+                'chain_id' => 59144,
+                'api_url' => 'https://api.lineascan.build/api',
+                'explorer_domain' => 'lineascan.build',
+                'display_name' => 'Linea',
+                'api_key' => $apiKey,
+            ],
+            'mantle' => [
+                'chain_id' => 5000,
+                'api_url' => 'https://api.mantlescan.xyz/api',
+                'explorer_domain' => 'mantlescan.xyz',
+                'display_name' => 'Mantle',
+                'api_key' => $apiKey,
+            ],
+            'scroll' => [
+                'chain_id' => 534352,
+                'api_url' => 'https://api.scrollscan.com/api',
+                'explorer_domain' => 'scrollscan.com',
+                'display_name' => 'Scroll',
+                'api_key' => $apiKey,
+            ],
+        ];
+
+        return $configs[$chain] ?? [
+            'chain_id' => null,
+            'api_url' => 'https://api.etherscan.io/api',
+            'explorer_domain' => 'etherscan.io',
+            'display_name' => ucfirst($chain),
+            'api_key' => null,
+        ];
+    }
+
+
+    /**
      * Verify Solana token using Solscan API
      */
     private function verifySolanaToken(string $address): array
@@ -917,13 +1484,54 @@ class TokenVerificationService
      */
     private function getGenericTokenInfo(string $input, string $chain): array
     {
+        // For unknown chains, provide a market-data-only report
+        // DexScreener will fill in the data via the market data merge
+        $explorerMap = $this->getExplorerDomainMap();
+        $explorerDomain = $explorerMap[strtolower($chain)] ?? null;
+        $explorerUrl = $explorerDomain ? "https://{$explorerDomain}/token/{$input}" : null;
+
         return [
-            'chain' => strtoupper($chain),
+            'chain' => $chain,
             'address' => $input,
             'name' => 'Unknown',
             'symbol' => 'N/A',
-            'verified' => false,
-            'error' => 'Chain not fully supported yet. Add API keys for full verification.'
+            'verified' => null, // null = unable to check (not false which implies checked and failed)
+            'has_source_code' => null,
+            'market_data_only' => true, // Flag: no contract verification available
+            'explorer_url' => $explorerUrl,
+        ];
+    }
+
+    /**
+     * Get explorer domain mapping for all supported chains
+     */
+    private function getExplorerDomainMap(): array
+    {
+        return [
+            'ethereum' => 'etherscan.io',
+            'bsc' => 'bscscan.com',
+            'polygon' => 'polygonscan.com',
+            'arbitrum' => 'arbiscan.io',
+            'optimism' => 'optimistic.etherscan.io',
+            'avalanche' => 'snowtrace.io',
+            'fantom' => 'ftmscan.com',
+            'base' => 'basescan.org',
+            'solana' => 'solscan.io',
+            'ton' => 'tonscan.org',
+            'cronos' => 'cronoscan.com',
+            'gnosis' => 'gnosisscan.io',
+            'celo' => 'celoscan.io',
+            'moonbeam' => 'moonbeam.moonscan.io',
+            'moonriver' => 'moonriver.moonscan.io',
+            'zksync' => 'explorer.zksync.io',
+            'linea' => 'lineascan.build',
+            'mantle' => 'mantlescan.xyz',
+            'scroll' => 'scrollscan.com',
+            'pulsechain' => 'scan.pulsechain.com',
+            'metis' => 'andromeda-explorer.metis.io',
+            'harmony' => 'explorer.harmony.one',
+            'kava' => 'kavascan.com',
+            'aurora' => 'explorer.aurora.dev',
         ];
     }
 
@@ -965,16 +1573,37 @@ class TokenVerificationService
 
         foreach ($transactions as $tx) {
             $to = $tx['to'] ?? null;
+            $from = $tx['from'] ?? null;
+            $value = (float) ($tx['value'] ?? 0);
+            $decimals = (int) ($tx['tokenDecimal'] ?? 18);
+            $adjustedValue = $decimals > 0 ? $value / pow(10, $decimals) : $value;
+
+            // Track net balance: receiving adds, sending subtracts
             if ($to) {
                 if (!isset($holders[$to])) {
-                    $holders[$to] = ['address' => $to, 'tx_count' => 0];
+                    $holders[$to] = ['address' => $to, 'balance' => 0, 'tx_count' => 0];
                 }
+                $holders[$to]['balance'] += $adjustedValue;
                 $holders[$to]['tx_count']++;
+            }
+            if ($from) {
+                if (!isset($holders[$from])) {
+                    $holders[$from] = ['address' => $from, 'balance' => 0, 'tx_count' => 0];
+                }
+                $holders[$from]['balance'] -= $adjustedValue;
             }
         }
 
-        // Sort by transaction count (approximation)
-        usort($holders, fn($a, $b) => $b['tx_count'] <=> $a['tx_count']);
+        // Filter out zero/negative balances and known contract addresses (burn, null)
+        $holders = array_filter($holders, function ($h) {
+            return $h['balance'] > 0 && !in_array(strtolower($h['address']), [
+                '0x0000000000000000000000000000000000000000',
+                '0x000000000000000000000000000000000000dead',
+            ]);
+        });
+
+        // Sort by estimated balance (descending)
+        usort($holders, fn($a, $b) => $b['balance'] <=> $a['balance']);
 
         return array_slice($holders, 0, 10);
     }
@@ -1011,50 +1640,69 @@ class TokenVerificationService
         if ($tokenType) {
             $riskModifier = $tokenType['risk_modifier'] ?? 0;
 
-            // For known assets (stablecoins, wrapped tokens), skip EVM-centric checks
+            // For known assets, note the type but CONTINUE with full analysis
             if ($tokenType['is_known_asset'] ?? false) {
-                $breakdown[] = ['factor' => 'Known Asset Type: ' . ucfirst($tokenType['type']), 'points' => 0, 'impact' => 'positive'];
+                $assetTypeName = ucfirst($tokenType['type'] ?? 'known');
+                $breakdown[] = ['factor' => 'Known Asset Type: ' . $assetTypeName, 'points' => 0, 'impact' => 'positive'];
+                $breakdown[] = ['factor' => 'Established Protocol', 'points' => -15, 'impact' => 'positive'];
+                $score -= 15; // Bonus for being a known asset
 
                 // For stablecoins, verify price is in range
                 if ($tokenType['is_stablecoin'] ?? false) {
-                    Log::info('Stablecoin detected in risk calculation', [
-                        'symbol' => $data['symbol'] ?? 'Unknown',
-                        'price_validation' => $data['market_data']['price_validation'] ?? null
-                    ]);
-
                     $priceValidation = $data['market_data']['price_validation'] ?? null;
                     if ($priceValidation && !$priceValidation['valid']) {
-                        $score += 40; // Major red flag if stablecoin is de-pegged
+                        $score += 40;
                         $breakdown[] = ['factor' => 'Stablecoin De-Pegged', 'points' => 40, 'impact' => 'negative'];
                         $factors[] = 'Price deviation from $1.00';
                     } else {
-                        // Stablecoin with normal peg = low risk
-                        Log::info('Returning low risk for stablecoin', ['score' => max(0, 10 + $riskModifier)]);
-                        return [
-                            'total_score' => max(0, 10 + $riskModifier),
-                            'breakdown' => [
-                                ['factor' => 'Stablecoin (USDC)', 'points' => 0, 'impact' => 'positive'],
-                                ['factor' => 'Price pegged to $1.00', 'points' => 0, 'impact' => 'positive'],
-                                ['factor' => 'Widely trusted asset', 'points' => -30, 'impact' => 'positive']
-                            ],
-                            'factors' => []
-                        ];
+                        $breakdown[] = ['factor' => 'Price Pegged to $1.00', 'points' => 0, 'impact' => 'positive'];
                     }
-                } else {
-                    // Wrapped asset or liquid staking = low risk
-                    return [
-                        'total_score' => max(0, 15 + $riskModifier),
-                        'breakdown' => $breakdown,
-                        'factors' => []
-                    ];
                 }
             }
         }
+        // NOTE: No early return — proceed to full contract + market analysis below
+
+        // Check if this is market-data-only (no contract verification available)
+        $marketDataOnly = $data['market_data_only'] ?? false;
 
         // Get security model for chain
         $chain = $data['chain'] ?? 'unknown';
         $detector = app(TokenTypeDetector::class);
         $securityModel = $detector->getSecurityModel($chain);
+
+        // For market-data-only tokens, skip contract checks and score on market metrics only
+        if ($marketDataOnly) {
+            $breakdown[] = ['factor' => 'Contract verification not available', 'points' => 10, 'impact' => 'negative'];
+            $score += 10; // Mild penalty for unverifiable contract
+            $factors[] = 'No contract verification for this chain';
+
+            // Score based on available market metrics
+            $marketData = $data['market_data'] ?? [];
+            $liquidity = $marketData['liquidity_usd'] ?? 0;
+            $volume = $marketData['volume_24h'] ?? 0;
+            $marketCap = $marketData['market_cap'] ?? 0;
+
+            if ($liquidity > 0 && $liquidity < 10000) {
+                $score += 20;
+                $breakdown[] = ['factor' => 'Very Low Liquidity', 'points' => 20, 'impact' => 'negative'];
+                $factors[] = 'Liquidity under $10K';
+            } elseif ($liquidity > 100000) {
+                $breakdown[] = ['factor' => 'Good Liquidity', 'points' => 0, 'impact' => 'positive'];
+            }
+
+            if ($volume > 0 && $volume < 1000) {
+                $score += 10;
+                $breakdown[] = ['factor' => 'Very Low Volume', 'points' => 10, 'impact' => 'negative'];
+                $factors[] = '24h volume under $1K';
+            }
+
+            $finalScore = max(0, min(100, $score + $riskModifier));
+            return [
+                'total_score' => $finalScore,
+                'breakdown' => $breakdown,
+                'factors' => $factors
+            ];
+        }
 
         // CONTRACT VERIFICATION (±25 points) - EVM ONLY
         if ($securityModel === 'evm') {
@@ -1064,7 +1712,7 @@ class TokenVerificationService
                 $breakdown[] = ['factor' => 'Contract Not Verified', 'points' => $points, 'impact' => 'negative'];
                 $factors[] = 'Unverified contract';
             } else {
-                $breakdown[] = ['factor' => 'Contract Verified', 'points' => 0, 'impact' => 'neutral'];
+                $breakdown[] = ['factor' => 'Contract Verified', 'points' => 0, 'impact' => 'positive'];
             }
 
             // SOURCE CODE AVAILABILITY (±20 points) - EVM ONLY
@@ -1102,7 +1750,7 @@ class TokenVerificationService
                 $breakdown[] = ['factor' => 'Proxy/Upgradeable', 'points' => $points, 'impact' => 'negative'];
                 $factors[] = 'Contract can be upgraded';
             } else {
-                $breakdown[] = ['factor' => 'Not Proxy', 'points' => 0, 'impact' => 'neutral'];
+                $breakdown[] = ['factor' => 'Not Proxy (Immutable)', 'points' => 0, 'impact' => 'positive'];
             }
 
             // MINTABLE (±15 points) - EVM ONLY
@@ -1128,6 +1776,24 @@ class TokenVerificationService
             } else {
                 $breakdown[] = ['factor' => 'Mint Authority Revoked', 'points' => 0, 'impact' => 'positive'];
             }
+        } elseif ($securityModel === 'ton') {
+            // TON JETTON CHECKS
+            $adminAddress = $data['admin_address'] ?? $data['admin'] ?? null;
+            if (!empty($adminAddress)) {
+                $points = 15;
+                $score += $points;
+                $breakdown[] = ['factor' => 'Admin Address Active', 'points' => $points, 'impact' => 'negative'];
+                $factors[] = 'Jetton admin can modify contract';
+            } else {
+                $breakdown[] = ['factor' => 'Admin Address Revoked', 'points' => 0, 'impact' => 'positive'];
+            }
+
+            if ($data['mintable'] ?? false) {
+                $points = 10;
+                $score += $points;
+                $breakdown[] = ['factor' => 'Mintable Jetton', 'points' => $points, 'impact' => 'negative'];
+                $factors[] = 'Supply can be increased';
+            }
         }
 
         // HOLDER DISTRIBUTION (±20 points) - ALL CHAINS
@@ -1138,34 +1804,91 @@ class TokenVerificationService
         if ($top10Pct > 70) {
             $points = 20;
             $score += $points;
-            $breakdown[] = ['factor' => 'Highly Concentrated Holdings', 'points' => $points, 'impact' => 'negative'];
+            $breakdown[] = ['factor' => "Highly Concentrated (Top 10 own {$top10Pct}%)", 'points' => $points, 'impact' => 'negative'];
             $factors[] = "Top 10 holders own {$top10Pct}%";
         } elseif ($top10Pct > 50) {
             $points = 10;
             $score += $points;
-            $breakdown[] = ['factor' => 'Concentrated Holdings', 'points' => $points, 'impact' => 'negative'];
+            $breakdown[] = ['factor' => "Concentrated (Top 10 own {$top10Pct}%)", 'points' => $points, 'impact' => 'negative'];
             $factors[] = "Top 10 holders own {$top10Pct}%";
+        } elseif ($top10Pct > 0) {
+            $breakdown[] = ['factor' => "Good Distribution (Top 10 own {$top10Pct}%)", 'points' => 0, 'impact' => 'positive'];
         } else {
-            $breakdown[] = ['factor' => 'Holder Distribution', 'points' => 0, 'impact' => 'neutral'];
+            $breakdown[] = ['factor' => 'Holder Distribution: No data', 'points' => 0, 'impact' => 'neutral'];
         }
 
         // LOW HOLDER COUNT (±10 points) - ALL CHAINS
         if ($holderCount > 0 && $holderCount < 50) {
             $points = 10;
             $score += $points;
-            $breakdown[] = ['factor' => 'Very Low Holder Count', 'points' => $points, 'impact' => 'negative'];
+            $breakdown[] = ['factor' => "Very Low Holders ({$holderCount})", 'points' => $points, 'impact' => 'negative'];
             $factors[] = "Only {$holderCount} holders";
         } elseif ($holderCount > 0 && $holderCount < 100) {
             $points = 5;
             $score += $points;
-            $breakdown[] = ['factor' => 'Low Holder Count', 'points' => $points, 'impact' => 'negative'];
+            $breakdown[] = ['factor' => "Low Holders ({$holderCount})", 'points' => $points, 'impact' => 'negative'];
             $factors[] = "{$holderCount} holders";
+        } elseif ($holderCount >= 1000) {
+            $breakdown[] = ['factor' => 'Strong Holder Base (' . number_format($holderCount) . ')', 'points' => 0, 'impact' => 'positive'];
+        } elseif ($holderCount >= 100) {
+            $breakdown[] = ['factor' => 'Moderate Holders (' . number_format($holderCount) . ')', 'points' => 0, 'impact' => 'neutral'];
         } else {
-            $breakdown[] = ['factor' => 'Holder Count', 'points' => 0, 'impact' => 'neutral'];
+            $breakdown[] = ['factor' => 'Holder Count: No data', 'points' => 0, 'impact' => 'neutral'];
         }
 
-        // Apply token type risk modifier
+        // LIQUIDITY ASSESSMENT (±15 points) - ALL CHAINS
+        $liquidity = $data['market_data']['liquidity_usd'] ?? 0;
+        if ($liquidity > 0) {
+            if ($liquidity < 10000) {
+                $points = 15;
+                $score += $points;
+                $breakdown[] = ['factor' => 'Very Low Liquidity (<$10K)', 'points' => $points, 'impact' => 'negative'];
+                $factors[] = 'Liquidity under $10K';
+            } elseif ($liquidity < 50000) {
+                $points = 8;
+                $score += $points;
+                $breakdown[] = ['factor' => 'Low Liquidity (<$50K)', 'points' => $points, 'impact' => 'negative'];
+            } elseif ($liquidity >= 500000) {
+                $breakdown[] = ['factor' => 'Strong Liquidity ($' . number_format($liquidity / 1000000, 2) . 'M)', 'points' => 0, 'impact' => 'positive'];
+            } else {
+                $breakdown[] = ['factor' => 'Moderate Liquidity ($' . number_format($liquidity / 1000, 0) . 'K)', 'points' => 0, 'impact' => 'neutral'];
+            }
+        }
+
+        // VOLUME ASSESSMENT (±10 points) - ALL CHAINS
+        $volume24h = $data['market_data']['volume_24h'] ?? 0;
+        if ($volume24h > 0) {
+            if ($volume24h < 1000) {
+                $points = 10;
+                $score += $points;
+                $breakdown[] = ['factor' => 'Very Low 24h Volume (<$1K)', 'points' => $points, 'impact' => 'negative'];
+            } elseif ($volume24h >= 100000) {
+                $breakdown[] = ['factor' => 'Healthy Trading Volume ($' . number_format($volume24h / 1000000, 2) . 'M)', 'points' => 0, 'impact' => 'positive'];
+            }
+        }
+
+        // MARKET CAP ASSESSMENT - ALL CHAINS
+        $marketCap = $data['market_data']['market_cap'] ?? 0;
+        if ($marketCap > 0) {
+            if ($marketCap >= 1000000000) {
+                $breakdown[] = ['factor' => 'Large Cap ($' . number_format($marketCap / 1000000000, 2) . 'B)', 'points' => 0, 'impact' => 'positive'];
+            } elseif ($marketCap >= 100000000) {
+                $breakdown[] = ['factor' => 'Mid Cap ($' . number_format($marketCap / 1000000, 0) . 'M)', 'points' => 0, 'impact' => 'neutral'];
+            } elseif ($marketCap < 1000000) {
+                $points = 5;
+                $score += $points;
+                $breakdown[] = ['factor' => 'Micro Cap (<$1M)', 'points' => $points, 'impact' => 'negative'];
+            }
+        }
+
+        // Apply token type risk modifier and show it in breakdown if significant
         $finalScore = max(0, min(100, $score + $riskModifier));
+
+        // If risk_modifier pushed score below 0 (clamped to 0), show it so users understand
+        if ($riskModifier < 0 && $score > 0) {
+            $assetTypeName = ucfirst($tokenType['type'] ?? 'known');
+            $breakdown[] = ['factor' => "Known {$assetTypeName} Bonus", 'points' => $riskModifier, 'impact' => 'positive'];
+        }
 
         return [
             'total_score' => $finalScore,
@@ -1295,6 +2018,22 @@ class TokenVerificationService
 
         if (($data['holders_count'] ?? 0) > 100) {
             $flags[] = '✅ Strong community (' . number_format($data['holders_count']) . ' holders)';
+        }
+
+        // Market data green flags
+        $liquidity = $data['market_data']['liquidity_usd'] ?? 0;
+        if ($liquidity >= 500000) {
+            $flags[] = '✅ Strong liquidity ($' . number_format($liquidity / 1000000, 2) . 'M)';
+        }
+
+        $volume = $data['market_data']['volume_24h'] ?? 0;
+        if ($volume >= 1000000) {
+            $flags[] = '✅ Active trading ($' . number_format($volume / 1000000, 2) . 'M daily volume)';
+        }
+
+        $marketCap = $data['market_data']['market_cap'] ?? 0;
+        if ($marketCap >= 100000000) {
+            $flags[] = '✅ Established market cap ($' . number_format($marketCap / 1000000000, 2) . 'B)';
         }
 
         return $flags;

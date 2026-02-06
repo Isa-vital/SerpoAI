@@ -5125,12 +5125,12 @@ class CommandHandler
         if (str_starts_with($token, 'EQ') || str_starts_with($token, 'UQ')) {
             $chain = 'TON';
         } elseif (str_starts_with($token, '0x')) {
-            $chain = 'EVM (Ethereum/BSC/Base)';
+            $chain = 'EVM (auto-detecting chain...)';
         } elseif (preg_match('/^[1-9A-HJ-NP-Za-km-z]{32,44}$/', $token)) {
             // Solana addresses are base58 encoded (32-44 chars, no 0, O, I, l)
             $chain = 'Solana';
         } else {
-            $chain = 'Ethereum'; // Fallback
+            $chain = 'Unknown (auto-detecting...)';
         }
 
         $this->telegram->sendMessage($chatId, "✅ Chain: {$chain}\n\n📡 *Stage 2/3:* Fetching contract data...");
@@ -5189,6 +5189,18 @@ class CommandHandler
             'base' => 'Base',
             'solana' => 'Solana',
             'ton' => 'TON',
+            'cronos' => 'Cronos',
+            'gnosis' => 'Gnosis',
+            'celo' => 'Celo',
+            'moonbeam' => 'Moonbeam',
+            'moonriver' => 'Moonriver',
+            'zksync' => 'zkSync Era',
+            'linea' => 'Linea',
+            'mantle' => 'Mantle',
+            'scroll' => 'Scroll',
+            'pulsechain' => 'PulseChain',
+            'metis' => 'Metis',
+            'harmony' => 'Harmony',
         ];
         $chainDisplay = $chainNames[strtolower($chain)] ?? ucfirst($chain);
 
@@ -5252,8 +5264,17 @@ class CommandHandler
         }
 
         // CONTRACT VERIFICATION SECTION
-        $message .= "━━━━━━━━━━━━━━━━━━━━\n";
-        $message .= "🔍 *CONTRACT DATA*\n\n";
+        $isMarketDataOnly = $data['market_data_only'] ?? false;
+
+        if ($isMarketDataOnly) {
+            $message .= "━━━━━━━━━━━━━━━━━━━━\n";
+            $message .= "🔍 *CONTRACT DATA*\n\n";
+            $message .= "⚠️ Contract verification not available for this chain.\n";
+            $message .= "📊 Risk assessment based on market data only.\n";
+            $message .= "\n";
+        } else {
+            $message .= "━━━━━━━━━━━━━━━━━━━━\n";
+            $message .= "🔍 *CONTRACT DATA*\n\n";
 
         if (isset($data['total_supply']) && $data['total_supply'] > 0) {
             $supply = $this->formatLargeNumber($data['total_supply']);
@@ -5265,8 +5286,14 @@ class CommandHandler
             $message .= "👥 Holders: " . number_format($holderCount) . "\n";
         }
 
-        $verified = $data['verified'] ?? false;
-        $message .= "✅ Verified: " . ($verified ? "Yes" : "No") . "\n";
+        $verified = $data['verified'] ?? null;
+        if ($verified === true) {
+            $message .= "✅ Verified: Yes\n";
+        } elseif ($verified === false) {
+            $message .= "❌ Verified: No\n";
+        } else {
+            $message .= "❓ Verified: Unable to check\n";
+        }
 
         // Source code availability (chain-aware)
         $isSolana = isset($data['is_spl_token']) && $data['is_spl_token'];
@@ -5314,6 +5341,7 @@ class CommandHandler
         }
 
         $message .= "\n";
+        } // end of !isMarketDataOnly
 
         // Risk Assessment with Score Breakdown
         $riskEmoji = $riskScore > 70 ? '🔴' : ($riskScore > 40 ? '🟡' : '🟢');
@@ -5424,23 +5452,35 @@ class CommandHandler
         // Top Holders (only if data available)
         if (!empty($data['top_holders']) && count($data['top_holders']) > 0) {
             $message .= "━━━━━━━━━━━━━━━━━━━━\n";
-            $message .= "🐳 *TOP HOLDERS*\n\n";
+            // Show appropriate header based on data source
+            $hasBlockscoutData = isset($data['holders_count']) && $data['holders_count'] > 0;
+            $headerNote = $hasBlockscoutData ? 'by token balance' : 'estimated from recent transfers';
+            $message .= "🐳 *TOP HOLDERS* ({$headerNote})\n\n";
 
             $totalSupply = $data['total_supply'] ?? 0;
             $displayCount = min(10, count($data['top_holders']));
+
+            // Calculate total estimated balance across all tracked holders for relative %
+            $totalTracked = 0;
+            foreach ($data['top_holders'] as $h) {
+                $totalTracked += ($h['balance'] ?? 0);
+            }
 
             for ($i = 0; $i < $displayCount; $i++) {
                 $holder = $data['top_holders'][$i];
                 $holderAddr = $holder['address'] ?? '';
                 $balance = $holder['balance'] ?? 0;
+                $shortAddr = $this->shortenAddress($holderAddr);
 
                 if ($totalSupply > 0 && $balance > 0) {
+                    // Use total supply for true percentage
                     $percentage = ($balance / $totalSupply) * 100;
-                    $shortAddr = $this->shortenAddress($holderAddr);
                     $message .= ($i + 1) . ". `{$shortAddr}` - " . number_format($percentage, 2) . "%\n";
-                } elseif (isset($holder['tx_count'])) {
-                    // Ethereum fallback (transaction count)
-                    $shortAddr = $this->shortenAddress($holderAddr);
+                } elseif ($totalTracked > 0 && $balance > 0) {
+                    // Use relative percentage of tracked transfers
+                    $percentage = ($balance / $totalTracked) * 100;
+                    $message .= ($i + 1) . ". `{$shortAddr}` - ~" . number_format($percentage, 2) . "% of recent activity\n";
+                } elseif (isset($holder['tx_count']) && $holder['tx_count'] > 0) {
                     $txCount = $holder['tx_count'];
                     $message .= ($i + 1) . ". `{$shortAddr}` - {$txCount} txs\n";
                 }
@@ -5527,6 +5567,18 @@ class CommandHandler
             'base' => 'BaseScan',
             'solana' => 'Solscan',
             'ton' => 'TONScan',
+            'cronos' => 'CronoScan',
+            'gnosis' => 'GnosisScan',
+            'celo' => 'CeloScan',
+            'moonbeam' => 'Moonscan',
+            'moonriver' => 'Moonriver Explorer',
+            'zksync' => 'zkSync Explorer',
+            'linea' => 'LineaScan',
+            'mantle' => 'MantleScan',
+            'scroll' => 'ScrollScan',
+            'pulsechain' => 'PulseScan',
+            'metis' => 'Metis Explorer',
+            'harmony' => 'Harmony Explorer',
         ];
 
         return $explorers[strtolower($chain)] ?? 'Explorer';
