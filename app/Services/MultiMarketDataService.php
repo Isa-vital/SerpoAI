@@ -450,6 +450,7 @@ class MultiMarketDataService
                 'top_gainers' => $topMovers['gainers'] ?? [],
                 'top_losers' => $topMovers['losers'] ?? [],
                 'most_active' => $topMovers['active'] ?? [],
+                'total_scanned' => $topMovers['total_scanned'] ?? 0,
                 'market_status' => $this->getMarketStatus(),
             ];
         } catch (\Exception $e) {
@@ -1009,18 +1010,35 @@ class MultiMarketDataService
             try {
                 $movers = ['gainers' => [], 'losers' => [], 'active' => []];
 
-                // Get SPY top holdings as proxy for active stocks
-                $watchlist = ['AAPL', 'MSFT', 'NVDA', 'GOOGL', 'AMZN', 'META', 'TSLA', 'JPM', 'V', 'WMT'];
+                // Broad watchlist across sectors for real market representation
+                $watchlist = [
+                    // Tech
+                    'AAPL', 'MSFT', 'NVDA', 'GOOGL', 'AMZN', 'META', 'TSLA',
+                    // Finance
+                    'JPM', 'BAC', 'GS', 'V', 'MA',
+                    // Healthcare
+                    'UNH', 'JNJ', 'PFE', 'ABBV',
+                    // Consumer
+                    'WMT', 'KO', 'MCD', 'NKE', 'DIS',
+                    // Energy & Industrial
+                    'XOM', 'CVX', 'CAT', 'BA',
+                    // ETFs (sector representation)
+                    'SPY', 'QQQ', 'IWM',
+                    // Popular/Trending
+                    'AMD', 'PLTR', 'COIN', 'SQ',
+                ];
+
                 $gainers = [];
                 $losers = [];
 
-                foreach (array_slice($watchlist, 0, 6) as $sym) {
+                foreach ($watchlist as $sym) {
                     $quote = $this->getStockQuote($sym);
                     if (!isset($quote['error']) && isset($quote['price'])) {
                         $item = [
                             'symbol' => $sym,
                             'price' => $quote['price'],
                             'change_percent' => round($quote['change_percent'], 2),
+                            'volume' => $quote['volume'] ?? 0,
                         ];
                         if ($quote['change_percent'] >= 0) {
                             $gainers[] = $item;
@@ -1037,6 +1055,7 @@ class MultiMarketDataService
                     'gainers' => array_slice($gainers, 0, 5),
                     'losers' => array_slice($losers, 0, 5),
                     'active' => array_slice($watchlist, 0, 5),
+                    'total_scanned' => count($watchlist),
                 ];
             } catch (\Exception $e) {
                 Log::warning('Stock movers failed', ['error' => $e->getMessage()]);

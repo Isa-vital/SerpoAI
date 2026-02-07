@@ -54,6 +54,7 @@ class MarketScanService
                     'indices' => $stockData['indices'] ?? [],
                     'top_gainers' => $stockData['top_gainers'] ?? [],
                     'top_losers' => $stockData['top_losers'] ?? [],
+                    'total_scanned' => $stockData['total_scanned'] ?? 0,
                     'market_status' => $stockData['market_status'] ?? 'Unknown',
                 ],
                 'forex' => [
@@ -316,6 +317,10 @@ class MarketScanService
         $message .= "\n\n📈 *STOCK MARKETS*\n";
         $message .= "━━━━━━━━━━━━━━━━━━━━\n";
         $message .= "Status: {$stocks['market_status']}\n";
+        $totalStocksScanned = $stocks['total_scanned'] ?? 0;
+        if ($totalStocksScanned > 0) {
+            $message .= "Stocks Scanned: {$totalStocksScanned} (Top US equities + ETFs)\n";
+        }
         if ($stocks['market_status'] === 'Closed') {
             $sessionDate = \Carbon\Carbon::now('America/New_York')->subDay()->format('Y-m-d');
             $message .= "Session: Previous Close | As of: {$sessionDate}\n";
@@ -325,12 +330,33 @@ class MarketScanService
         if (!empty($stocks['indices'])) {
             $message .= "📊 Major Indices\n";
             foreach ($stocks['indices'] as $idx => $index) {
-                $message .= ($idx + 1) . ". {$index['name']}: \${$index['price']} ({$index['change']})\n";
+                $message .= ($idx + 1) . ". `{$index['name']}`: \${$index['price']} ({$index['change']})\n";
             }
-        } else {
+        }
+
+        // Stock top gainers
+        if (!empty($stocks['top_gainers'])) {
+            $message .= "\n🚀 Top Stock Gainers\n";
+            foreach (array_slice($stocks['top_gainers'], 0, 5) as $idx => $stock) {
+                $changeSymbol = $stock['change_percent'] >= 0 ? '+' : '';
+                $message .= ($idx + 1) . ". `{$stock['symbol']}` {$changeSymbol}{$stock['change_percent']}%";
+                $message .= " | \$" . number_format($stock['price'], 2) . "\n";
+            }
+        }
+
+        // Stock top losers
+        if (!empty($stocks['top_losers'])) {
+            $message .= "\n📉 Top Stock Losers\n";
+            foreach (array_slice($stocks['top_losers'], 0, 5) as $idx => $stock) {
+                $message .= ($idx + 1) . ". `{$stock['symbol']}` {$stock['change_percent']}%";
+                $message .= " | \$" . number_format($stock['price'], 2) . "\n";
+            }
+        }
+
+        if (empty($stocks['indices']) && empty($stocks['top_gainers']) && empty($stocks['top_losers'])) {
             $message .= "• Coverage: ALL NYSE, NASDAQ, AMEX stocks\n";
             $message .= "• Indices: S&P 500, Dow Jones, NASDAQ\n";
-            $message .= "• Real-time data via `/analyze [SYMBOL]`\n";
+            $message .= "• Real-time data via `/signals [SYMBOL]`\n";
         }
 
         // === FOREX MARKETS ===
@@ -340,52 +366,96 @@ class MarketScanService
         $message .= "Status: {$forex['market_status']}\n";
         $forexTimestamp = \Carbon\Carbon::now('UTC')->format('Y-m-d H:i:s') . ' UTC';
         $message .= "As of: {$forexTimestamp}\n";
-        $totalForex = $forex['total_pairs'] ?? 180;
-        $message .= "• Total Available: {$totalForex}+ pairs (All ISO currencies)\n";
-        $message .= "• Metals: GOLD, SILVER, PLATINUM, PALLADIUM\n";
-        $message .= "• Coverage: All major + exotic + commodity pairs\n\n";
+        $totalForex = count($forex['major_pairs'] ?? []);
+        $message .= "Pairs Scanned: {$totalForex} (Majors + Crosses + Metals)\n\n";
 
         if (!empty($forex['major_pairs'])) {
-            // Show commodities first if available
-            $commodities = array_filter($forex['major_pairs'], fn($p) => str_starts_with($p['pair'], 'X'));
-            $regularPairs = array_filter($forex['major_pairs'], fn($p) => !str_starts_with($p['pair'], 'X'));
+            // Separate commodities and regular pairs
+            $commodities = array_filter($forex['major_pairs'], fn($p) => in_array(substr($p['pair'], 0, 3), ['XAU', 'XAG', 'XPT', 'XPD']));
+            $regularPairs = array_filter($forex['major_pairs'], fn($p) => !in_array(substr($p['pair'], 0, 3), ['XAU', 'XAG', 'XPT', 'XPD']));
 
+            // Show metals first
             if (!empty($commodities)) {
-                $message .= "🪙 Precious Metals & Commodities\n";
-                foreach ($commodities as $idx => $pair) {
-                    $changeSymbol = $pair['change'] >= 0 ? '+' : '';
-                    $name = match ($pair['pair']) {
-                        'XAUUSD' => 'GOLD',
-                        'XAGUSD' => 'SILVER',
-                        'XPTUSD' => 'PLATINUM',
-                        'XPDUSD' => 'PALLADIUM',
-                        default => $pair['pair']
-                    };
-                    $message .= "• `{$name}`: {$pair['price']} ({$changeSymbol}{$pair['change_percent']}%)\n";
+                $message .= "🪙 Precious Metals\n";
+                $metalNames = [
+                    'XAUUSD' => 'GOLD',
+                    'XAGUSD' => 'SILVER',
+                    'XPTUSD' => 'PLATINUM',
+                    'XPDUSD' => 'PALLADIUM',
+                ];
+                foreach ($commodities as $pair) {
+                    $name = $metalNames[$pair['pair']] ?? $pair['pair'];
+                    $changeSymbol = $pair['change_percent'] >= 0 ? '+' : '';
+                    $message .= "• `{$name}` ({$pair['pair']}): {$pair['price']} ({$changeSymbol}" . number_format($pair['change_percent'], 2) . "%)\n";
                 }
                 $message .= "\n";
             }
 
-            $message .= "💱 Major Currency Pairs\n";
-            foreach (array_slice($regularPairs, 0, 8) as $idx => $pair) {
-                $changePercent = number_format($pair['change_percent'], 2);
-                $changeSymbol = $pair['change_percent'] >= 0 ? '+' : '';
-                $message .= ($idx + 1) . ". `{$pair['pair']}`: {$pair['price']} ({$changeSymbol}{$changePercent}%)\n";
+            // Sort forex pairs by absolute change (biggest movers first)
+            $regularPairsArray = array_values($regularPairs);
+            usort($regularPairsArray, fn($a, $b) => abs($b['change_percent']) <=> abs($a['change_percent']));
+
+            // Show top forex movers
+            $movers = array_filter($regularPairsArray, fn($p) => abs($p['change_percent']) > 0.01);
+            if (!empty($movers)) {
+                $message .= "🔥 Top Forex Movers\n";
+                foreach (array_slice(array_values($movers), 0, 5) as $idx => $pair) {
+                    $changeSymbol = $pair['change_percent'] >= 0 ? '+' : '';
+                    $emoji = $pair['change_percent'] >= 0 ? '🟢' : '🔴';
+                    $message .= ($idx + 1) . ". {$emoji} `{$pair['pair']}`: {$pair['price']} ({$changeSymbol}" . number_format($pair['change_percent'], 2) . "%)\n";
+                }
+                $message .= "\n";
+            }
+
+            // Show all major pairs
+            $majorPairSymbols = ['EURUSD', 'GBPUSD', 'USDJPY', 'USDCHF', 'AUDUSD', 'USDCAD', 'NZDUSD'];
+            $majorPairsFiltered = array_filter($regularPairsArray, fn($p) => in_array($p['pair'], $majorPairSymbols));
+            if (!empty($majorPairsFiltered)) {
+                $message .= "💱 Major Pairs\n";
+                foreach (array_values($majorPairsFiltered) as $idx => $pair) {
+                    $changeSymbol = $pair['change_percent'] >= 0 ? '+' : '';
+                    $message .= ($idx + 1) . ". `{$pair['pair']}`: {$pair['price']} ({$changeSymbol}" . number_format($pair['change_percent'], 2) . "%)\n";
+                }
+                $message .= "\n";
+            }
+
+            // Show crosses
+            $crossPairSymbols = ['EURGBP', 'EURJPY', 'GBPJPY', 'AUDJPY', 'EURAUD', 'GBPAUD'];
+            $crossPairs = array_filter($regularPairsArray, fn($p) => in_array($p['pair'], $crossPairSymbols));
+            if (!empty($crossPairs)) {
+                $message .= "🔀 Major Crosses\n";
+                foreach (array_values($crossPairs) as $idx => $pair) {
+                    $changeSymbol = $pair['change_percent'] >= 0 ? '+' : '';
+                    $message .= ($idx + 1) . ". `{$pair['pair']}`: {$pair['price']} ({$changeSymbol}" . number_format($pair['change_percent'], 2) . "%)\n";
+                }
+                $message .= "\n";
+            }
+
+            // Show exotics
+            $exoticPairSymbols = ['USDTRY', 'USDZAR', 'USDMXN', 'USDBRL', 'USDRUB', 'USDCNH'];
+            $exoticPairs = array_filter($regularPairsArray, fn($p) => in_array($p['pair'], $exoticPairSymbols));
+            if (!empty($exoticPairs)) {
+                $message .= "🌍 Emerging Market Pairs\n";
+                foreach (array_values($exoticPairs) as $idx => $pair) {
+                    $changeSymbol = $pair['change_percent'] >= 0 ? '+' : '';
+                    $message .= ($idx + 1) . ". `{$pair['pair']}`: {$pair['price']} ({$changeSymbol}" . number_format($pair['change_percent'], 2) . "%)\n";
+                }
             }
         } else {
-            $message .= "• Majors: EUR/USD, GBP/USD, USD/JPY, AUD/USD, USD/CAD, NZD/USD\n";
-            $message .= "• Metals: GOLD (XAUUSD), SILVER (XAGUSD), PLATINUM, PALLADIUM\n";
-            $message .= "• Exotics: Available for all ISO currency pairs\n";
-            $message .= "• Use `/analyze [pair]` for real-time quotes\n";
+            $message .= "💱 Majors: EUR/USD, GBP/USD, USD/JPY, AUD/USD, USD/CAD, NZD/USD\n";
+            $message .= "🪙 Metals: GOLD (XAUUSD), SILVER (XAGUSD), PLATINUM, PALLADIUM\n";
+            $message .= "🌍 Exotics: TRY, ZAR, MXN, BRL, CNH pairs\n";
+            $message .= "Use `/signals [pair]` for real-time analysis\n";
         }
 
         $message .= "\n━━━━━━━━━━━━━━━━━━━━\n";
         $message .= "📡 *Data Sources:*\n";
         $message .= "• Crypto: Binance (primary), CoinGecko (fallback)\n";
-        $message .= "• Stocks: Alpha Vantage (primary), Yahoo Finance (fallback)\n";
-        $message .= "• Forex: Alpha Vantage (primary), ExchangeRate-API (fallback)\n";
+        $message .= "• Stocks: Yahoo Finance (primary), Alpha Vantage (fallback)\n";
+        $message .= "• Forex: Twelve Data / Alpha Vantage / ExchangeRate-API\n";
         $message .= "\n💡 *How to use:*\n";
-        $message .= "• Use `/analyze <symbol>` for detailed analysis\n";
+        $message .= "• `/signals BTCUSDT 1D` - Technical analysis\n";
+        $message .= "• `/analyze ETHUSDT` - Deep pair analysis\n";
         $message .= "• Data updates every {$cacheTtl}s\n";
 
         return $message;
