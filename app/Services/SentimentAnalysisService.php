@@ -40,7 +40,7 @@ class SentimentAnalysisService
 
             // Calculate confidence based on data availability
             $sentiment['confidence'] = $this->calculateConfidence($sentiment);
-            
+
             // Generate trader insight
             $sentiment['trader_insight'] = $this->generateTraderInsight($sentiment);
 
@@ -57,15 +57,15 @@ class SentimentAnalysisService
             $binance = app(BinanceAPIService::class);
             $binanceSymbol = str_contains($symbol, 'USDT') ? $symbol : $symbol . 'USDT';
             $ticker = $binance->get24hTicker($binanceSymbol);
-                
+
             if ($ticker) {
                 $priceChange = floatval($ticker['priceChangePercent'] ?? 0);
                 $price = floatval($ticker['lastPrice'] ?? 0);
-                    
+
                 // Get RSI
                 $klines = $binance->getKlines($binanceSymbol, '1h', 100);
                 $rsi = count($klines) >= 14 ? $binance->calculateRSI($klines, 14) : null;
-                    
+
                 return [
                     'price' => $price,
                     'price_change_24h' => $priceChange,
@@ -76,7 +76,7 @@ class SentimentAnalysisService
         } catch (\Exception $e) {
             Log::error('Market data fetch error', ['symbol' => $symbol, 'error' => $e->getMessage()]);
         }
-        
+
         return null;
     }
 
@@ -86,12 +86,12 @@ class SentimentAnalysisService
     private function calculateConfidence(array $sentiment): string
     {
         $score = 0;
-        
+
         // Check data availability
         if (!empty($sentiment['sources'])) $score += 40;
         if ($sentiment['market_data']) $score += 30;
         if ($sentiment['positive_mentions'] > 0 || $sentiment['negative_mentions'] > 0) $score += 30;
-        
+
         if ($score >= 70) return 'High';
         if ($score >= 40) return 'Medium';
         return 'Low';
@@ -104,7 +104,7 @@ class SentimentAnalysisService
     {
         $score = $sentiment['score'];
         $marketData = $sentiment['market_data'];
-        
+
         if ($score >= 70) {
             if ($marketData && $marketData['trend'] === 'Bullish') {
                 return 'Strong bullish momentum. Consider long positions with tight stops.';
@@ -133,13 +133,13 @@ class SentimentAnalysisService
             // Use symbol directly for API - CryptoCompare accepts most common symbols
             // For general crypto news, include major coins
             $categories = strtoupper($symbol);
-            
+
             // If it's a less common coin, also include BTC/ETH for general market context
             $majorCoins = ['BTC', 'ETH', 'BNB', 'SOL', 'XRP', 'ADA', 'DOGE', 'MATIC', 'DOT', 'AVAX'];
             if (!in_array($symbol, $majorCoins)) {
                 $categories .= ',BTC,ETH';
             }
-            
+
             $url = "https://min-api.cryptocompare.com/data/v2/news/?categories={$categories}";
             $response = Http::timeout(8)->get($url);
 
@@ -227,19 +227,19 @@ class SentimentAnalysisService
             } elseif ($positiveCount > $negativeCount) {
                 $signals[] = 'Rising positive mentions';
             }
-            
+
             if ($negativeCount > $positiveCount * 2) {
                 $signals[] = 'Heavy negative news';
             } elseif ($negativeCount > $positiveCount) {
                 $signals[] = 'Increasing bearish sentiment';
             }
-            
+
             if ($totalMentions > 20) {
                 $signals[] = 'High media attention';
             } elseif ($totalMentions < 5) {
                 $signals[] = 'Low media coverage';
             }
-            
+
             if (empty($signals)) {
                 $signals[] = 'Balanced market sentiment';
             }
@@ -270,7 +270,7 @@ class SentimentAnalysisService
         try {
             // Get latest market data
             $marketData = null;
-            
+
             // Get data from Binance
             $binance = app(BinanceAPIService::class);
             $binanceSymbol = str_contains($symbol, 'USDT') ? $symbol : $symbol . 'USDT';
@@ -377,7 +377,7 @@ class SentimentAnalysisService
                 if ($fng) {
                     $score = intval($fng['value']); // 0-100
                     $label = $fng['value_classification'] ?? 'Neutral';
-                    $emoji = match(true) {
+                    $emoji = match (true) {
                         $score >= 75 => '🟢🟢',
                         $score >= 55 => '🟢',
                         $score <= 25 => '🔴🔴',

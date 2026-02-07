@@ -967,7 +967,8 @@ class MultiMarketDataService
                 $response = Http::timeout(5)
                     ->withHeaders(['User-Agent' => 'Mozilla/5.0'])
                     ->get("https://query1.finance.yahoo.com/v8/finance/chart/{$yahooSymbol}", [
-                        'interval' => '1d', 'range' => '1d'
+                        'interval' => '1d',
+                        'range' => '1d'
                     ]);
 
                 if ($response->successful()) {

@@ -874,7 +874,7 @@ class TokenVerificationService
             return $result;
         } catch (\Exception $e) {
             Log::error("{$displayName} token verification failed", ['error' => $e->getMessage(), 'address' => $address]);
-            
+
             // Return basic data even on failure (DexScreener will fill the gaps)
             return [
                 'chain' => $chain,

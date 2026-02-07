@@ -183,6 +183,7 @@ class CommandHandler
 
             // Trade Ideas & Strategy
             '/trendcoins' => $this->handleTrendCoins($chatId),
+            '/trending' => $this->handleTrendCoins($chatId),
             '/copy' => $this->handleCopyTrading($chatId),
             '/trader' => $this->handleTrader($chatId, $params),
 
@@ -234,55 +235,40 @@ class CommandHandler
     {
         $botName = config('serpoai.bot.name', 'TradeBot AI');
         $message = "🤖 *Welcome to {$botName}*\n\n";
-        $message .= "Hello and welcome.\n";
-        $message .= "_Your all-in-one trading intelligence platform._\n\n";
-        $message .= "{$botName} is currently live in *preview mode* while we continue building a comprehensive multi-market trading intelligence platform. Below is an overview of what is coming next.\n\n";
+        $message .= "Your all-in-one trading intelligence platform.\n";
+        $message .= "_Crypto · Stocks · Forex · Commodities — all in one place._\n\n";
 
         $message .= "━━━━━━━━━━━━━━━━━━━━\n\n";
 
-        $message .= "🧠 *Core Intelligence* (Coming Soon)\n";
-        $message .= "• Quant AI Engine\n";
-        $message .= "• Multi-Market Scanner (Crypto, Forex, Stocks)\n";
-        $message .= "• AI Trade Signals\n";
-        $message .= "• Backtesting Lab\n";
-        $message .= "• Risk Management Tools\n\n";
+        $message .= "📊 *Market Intelligence*\n";
+        $message .= "• Real-time prices across 15+ chains & global markets\n";
+        $message .= "• AI-powered analysis & trade signals\n";
+        $message .= "• Technical indicators (RSI, MACD, Fibonacci)\n";
+        $message .= "• Live charts & heatmaps\n\n";
 
-        $message .= "🤖 *Automated Trading* (Under Construction)\n";
-        $message .= "• Copy Trading\n";
-        $message .= "• Grid Bots\n";
-        $message .= "• DCA Bots\n";
-        $message .= "• Arbitrage Systems\n";
-        $message .= "• Forex Sniper Bots\n\n";
+        $message .= "🔍 *Research & Safety*\n";
+        $message .= "• Token verification & risk scoring\n";
+        $message .= "• Whale transaction tracking\n";
+        $message .= "• On-chain holder analytics\n";
+        $message .= "• Market sentiment analysis\n\n";
 
-        $message .= "⚙️ *Execution & Liquidity*\n";
-        $message .= "• CEX & DEX Trading Access\n";
-        $message .= "• Broker & Prop Firm Integrations\n";
-        $message .= "• Liquidity Flow Tracking\n\n";
+        $message .= "🛠️ *Trading Tools*\n";
+        $message .= "• Paper trading portfolio\n";
+        $message .= "• Watchlists with price alerts\n";
+        $message .= "• Copy trading leaderboards\n";
+        $message .= "• Strategy backtesting\n\n";
 
-        $message .= "🔍 *Transparency & Safety*\n";
-        $message .= "• Whale Transaction Tracking\n";
-        $message .= "• Token Verification Scanner\n";
-        $message .= "• Trust & Risk Scores\n\n";
-
-        $message .= "📊 *Trader Workspace*\n";
-        $message .= "• Strategy Builder\n";
-        $message .= "• Performance Analytics\n";
-        $message .= "• Trading Journal\n\n";
-
-        $message .= "🔐 *Premium Market Channels*\n";
-        $message .= "• Crypto Premium\n";
-        $message .= "• Forex Premium\n";
-        $message .= "• Stocks Premium\n";
-        $message .= "_(Premium access coming soon)_\n\n";
+        $message .= "🌐 *Multi-Market Coverage*\n";
+        $message .= "• Crypto (BTC, ETH, SOL + 1000s of tokens)\n";
+        $message .= "• Stocks (AAPL, TSLA, MSFT + global equities)\n";
+        $message .= "• Forex (EUR/USD, GBP/JPY + all majors)\n";
+        $message .= "• Commodities (Gold, Oil, Silver)\n\n";
 
         $message .= "━━━━━━━━━━━━━━━━━━━━\n\n";
 
-        $message .= "🚧 *What This Means for You*\n\n";
-        $message .= "You are accessing {$botName} *before* broader public rollout.\n";
-        $message .= "Features will unlock progressively as modules go live.\n";
-        $message .= "You are welcome to explore, ask questions, and follow development updates.\n\n";
-        $message .= "_There is no pressure — only progress._\n\n";
-        $message .= "Type /help to see available commands 🚀";
+        $message .= "🚀 *Get Started*\n\n";
+        $message .= "Try a command below or tap the buttons to explore.\n";
+        $message .= "Type /help to see all 60+ commands.";
 
         $keyboard = [
             'inline_keyboard' => [
@@ -294,6 +280,10 @@ class CommandHandler
                 [
                     ['text' => '📰 Latest News', 'callback_data' => '/news'],
                     ['text' => '🐋 Whale Tracker', 'callback_data' => '/whales']
+                ],
+                [
+                    ['text' => '💰 Check Price', 'callback_data' => '/price BTC'],
+                    ['text' => '📈 Trending', 'callback_data' => '/trending']
                 ],
             ]
         ];
@@ -1128,7 +1118,6 @@ class CommandHandler
         $symbolMap = [
             'BTC' => 'Bitcoin',
             'ETH' => 'Ethereum',
-            'SERPO' => 'Serpo',  // Keep for backward compat
             'XRP' => 'Ripple',
             'BNB' => 'Binance Coin',
             'SOL' => 'Solana',
@@ -1377,6 +1366,19 @@ class CommandHandler
             $data = $buttonMap[$data];
         }
 
+        // Handle trader action callbacks (chart_SYMBOL, alert_SYMBOL, analyze_SYMBOL, signals_SYMBOL)
+        if (preg_match('/^(chart|alert|analyze|signals)_(.+)$/', $data, $matches)) {
+            $actionMap = [
+                'chart' => '/charts',
+                'alert' => '/setalert',
+                'analyze' => '/analyze',
+                'signals' => '/signals',
+            ];
+            $command = $actionMap[$matches[1]] . ' ' . $matches[2];
+            $this->handle($chatId, $command, $user);
+            return;
+        }
+
         // If it's a command, execute it
         if (str_starts_with($data, '/')) {
             $this->handle($chatId, $data, $user);
@@ -1391,14 +1393,14 @@ class CommandHandler
             default => $this->telegram->sendMessage(
                 $chatId,
                 "\u2753 *Unknown action*\n\n" .
-                "Here are some things you can do:\n\n" .
-                "\ud83d\udcb0 `/price BTC` \u2014 Check prices\n" .
-                "\ud83d\udcca `/analyze ETH` \u2014 Technical analysis\n" .
-                "\ud83d\udd14 `/setalert BTC 70000` \u2014 Set alerts\n" .
-                "\ud83d\udcbc `/portfolio` \u2014 Paper trading\n" .
-                "\u2b50 `/watchlist` \u2014 Your watchlist\n" .
-                "\ud83d\udcf0 `/news` \u2014 Latest news\n\n" .
-                "Type `/help` for all commands."
+                    "Here are some things you can do:\n\n" .
+                    "\ud83d\udcb0 `/price BTC` \u2014 Check prices\n" .
+                    "\ud83d\udcca `/analyze ETH` \u2014 Technical analysis\n" .
+                    "\ud83d\udd14 `/setalert BTC 70000` \u2014 Set alerts\n" .
+                    "\ud83d\udcbc `/portfolio` \u2014 Paper trading\n" .
+                    "\u2b50 `/watchlist` \u2014 Your watchlist\n" .
+                    "\ud83d\udcf0 `/news` \u2014 Latest news\n\n" .
+                    "Type `/help` for all commands."
             ),
         };
     }
@@ -2254,27 +2256,52 @@ class CommandHandler
         $this->telegram->sendMessage($chatId, "🔮 Generating AI prediction...");
 
         try {
-            // Get market data based on symbol
-            $binanceSymbol = $symbol;
-            if (!str_contains($symbol, 'USDT') && !str_contains($symbol, 'BTC')) {
-                $binanceSymbol .= 'USDT';
+            // Detect market type and get data from appropriate source
+            $marketType = $this->multiMarket->detectMarketType($symbol);
+            $marketData = null;
+
+            if ($marketType === 'crypto') {
+                // Try Binance first for crypto
+                $binanceSymbol = $symbol;
+                if (!str_contains($symbol, 'USDT') && !str_contains($symbol, 'BTC')) {
+                    $binanceSymbol .= 'USDT';
+                }
+                try {
+                    $ticker = app(\App\Services\BinanceAPIService::class)->get24hTicker($binanceSymbol);
+                    if ($ticker) {
+                        $marketData = [
+                            'symbol' => $symbol,
+                            'price' => (float) $ticker['lastPrice'],
+                            'price_change_24h' => (float) $ticker['priceChangePercent'],
+                            'volume_24h' => (float) $ticker['volume'] * (float) $ticker['lastPrice'],
+                            'high_24h' => (float) $ticker['highPrice'],
+                            'low_24h' => (float) $ticker['lowPrice'],
+                        ];
+                    }
+                } catch (\Exception $e) {
+                    // Fallback below
+                }
             }
 
-            $ticker = app(\App\Services\BinanceAPIService::class)->get24hTicker($binanceSymbol);
+            // Fallback: use multiMarket for any asset type (stocks, forex, commodities, or crypto fallback)
+            if (!$marketData) {
+                $priceData = $this->multiMarket->getCurrentPrice($symbol);
+                if (is_array($priceData) && isset($priceData['price'])) {
+                    $marketData = [
+                        'symbol' => $symbol,
+                        'price' => (float) $priceData['price'],
+                        'price_change_24h' => (float) ($priceData['change_percent'] ?? 0),
+                        'volume_24h' => (float) ($priceData['volume'] ?? 0),
+                        'high_24h' => (float) ($priceData['high'] ?? $priceData['price']),
+                        'low_24h' => (float) ($priceData['low'] ?? $priceData['price']),
+                    ];
+                }
+            }
 
-            if (!$ticker) {
-                $this->telegram->sendMessage($chatId, "❌ Could not fetch market data for {$symbol}. Please check the symbol.");
+            if (!$marketData) {
+                $this->telegram->sendMessage($chatId, "❌ Could not fetch market data for {$symbol}. Supported: crypto (BTCUSDT), stocks (AAPL), forex (EURUSD), commodities (XAUUSD).");
                 return;
             }
-
-            $marketData = [
-                'symbol' => $symbol,
-                'price' => (float) $ticker['lastPrice'],
-                'price_change_24h' => (float) $ticker['priceChangePercent'],
-                'volume_24h' => (float) $ticker['volume'] * (float) $ticker['lastPrice'],
-                'high_24h' => (float) $ticker['highPrice'],
-                'low_24h' => (float) $ticker['lowPrice'],
-            ];
 
             $sentimentData = \App\Models\SentimentData::getAggregatedSentiment($symbol);
             $prediction = $this->openai->generateMarketPrediction($symbol, $marketData, $sentimentData);
@@ -2343,7 +2370,8 @@ class CommandHandler
                 if ($btcPrice) {
                     $context['price'] = $btcPrice;
                 }
-            } catch (\Exception $e) {}
+            } catch (\Exception $e) {
+            }
             $sentimentData = \App\Models\SentimentData::getAggregatedSentiment('BTC');
 
             $recommendation = $this->openai->generatePersonalizedRecommendation(
@@ -2397,7 +2425,8 @@ class CommandHandler
                 $ethPrice = $this->multiMarket->getCurrentPrice('ETHUSDT');
                 if ($btcPrice) $context['BTC Price'] = '$' . number_format($btcPrice, 2);
                 if ($ethPrice) $context['ETH Price'] = '$' . number_format($ethPrice, 2);
-            } catch (\Exception $e) {}
+            } catch (\Exception $e) {
+            }
 
             $answer = $this->openai->processNaturalQuery($query, $context);
 
@@ -3924,10 +3953,16 @@ class CommandHandler
         }
 
         $message .= "\n━━━━━━━━━━━━━━━━━━━━\n";
-        $botName = config('serpoai.bot.name', 'TradeBot AI');
-        $message .= "🚀 *Coming Soon in {$botName}*\n\n";
-        foreach ($hub['coming_soon'] as $feature => $desc) {
-            $message .= "• {$desc}\n";
+        if (!empty($hub['top_traders'])) {
+            $message .= "🏆 *Top Traders This Week*\n\n";
+            foreach (array_slice($hub['top_traders'], 0, 5) as $i => $trader) {
+                $rank = $i + 1;
+                $message .= "{$rank}. *{$trader['nickname']}* ({$trader['platform']})\n";
+                $message .= "   ROI: {$trader['roi']} | PnL: {$trader['pnl']} | Followers: " . number_format($trader['followers']) . "\n";
+            }
+        } else {
+            $message .= "🏆 *Top Traders*\n\n";
+            $message .= "_Leaderboard data temporarily unavailable. Try again shortly._\n";
         }
 
         $message .= "\n💡 For educational guide, use `/explain copy trading`";
@@ -5218,7 +5253,10 @@ class CommandHandler
             // Fetch recent market data for the symbol
             $marketData = null;
             try {
-                $marketData = $this->dexscreener->searchPairs($symbol);
+                $priceData = $this->multiMarket->getCurrentPrice($symbol);
+                if (is_array($priceData) && isset($priceData['price'])) {
+                    $marketData = $priceData;
+                }
             } catch (\Exception $e) {
                 Log::warning('Failed to fetch market data for backtest', ['symbol' => $symbol]);
             }
@@ -5234,12 +5272,11 @@ class CommandHandler
             $prompt .= "Timeframe: {$timeframe}\n";
             $prompt .= "Backtest Period: {$startDate} to {$currentDate} (last 6 months)\n\n";
 
-            if ($marketData && isset($marketData['pairs'][0])) {
-                $pair = $marketData['pairs'][0];
+            if ($marketData && isset($marketData['price'])) {
                 $prompt .= "Current Market Context:\n";
-                $prompt .= "- Current Price: \${$pair['priceUsd']}\n";
-                $prompt .= "- 24h Volume: \$" . number_format($pair['volume']['h24'] ?? 0, 0) . "\n";
-                $prompt .= "- 24h Change: " . ($pair['priceChange']['h24'] ?? 'N/A') . "%\n\n";
+                $prompt .= "- Current Price: \$" . number_format($marketData['price'], 8) . "\n";
+                $prompt .= "- 24h Volume: \$" . number_format($marketData['volume'] ?? 0, 0) . "\n";
+                $prompt .= "- 24h Change: " . number_format($marketData['change_percent'] ?? 0, 2) . "%\n\n";
             }
 
             $prompt .= "Provide a realistic backtest simulation for the LAST 6 MONTHS ONLY ({$startDate} to {$currentDate}):\n\n";
@@ -5263,7 +5300,7 @@ class CommandHandler
             $message = "📊 *Backtest Result*\n\n";
             $message .= "Strategy: _{$strategy}_\n\n";
             $message .= $response;
-            $message .= "\n\n⚠️ _Past performance does not guarantee future results_";
+            $message .= "\n\n⚠️ _AI-estimated simulation based on strategy description. This is NOT a real historical backtest with actual trade data. Past performance does not guarantee future results._";
 
             $this->telegram->sendMessage($chatId, $message);
         } catch (\Exception $e) {
@@ -5475,71 +5512,71 @@ class CommandHandler
             $message .= "━━━━━━━━━━━━━━━━━━━━\n";
             $message .= "🔍 *CONTRACT DATA*\n\n";
 
-        if (isset($data['total_supply']) && $data['total_supply'] > 0) {
-            $supply = $this->formatLargeNumber($data['total_supply']);
-            $message .= "💰 Total Supply: {$supply}\n";
-        }
-
-        $holderCount = $data['holders_count'] ?? 0;
-        if ($holderCount > 0) {
-            $message .= "👥 Holders: " . number_format($holderCount) . "\n";
-        }
-
-        $verified = $data['verified'] ?? null;
-        if ($verified === true) {
-            $message .= "✅ Verified: Yes\n";
-        } elseif ($verified === false) {
-            $message .= "❌ Verified: No\n";
-        } else {
-            $message .= "❓ Verified: Unable to check\n";
-        }
-
-        // Source code availability (chain-aware)
-        $isSolana = isset($data['is_spl_token']) && $data['is_spl_token'];
-        $isTon = strtolower($chain) === 'ton';
-
-        if ($isSolana) {
-            $message .= "🔧 Token Program: SPL Token Program\n";
-        } elseif ($isTon) {
-            $message .= "🔧 Token Standard: Jetton\n";
-        } else {
-            $hasSource = $data['has_source_code'] ?? false;
-            $message .= "📄 Source Code: " . ($hasSource ? "Available" : "Not available") . "\n";
-        }
-
-        // Ownership status (chain-aware)
-        $ownershipStatus = $data['ownership_status'] ?? 'unknown';
-
-        if ($isSolana) {
-            // SPL token authority display
-            $hasMintAuth = !empty($data['mint_authority']);
-            $hasFreezeAuth = !empty($data['freeze_authority']);
-
-            if ($ownershipStatus === 'immutable') {
-                $message .= "🔒 Mint Authority: Revoked ✅\n";
-                $message .= "🔒 Freeze Authority: Revoked ✅\n";
-            } elseif ($hasMintAuth) {
-                $mintAddr = $this->shortenAddress($data['mint_authority']);
-                $message .= "⚠️ Mint Authority: `{$mintAddr}` (active)\n";
-                if ($hasFreezeAuth) {
-                    $freezeAddr = $this->shortenAddress($data['freeze_authority']);
-                    $message .= "⚠️ Freeze Authority: `{$freezeAddr}` (active)\n";
-                }
+            if (isset($data['total_supply']) && $data['total_supply'] > 0) {
+                $supply = $this->formatLargeNumber($data['total_supply']);
+                $message .= "💰 Total Supply: {$supply}\n";
             }
-        } else {
-            // EVM ownership display
-            $ownershipText = match ($ownershipStatus) {
-                'renounced' => "Renounced ✅",
-                'active_owner' => "Active ⚠️",
-                'immutable' => "Immutable ✅",
-                'active_mint_authority' => "Active (Centralized) ⚠️",
-                'unknown' => "Unknown",
-                default => "Unknown"
-            };
-            $message .= "👤 Ownership: {$ownershipText}\n";
-        }
 
-        $message .= "\n";
+            $holderCount = $data['holders_count'] ?? 0;
+            if ($holderCount > 0) {
+                $message .= "👥 Holders: " . number_format($holderCount) . "\n";
+            }
+
+            $verified = $data['verified'] ?? null;
+            if ($verified === true) {
+                $message .= "✅ Verified: Yes\n";
+            } elseif ($verified === false) {
+                $message .= "❌ Verified: No\n";
+            } else {
+                $message .= "❓ Verified: Unable to check\n";
+            }
+
+            // Source code availability (chain-aware)
+            $isSolana = isset($data['is_spl_token']) && $data['is_spl_token'];
+            $isTon = strtolower($chain) === 'ton';
+
+            if ($isSolana) {
+                $message .= "🔧 Token Program: SPL Token Program\n";
+            } elseif ($isTon) {
+                $message .= "🔧 Token Standard: Jetton\n";
+            } else {
+                $hasSource = $data['has_source_code'] ?? false;
+                $message .= "📄 Source Code: " . ($hasSource ? "Available" : "Not available") . "\n";
+            }
+
+            // Ownership status (chain-aware)
+            $ownershipStatus = $data['ownership_status'] ?? 'unknown';
+
+            if ($isSolana) {
+                // SPL token authority display
+                $hasMintAuth = !empty($data['mint_authority']);
+                $hasFreezeAuth = !empty($data['freeze_authority']);
+
+                if ($ownershipStatus === 'immutable') {
+                    $message .= "🔒 Mint Authority: Revoked ✅\n";
+                    $message .= "🔒 Freeze Authority: Revoked ✅\n";
+                } elseif ($hasMintAuth) {
+                    $mintAddr = $this->shortenAddress($data['mint_authority']);
+                    $message .= "⚠️ Mint Authority: `{$mintAddr}` (active)\n";
+                    if ($hasFreezeAuth) {
+                        $freezeAddr = $this->shortenAddress($data['freeze_authority']);
+                        $message .= "⚠️ Freeze Authority: `{$freezeAddr}` (active)\n";
+                    }
+                }
+            } else {
+                // EVM ownership display
+                $ownershipText = match ($ownershipStatus) {
+                    'renounced' => "Renounced ✅",
+                    'active_owner' => "Active ⚠️",
+                    'immutable' => "Immutable ✅",
+                    'active_mint_authority' => "Active (Centralized) ⚠️",
+                    'unknown' => "Unknown",
+                    default => "Unknown"
+                };
+                $message .= "👤 Ownership: {$ownershipText}\n";
+            }
+
+            $message .= "\n";
         } // end of !isMarketDataOnly
 
         // Risk Assessment with Score Breakdown

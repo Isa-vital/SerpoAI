@@ -13,12 +13,12 @@ $r = @file_get_contents($url, false, $ctx);
 if ($r) {
     $d = json_decode($r, true);
     echo "Keys: " . implode(', ', array_keys($d ?? [])) . "\n\n";
-    
+
     // Check for holder-related data
     echo "--- Holder Data ---\n";
     echo "holder_count: " . json_encode($d['holder_count'] ?? $d['holders_count'] ?? 'N/A') . "\n";
     echo "holder_analysis: " . json_encode($d['holder_analysis'] ?? 'N/A') . "\n";
-    
+
     // Check metrics
     if (isset($d['metrics'])) {
         echo "\n--- Metrics ---\n";
@@ -30,7 +30,7 @@ if ($r) {
             }
         }
     }
-    
+
     // Check tests
     if (isset($d['tests'])) {
         echo "\n--- Tests ---\n";
@@ -41,13 +41,13 @@ if ($r) {
             echo "  {$id}: {$name} => {$result}\n";
         }
     }
-    
+
     // Dump everything for analysis  
     echo "\n--- Full Response (truncated) ---\n";
     echo substr(json_encode($d, JSON_PRETTY_PRINT), 0, 3000) . "\n";
 } else {
     echo "Failed: " . (error_get_last()['message'] ?? 'unknown') . "\n";
-    
+
     // Try without apikey param
     echo "\n=== TokenSniffer v2 (no apikey param) ===\n";
     $url2 = "https://tokensniffer.com/api/v2/tokens/56/{$cake}?include_metrics=true&include_tests=true&block_until_ready=true";

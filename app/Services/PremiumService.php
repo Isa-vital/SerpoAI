@@ -77,35 +77,34 @@ class PremiumService
      */
     public function formatPremiumInfo(): string
     {
-        $info = $this->getPremiumInfo();
+        $botName = config('serpoai.bot.name', 'TradeBot AI');
 
-        $message = "💎 *PREMIUM ACCESS*\n\n";
-        $message .= "Unlock advanced features and take your trading to the next level!\n\n";
+        $message = "💎 *{$botName} — EARLY ACCESS*\n\n";
+        $message .= "🎉 *All features are currently FREE!*\n\n";
+        $message .= "You're using {$botName} during our early access period. ";
+        $message .= "Every feature is fully unlocked at no cost.\n\n";
 
-        foreach ($info['tiers'] as $tier => $details) {
-            $emoji = match ($tier) {
-                'free' => '🆓',
-                'basic' => '⭐',
-                'pro' => '💫',
-                'vip' => '👑',
-                default => '📦',
-            };
+        $message .= "━━━━━━━━━━━━━━━━━━━━\n";
+        $message .= "✅ *What You Get (Free)*\n\n";
+        $message .= "• Unlimited market scans & price checks\n";
+        $message .= "• AI-powered analysis & predictions\n";
+        $message .= "• Trade signals across all markets\n";
+        $message .= "• Whale activity tracking\n";
+        $message .= "• Token verification & risk scoring\n";
+        $message .= "• Paper trading portfolio\n";
+        $message .= "• Watchlists & price alerts\n";
+        $message .= "• Copy trading leaderboards\n";
+        $message .= "• Technical indicators & charts\n";
+        $message .= "• News & sentiment analysis\n\n";
 
-            $message .= "{$emoji} *" . strtoupper($tier) . "* - {$details['price']}\n";
-            $message .= "Scans: {$details['scans']}/day | Alerts: {$details['alerts']}\n";
+        $message .= "━━━━━━━━━━━━━━━━━━━━\n";
+        $message .= "📢 *Premium Plans*\n\n";
+        $message .= "Premium tiers with advanced features and priority access ";
+        $message .= "will be introduced in the future. Early users will receive ";
+        $message .= "special benefits when premium launches.\n\n";
 
-            foreach ($details['features'] as $feature) {
-                $message .= "  {$feature}\n";
-            }
-            $message .= "\n";
-        }
-
-        $message .= "💳 *Payment Options*\n";
-        $message .= "• Crypto (TON, USDT, BTC, ETH)\n";
-        $message .= "• Telegram Stars ⭐\n";
-        $message .= "• Credit/Debit Card\n\n";
-
-        $message .= "📞 Contact support to upgrade!";
+        $message .= "🔔 Use `/setalert` to stay updated on announcements.\n";
+        $message .= "📚 Type `/help` to explore all available commands.";
 
         return $message;
     }

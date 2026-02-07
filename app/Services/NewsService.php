@@ -345,7 +345,7 @@ class NewsService
                 $message .= "🗓️ *{$date}*\n";
                 foreach (array_slice($dayEvents, 0, 4) as $ev) {
                     $impact = $ev['impact'] ?? 'Medium';
-                    $impactEmoji = match(strtolower($impact)) {
+                    $impactEmoji = match (strtolower($impact)) {
                         'high' => '🔴',
                         'medium' => '🟡',
                         'low' => '🟢',
@@ -453,7 +453,7 @@ class NewsService
      */
     private function getCountryFlag(string $country): string
     {
-        return match(strtolower(trim($country))) {
+        return match (strtolower(trim($country))) {
             'us', 'united states', 'usa' => '🇺🇸',
             'eu', 'euro area', 'european union' => '🇪🇺',
             'uk', 'united kingdom', 'gb' => '🇬🇧',
