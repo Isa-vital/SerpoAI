@@ -2,7 +2,7 @@
 
 return [
     'bot' => [
-        'name' => env('BOT_NAME', 'TradeBot AI'),
+        'name' => env('BOT_NAME', 'SERPO AI'),
         'version' => env('BOT_VERSION', '2.0.0'),
         'description' => 'Multi-market trading intelligence platform',
     ],

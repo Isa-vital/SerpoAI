@@ -997,7 +997,7 @@ class TokenEventMonitor
         $caption .= "[View on DexScreener](https://dexscreener.com/ton/{$this->contractAddress})\n\n";
 
         $caption .= "━━━━━━━━━━━━━━━━\n";
-        $caption .= "Powered by " . config('serpoai.bot.name', 'TradeBot AI') . " — your AI trading assistant for crypto, stocks, and forex.\n\n";
+        $caption .= "Powered by " . config('serpoai.bot.name', 'SERPO AI') . " — your AI trading assistant for crypto, stocks, and forex.\n\n";
         $caption .= "Trade smarter. Trade together. 💎\n\n";
 
         // Get GIF file_id
@@ -1059,7 +1059,7 @@ class TokenEventMonitor
 
         // Add bot message
         $caption .= "━━━━━━━━━━━━━━━━\n";
-        $caption .= "Powered by " . config('serpoai.bot.name', 'TradeBot AI') . " — your AI trading assistant for crypto, stocks, and forex.\n\n";
+        $caption .= "Powered by " . config('serpoai.bot.name', 'SERPO AI') . " — your AI trading assistant for crypto, stocks, and forex.\n\n";
         $caption .= "Trade smarter. Trade together. 💎\n\n";
 
         // Get GIF file_id
@@ -1125,7 +1125,7 @@ class TokenEventMonitor
 
         // Add bot message
         $caption .= "━━━━━━━━━━━━━━━━\n";
-        $caption .= "Powered by " . config('serpoai.bot.name', 'TradeBot AI') . " — your AI trading assistant for crypto, stocks, and forex.\n\n";
+        $caption .= "Powered by " . config('serpoai.bot.name', 'SERPO AI') . " — your AI trading assistant for crypto, stocks, and forex.\n\n";
         $caption .= "Trade smarter. Trade together. 💎\n\n";
 
 

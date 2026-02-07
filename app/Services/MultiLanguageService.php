@@ -19,7 +19,7 @@ class MultiLanguageService
     {
         $this->translations = [
             'en' => [
-                'welcome' => 'Welcome to TradeBot AI! 🤖',
+                'welcome' => 'Welcome to SERPO AI! 🤖',
                 'price' => 'Price',
                 'volume' => 'Volume',
                 'change_24h' => '24h Change',
@@ -36,7 +36,7 @@ class MultiLanguageService
                 'settings' => 'Settings',
             ],
             'es' => [
-                'welcome' => '¡Bienvenido a TradeBot AI! 🤖',
+                'welcome' => '¡Bienvenido a SERPO AI! 🤖',
                 'price' => 'Precio',
                 'volume' => 'Volumen',
                 'change_24h' => 'Cambio 24h',
@@ -53,7 +53,7 @@ class MultiLanguageService
                 'settings' => 'Configuración',
             ],
             'ru' => [
-                'welcome' => 'Добро пожаловать в TradeBot AI! 🤖',
+                'welcome' => 'Добро пожаловать в SERPO AI! 🤖',
                 'price' => 'Цена',
                 'volume' => 'Объем',
                 'change_24h' => 'Изм. 24ч',
@@ -70,7 +70,7 @@ class MultiLanguageService
                 'settings' => 'Настройки',
             ],
             'zh' => [
-                'welcome' => '欢迎使用 TradeBot AI！🤖',
+                'welcome' => '欢迎使用 SERPO AI！🤖',
                 'price' => '价格',
                 'volume' => '交易量',
                 'change_24h' => '24小时变化',

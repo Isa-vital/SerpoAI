@@ -233,7 +233,7 @@ class CommandHandler
      */
     private function handleStart(int $chatId, User $user)
     {
-        $botName = config('serpoai.bot.name', 'TradeBot AI');
+        $botName = config('serpoai.bot.name', 'SERPO AI');
         $message = "🤖 *Welcome to {$botName}*\n\n";
         $message .= "Your all-in-one trading intelligence platform.\n";
         $message .= "_Crypto · Stocks · Forex · Commodities — all in one place._\n\n";
@@ -296,7 +296,7 @@ class CommandHandler
      */
     private function handleHelp(int $chatId)
     {
-        $botName = config('serpoai.bot.name', 'TradeBot AI');
+        $botName = config('serpoai.bot.name', 'SERPO AI');
         $message = "🤖 *{$botName} Trading Assistant*\n";
         $message .= "━━━━━━━━━━━━━━━━━━━━\n\n";
 
@@ -982,7 +982,7 @@ class CommandHandler
      */
     private function handleAbout(int $chatId)
     {
-        $botName = config('serpoai.bot.name', 'TradeBot AI');
+        $botName = config('serpoai.bot.name', 'SERPO AI');
         $version = config('serpoai.bot.version', '2.0.0');
         $message = "🤖 *About {$botName} v{$version}*\n\n";
         $message .= "Professional multi-market trading assistant powered by AI. Trusted analysis across crypto, stocks, and forex with transparent data and professional-grade insights.\n\n";
@@ -1275,7 +1275,7 @@ class CommandHandler
 
         $answer = $this->openai->answerQuestion($question, $context);
 
-        $botName = config('serpoai.bot.name', 'TradeBot AI');
+        $botName = config('serpoai.bot.name', 'SERPO AI');
         $this->telegram->sendMessage($chatId, "🤖 *{$botName}:*\n\n" . $answer . "\n\n_Remember: This is not financial advice. Always DYOR!_");
     }
 
@@ -1826,7 +1826,7 @@ class CommandHandler
      */
     public function handleAIQuery(int $chatId, string $query, User $user, string $chatType = 'private')
     {
-        $botName = config('serpoai.bot.name', 'TradeBot AI');
+        $botName = config('serpoai.bot.name', 'SERPO AI');
         $message = "{$botName} is your all-in-one trading assistant for Crypto, Stocks, and Forex.\n\n";
         $message .= "📈 AI-powered analysis across all markets.\n";
         $message .= "Real-time data, technical indicators, and actionable insights.\n\n";
@@ -2430,7 +2430,7 @@ class CommandHandler
 
             $answer = $this->openai->processNaturalQuery($query, $context);
 
-            $botName = config('serpoai.bot.name', 'TradeBot AI');
+            $botName = config('serpoai.bot.name', 'SERPO AI');
             $keyboard = [
                 'inline_keyboard' => $this->getContextualKeyboard('start')
             ];

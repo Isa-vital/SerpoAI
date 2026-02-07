@@ -203,7 +203,7 @@ class NewsService
                 try {
                     $response = Http::timeout(10)
                         ->withHeaders([
-                            'User-Agent' => 'TradeBotAI/2.0'
+                            'User-Agent' => 'SerpoAI/2.0'
                         ])
                         ->get("https://www.reddit.com/r/{$subreddit}/hot.json", [
                             'limit' => 5

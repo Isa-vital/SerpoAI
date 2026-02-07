@@ -169,10 +169,11 @@ class MarketDataService
         }
 
         // Try Binance for crypto symbols (e.g., BTCUSDT, ETHUSDT)
-        if ($this->isCryptoSymbol($symbol)) {
+        if ($this->isCryptoSymbol($symbol) || $this->isBareConvertibleCrypto($symbol)) {
+            $binanceSymbol = $this->isBareConvertibleCrypto($symbol) ? $symbol . 'USDT' : $symbol;
             try {
                 $response = Http::timeout(10)->get('https://api.binance.com/api/v3/klines', [
-                    'symbol' => $symbol,
+                    'symbol' => $binanceSymbol,
                     'interval' => '1h',
                     'limit' => $limit
                 ]);
@@ -184,6 +185,36 @@ class MarketDataService
                 }
             } catch (\Exception $e) {
                 Log::error("Failed to fetch Binance data for {$symbol}: " . $e->getMessage());
+            }
+        }
+
+        // Try forex BEFORE stock Yahoo fallback (forex needs =X suffix)
+        if ($this->isForexSymbol($symbol)) {
+            try {
+                $base = substr($symbol, 0, 3);
+                $quote = substr($symbol, 3, 3);
+                $forexSymbol = "{$base}{$quote}=X";
+                $response = Http::timeout(15)->get("https://query1.finance.yahoo.com/v8/finance/chart/{$forexSymbol}", [
+                    'interval' => '1h',
+                    'range' => '5d'
+                ]);
+
+                if ($response->successful()) {
+                    $data = $response->json();
+                    if (isset($data['chart']['result'][0]['indicators']['quote'][0]['close'])) {
+                        $closes = $data['chart']['result'][0]['indicators']['quote'][0]['close'];
+                        $prices = array_filter($closes, fn($p) => $p !== null);
+                        $prices = array_values($prices);
+                        if (count($prices) > $limit) {
+                            $prices = array_slice($prices, -$limit);
+                        }
+                        if (count($prices) >= $limit) {
+                            return $prices;
+                        }
+                    }
+                }
+            } catch (\Exception $e) {
+                Log::error("Failed to fetch forex data for {$symbol}: " . $e->getMessage());
             }
         }
 
@@ -214,38 +245,6 @@ class MarketDataService
             Log::error("Failed to fetch Yahoo Finance data for {$symbol}: " . $e->getMessage());
         }
 
-        // Try as forex pair if it matches forex format
-        if ($this->isForexSymbol($symbol)) {
-            try {
-                $base = substr($symbol, 0, 3);
-                $quote = substr($symbol, 3, 3);
-
-                // Use Yahoo Finance with =X suffix for forex
-                $forexSymbol = "{$base}{$quote}=X";
-                $response = Http::timeout(15)->get("https://query1.finance.yahoo.com/v8/finance/chart/{$forexSymbol}", [
-                    'interval' => '1h',
-                    'range' => '5d'
-                ]);
-
-                if ($response->successful()) {
-                    $data = $response->json();
-                    if (isset($data['chart']['result'][0]['indicators']['quote'][0]['close'])) {
-                        $closes = $data['chart']['result'][0]['indicators']['quote'][0]['close'];
-                        $prices = array_filter($closes, fn($p) => $p !== null);
-                        $prices = array_values($prices);
-                        if (count($prices) > $limit) {
-                            $prices = array_slice($prices, -$limit);
-                        }
-                        if (count($prices) >= $limit) {
-                            return $prices;
-                        }
-                    }
-                }
-            } catch (\Exception $e) {
-                Log::error("Failed to fetch forex data for {$symbol}: " . $e->getMessage());
-            }
-        }
-
         return [];
     }
 
@@ -258,14 +257,19 @@ class MarketDataService
             return 'token';
         }
 
-        // Check crypto first (ends with USDT, USDC, BTC, etc.)
+        // Check forex BEFORE crypto (EURUSD, XAUUSD end with 'USD' which would false-match crypto)
+        if ($this->isForexSymbol($symbol)) {
+            return 'forex';
+        }
+
+        // Check crypto (ends with USDT, USDC, BTC, etc.)
         if ($this->isCryptoSymbol($symbol)) {
             return 'crypto';
         }
 
-        // Check forex (6 chars, currency pairs)
-        if ($this->isForexSymbol($symbol)) {
-            return 'forex';
+        // Check if it's a known bare crypto symbol (SOL, ADA, DOGE, etc.)
+        if ($this->isBareConvertibleCrypto($symbol)) {
+            return 'crypto';
         }
 
         // Default to stock
@@ -278,13 +282,30 @@ class MarketDataService
     private function isCryptoSymbol(string $symbol): bool
     {
         // Crypto pairs typically end with USDT, USDC, BTC, ETH, BNB
-        $cryptoSuffixes = ['USDT', 'USDC', 'BUSD', 'BTC', 'ETH', 'BNB', 'USD', 'PERP'];
+        $cryptoSuffixes = ['USDT', 'USDC', 'BUSD', 'BTC', 'ETH', 'BNB', 'PERP'];
         foreach ($cryptoSuffixes as $suffix) {
-            if (str_ends_with($symbol, $suffix)) {
+            if (str_ends_with($symbol, $suffix) && strlen($symbol) > strlen($suffix)) {
                 return true;
             }
         }
         return false;
+    }
+
+    /**
+     * Check if symbol is a bare crypto ticker that can be auto-suffixed with USDT
+     */
+    private function isBareConvertibleCrypto(string $symbol): bool
+    {
+        $knownCrypto = [
+            'BTC', 'ETH', 'SOL', 'BNB', 'XRP', 'ADA', 'DOGE', 'DOT', 'AVAX',
+            'MATIC', 'LINK', 'UNI', 'SHIB', 'LTC', 'ATOM', 'NEAR', 'APT',
+            'ARB', 'OP', 'SUI', 'SEI', 'TIA', 'JTO', 'FIL', 'INJ', 'TRX',
+            'TON', 'PEPE', 'WIF', 'BONK', 'FLOKI', 'FET', 'RNDR', 'GRT',
+            'AAVE', 'MKR', 'CRV', 'SNX', 'COMP', 'SAND', 'MANA', 'AXS',
+            'ICP', 'VET', 'ALGO', 'FTM', 'HBAR', 'EOS', 'THETA', 'XLM',
+            'XMR', 'EGLD', 'RUNE', 'STX', 'IMX', 'CFX', 'KAVA', 'NEO',
+        ];
+        return in_array($symbol, $knownCrypto);
     }
 
     /**
@@ -449,6 +470,13 @@ class MarketDataService
         $marketType = $this->detectMarketType($symbol);
         Log::info("Detected market type for {$symbol}: {$marketType}");
 
+        // Auto-append USDT for bare crypto symbols (SOL -> SOLUSDT)
+        $tradingSymbol = $symbol;
+        if ($marketType === 'crypto' && $this->isBareConvertibleCrypto($symbol)) {
+            $tradingSymbol = $symbol . 'USDT';
+            Log::info("Auto-suffixed bare crypto: {$symbol} -> {$tradingSymbol}");
+        }
+
         $currentPriceValue = null;
 
         // Route to appropriate data source based on market type
@@ -462,7 +490,7 @@ class MarketDataService
             case 'crypto':
                 try {
                     $response = Http::timeout(10)->get('https://api.binance.com/api/v3/ticker/24hr', [
-                        'symbol' => $symbol
+                        'symbol' => $tradingSymbol
                     ]);
 
                     if ($response->successful()) {
@@ -556,8 +584,8 @@ class MarketDataService
                 break;
         }
 
-        $rsi = $this->calculateRSI($symbol);
-        $macd = $this->calculateMACD($symbol);
+        $rsi = $this->calculateRSI($tradingSymbol);
+        $macd = $this->calculateMACD($tradingSymbol);
 
         // Check data sufficiency and quality
         $dataQuality = 'full';

@@ -268,7 +268,7 @@ class RealSentimentService
 
                     $response = Http::withHeaders([
                         'Authorization' => "Bearer {$token}",
-                        'User-Agent' => 'TradeBotAI/2.0',
+                        'User-Agent' => 'SerpoAI/2.0',
                     ])->timeout(8)->get('https://oauth.reddit.com/r/cryptocurrency/search.json', [
                         'q' => $symbol,
                         'sort' => 'relevance',
@@ -300,7 +300,7 @@ class RealSentimentService
         // Fallback: public Reddit JSON API (no auth)
         try {
             $response = Http::withHeaders([
-                'User-Agent' => 'TradeBotAI/2.0',
+                'User-Agent' => 'SerpoAI/2.0',
             ])->timeout(8)->get('https://www.reddit.com/r/cryptocurrency/search.json', [
                 'q' => $symbol,
                 'sort' => 'relevance',

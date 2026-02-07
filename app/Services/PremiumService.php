@@ -39,7 +39,7 @@ class PremiumService
      */
     public function formatPremiumInfo(): string
     {
-        $botName = config('serpoai.bot.name', 'TradeBot AI');
+        $botName = config('serpoai.bot.name', 'SERPO AI');
 
         $message = "💎 *{$botName} — EARLY ACCESS*\n\n";
         $message .= "🎉 *All features are currently FREE!*\n\n";
