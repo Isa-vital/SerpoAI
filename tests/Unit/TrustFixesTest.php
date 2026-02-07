@@ -23,7 +23,7 @@ class TrustFixesTest extends TestCase
     }
 
     // ===== RED FIX #1: /backtest no longer uses undefined $this->dexscreener =====
-    
+
     public function test_backtest_does_not_reference_dexscreener(): void
     {
         $this->assertStringNotContainsString(
@@ -52,7 +52,7 @@ class TrustFixesTest extends TestCase
     }
 
     // ===== RED FIX #2: /copy no longer references $hub['coming_soon'] =====
-    
+
     public function test_copy_does_not_reference_coming_soon_key(): void
     {
         $this->assertStringNotContainsString(
@@ -72,7 +72,7 @@ class TrustFixesTest extends TestCase
     }
 
     // ===== RED FIX #3: /trader callback buttons now route properly =====
-    
+
     public function test_callback_handler_routes_chart_prefix(): void
     {
         $this->assertMatchesRegularExpression(
@@ -98,7 +98,7 @@ class TrustFixesTest extends TestCase
     }
 
     // ===== RED FIX #4: /trending alias is registered =====
-    
+
     public function test_trending_alias_registered_in_router(): void
     {
         $this->assertMatchesRegularExpression(
@@ -118,40 +118,40 @@ class TrustFixesTest extends TestCase
     }
 
     // ===== YELLOW FIX #5: /start message is confident, no "coming soon" =====
-    
+
     public function test_start_has_no_preview_mode(): void
     {
         // Extract handleStart method content
         $startSection = $this->extractMethod('handleStart');
-        
+
         $this->assertStringNotContainsString('preview mode', $startSection, '/start still mentions preview mode');
     }
 
     public function test_start_has_no_coming_soon(): void
     {
         $startSection = $this->extractMethod('handleStart');
-        
+
         $this->assertStringNotContainsString('Coming Soon', $startSection, '/start still shows Coming Soon');
     }
 
     public function test_start_has_no_under_construction(): void
     {
         $startSection = $this->extractMethod('handleStart');
-        
+
         $this->assertStringNotContainsString('Under Construction', $startSection, '/start still shows Under Construction');
     }
 
     public function test_start_has_no_features_will_unlock(): void
     {
         $startSection = $this->extractMethod('handleStart');
-        
+
         $this->assertStringNotContainsString('Features will unlock', $startSection, '/start still promises future unlocking');
     }
 
     public function test_start_showcases_multi_market(): void
     {
         $startSection = $this->extractMethod('handleStart');
-        
+
         $this->assertStringContainsString('Crypto', $startSection);
         $this->assertStringContainsString('Stocks', $startSection);
         $this->assertStringContainsString('Forex', $startSection);
@@ -161,13 +161,13 @@ class TrustFixesTest extends TestCase
     public function test_start_has_action_oriented_cta(): void
     {
         $startSection = $this->extractMethod('handleStart');
-        
+
         $this->assertStringContainsString('/help', $startSection, '/start should reference /help command');
         $this->assertStringContainsString('Get Started', $startSection, '/start should have a Get Started section');
     }
 
     // ===== YELLOW FIX #6: /backtest AI disclosure =====
-    
+
     public function test_backtest_discloses_ai_estimation(): void
     {
         $this->assertStringContainsString(
@@ -187,7 +187,7 @@ class TrustFixesTest extends TestCase
     }
 
     // ===== YELLOW FIX #7: /predict supports multi-market =====
-    
+
     public function test_predict_uses_market_type_detection(): void
     {
         $this->assertStringContainsString(
@@ -200,7 +200,7 @@ class TrustFixesTest extends TestCase
     public function test_predict_has_multimarket_fallback(): void
     {
         $predictSection = $this->extractMethod('handlePredict');
-        
+
         $this->assertStringContainsString(
             'multiMarket->getCurrentPrice',
             $predictSection,
@@ -218,7 +218,7 @@ class TrustFixesTest extends TestCase
     }
 
     // ===== YELLOW FIX #8: SERPO removed from sentiment map =====
-    
+
     public function test_no_serpo_in_sentiment_map(): void
     {
         // The exact legacy line was: 'SERPO' => 'Serpo',
@@ -230,7 +230,7 @@ class TrustFixesTest extends TestCase
     }
 
     // ===== YELLOW FIX #9: /premium is early access, no fake pricing =====
-    
+
     public function test_premium_has_no_fake_prices(): void
     {
         $this->assertStringNotContainsString('$9.99', $this->premiumServiceSource, 'Premium still shows fake $9.99 price');
@@ -241,7 +241,7 @@ class TrustFixesTest extends TestCase
     public function test_premium_has_no_payment_options(): void
     {
         $formatMethod = $this->extractMethodFromSource($this->premiumServiceSource, 'formatPremiumInfo');
-        
+
         $this->assertStringNotContainsString('Credit/Debit', $formatMethod, 'Premium still lists payment methods with no payment flow');
         $this->assertStringNotContainsString('Telegram Stars', $formatMethod, 'Premium still lists Telegram Stars payment');
     }
@@ -274,7 +274,7 @@ class TrustFixesTest extends TestCase
     }
 
     // ===== INTEGRATION: CopyTradingService returns top_traders =====
-    
+
     public function test_copy_trading_service_returns_top_traders_key(): void
     {
         $service = app(\App\Services\CopyTradingService::class);
@@ -286,7 +286,7 @@ class TrustFixesTest extends TestCase
     }
 
     // ===== INTEGRATION: PremiumService formatPremiumInfo doesn't crash =====
-    
+
     public function test_premium_format_does_not_crash(): void
     {
         $service = app(\App\Services\PremiumService::class);
@@ -298,7 +298,7 @@ class TrustFixesTest extends TestCase
     }
 
     // ===== INTEGRATION: MultiMarketDataService detectMarketType works =====
-    
+
     public function test_multimarket_detects_crypto(): void
     {
         $service = app(\App\Services\MultiMarketDataService::class);
