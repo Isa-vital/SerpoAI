@@ -248,6 +248,11 @@ class MultiMarketDataService
             }
         }
 
+        // Bare crypto symbols (BTC, ETH, SOL, LINK, etc.) — check before stock fallback
+        if ($this->isBareConvertibleCrypto($symbol)) {
+            return 'crypto';
+        }
+
         // Stock symbols: 1-5 characters (AAPL, TSLA, BA, etc.)
         // If it's short and doesn't match crypto/forex patterns, it's likely a stock
         if (strlen($symbol) >= 1 && strlen($symbol) <= 5 && !str_contains($symbol, 'USDT') && !str_contains($symbol, 'BTC')) {
@@ -467,20 +472,42 @@ class MultiMarketDataService
         try {
             // All forex pairs including metals
             $displayPairs = [
-                'EURUSD', 'GBPUSD', 'USDJPY', 'USDCHF', 'AUDUSD', 'USDCAD', 'NZDUSD',
-                'XAUUSD', 'XAGUSD',
-                'EURGBP', 'EURJPY', 'GBPJPY', 'AUDJPY',
-                'USDTRY', 'USDZAR', 'USDMXN',
+                'EURUSD',
+                'GBPUSD',
+                'USDJPY',
+                'USDCHF',
+                'AUDUSD',
+                'USDCAD',
+                'NZDUSD',
+                'XAUUSD',
+                'XAGUSD',
+                'EURGBP',
+                'EURJPY',
+                'GBPJPY',
+                'AUDJPY',
+                'USDTRY',
+                'USDZAR',
+                'USDMXN',
             ];
 
             // Yahoo Finance symbol mapping
             $yahooMap = [
-                'EURUSD' => 'EURUSD=X', 'GBPUSD' => 'GBPUSD=X', 'USDJPY' => 'JPY=X',
-                'USDCHF' => 'CHF=X', 'AUDUSD' => 'AUDUSD=X', 'USDCAD' => 'CAD=X',
-                'NZDUSD' => 'NZDUSD=X', 'EURGBP' => 'EURGBP=X', 'EURJPY' => 'EURJPY=X',
-                'GBPJPY' => 'GBPJPY=X', 'AUDJPY' => 'AUDJPY=X',
-                'USDTRY' => 'TRY=X', 'USDZAR' => 'ZAR=X', 'USDMXN' => 'MXN=X',
-                'XAUUSD' => 'GC=F', 'XAGUSD' => 'SI=F',
+                'EURUSD' => 'EURUSD=X',
+                'GBPUSD' => 'GBPUSD=X',
+                'USDJPY' => 'JPY=X',
+                'USDCHF' => 'CHF=X',
+                'AUDUSD' => 'AUDUSD=X',
+                'USDCAD' => 'CAD=X',
+                'NZDUSD' => 'NZDUSD=X',
+                'EURGBP' => 'EURGBP=X',
+                'EURJPY' => 'EURJPY=X',
+                'GBPJPY' => 'GBPJPY=X',
+                'AUDJPY' => 'AUDJPY=X',
+                'USDTRY' => 'TRY=X',
+                'USDZAR' => 'ZAR=X',
+                'USDMXN' => 'MXN=X',
+                'XAUUSD' => 'GC=F',
+                'XAGUSD' => 'SI=F',
             ];
 
             $data = [];
@@ -1246,7 +1273,7 @@ class MultiMarketDataService
             $from = substr($pair, 0, 3);
             $to = substr($pair, 3, 3);
 
-            $response = Http::timeout(3)->get("https://api.exchangerate-api.com/v4/latest/{$from}");
+            $response = Http::timeout(8)->withUserAgent('SerpoAI/2.0')->get("https://api.exchangerate-api.com/v4/latest/{$from}");
 
             if ($response->successful()) {
                 $data = $response->json();
@@ -1426,15 +1453,21 @@ class MultiMarketDataService
                 break;
             }
         }
+        $baseAsset = $symbol; // Save original for CoinGecko lookup
         if (!$hasQuote) {
             $symbol .= 'USDT';
         }
 
-        // Get price from Binance
+        // Get price from Binance (with retry)
         $ticker = $this->binance->get24hTicker($symbol);
+        if (!$ticker) {
+            // Retry once after brief pause
+            usleep(300000); // 300ms
+            $ticker = $this->binance->get24hTicker($symbol);
+        }
 
         if (!$ticker) {
-            return ['error' => "Unable to fetch {$symbol} from Binance"];
+            return ['error' => "Unable to fetch {$symbol} from Binance. Please try again."];
         }
 
         $result = [
@@ -1451,7 +1484,9 @@ class MultiMarketDataService
 
         // Try to get market cap from CoinGecko (for major coins)
         try {
-            $baseAsset = str_replace(['USDT', 'BUSD', 'USDC'], '', $symbol);
+            if (empty($baseAsset) || $baseAsset === $symbol) {
+                $baseAsset = str_replace(['USDT', 'BUSD', 'USDC'], '', $symbol);
+            }
             $coinId = $this->getCoinGeckoId($baseAsset);
 
             if ($coinId) {
@@ -1503,10 +1538,43 @@ class MultiMarketDataService
             }
         }
 
-        // Fallback: existing analysis method
+        // Fallback: Yahoo Finance v8/chart (works for forex and metals)
+        try {
+            $yahooSymbol = $this->getYahooForexSymbolForPrice($pair);
+            $response = Http::timeout(8)->withUserAgent('SerpoAI/2.0')
+                ->get("https://query1.finance.yahoo.com/v8/finance/chart/{$yahooSymbol}", [
+                    'interval' => '1d',
+                    'range' => '2d',
+                ]);
+
+            if ($response->successful()) {
+                $data = $response->json();
+                if (isset($data['chart']['result'][0])) {
+                    $meta = $data['chart']['result'][0]['meta'];
+                    $price = $meta['regularMarketPrice'] ?? 0;
+                    $prevClose = $meta['previousClose'] ?? $price;
+                    $changePct = $prevClose > 0 ? (($price - $prevClose) / $prevClose) * 100 : 0;
+
+                    return [
+                        'symbol' => $pair,
+                        'market_type' => 'forex',
+                        'source' => 'Yahoo Finance',
+                        'price' => $price,
+                        'change_pct' => round($changePct, 2),
+                        'high_24h' => $meta['regularMarketDayHigh'] ?? null,
+                        'low_24h' => $meta['regularMarketDayLow'] ?? null,
+                        'updated_at' => gmdate('Y-m-d H:i') . ' UTC',
+                    ];
+                }
+            }
+        } catch (\Exception $e) {
+            Log::warning('Yahoo Finance forex price failed', ['pair' => $pair, 'error' => $e->getMessage()]);
+        }
+
+        // Fallback: existing analysis method (ExchangeRate-API)
         $data = $this->analyzeForexPair($pair);
         if (isset($data['error'])) {
-            return $data;
+            return ['error' => "Unable to fetch {$pair} data. Verify pair format (e.g., EURUSD, GBPJPY, XAUUSD)"];
         }
 
         return [
@@ -1572,10 +1640,11 @@ class MultiMarketDataService
     private function getYahooFinanceData(string $symbol): array
     {
         try {
-            $response = Http::timeout(10)->get("https://query1.finance.yahoo.com/v8/finance/chart/{$symbol}", [
-                'interval' => '1d',
-                'range' => '1d',
-            ]);
+            $response = Http::timeout(10)->withUserAgent('SerpoAI/2.0')
+                ->get("https://query1.finance.yahoo.com/v8/finance/chart/{$symbol}", [
+                    'interval' => '1d',
+                    'range' => '2d',
+                ]);
 
             if ($response->successful()) {
                 $data = $response->json();
@@ -1583,13 +1652,16 @@ class MultiMarketDataService
                 if (isset($data['chart']['result'][0])) {
                     $result = $data['chart']['result'][0];
                     $meta = $result['meta'];
+                    $price = $meta['regularMarketPrice'] ?? 0;
+                    $prevClose = $meta['previousClose'] ?? $price;
+                    $changePct = $prevClose > 0 ? (($price - $prevClose) / $prevClose) * 100 : 0;
 
                     return [
                         'symbol' => $symbol,
                         'market_type' => 'stock',
                         'source' => 'Yahoo Finance',
-                        'price' => $meta['regularMarketPrice'] ?? 0,
-                        'change_pct' => (($meta['regularMarketPrice'] - $meta['previousClose']) / $meta['previousClose']) * 100,
+                        'price' => $price,
+                        'change_pct' => round($changePct, 2),
                         'volume_24h' => $meta['regularMarketVolume'] ?? 0,
                         'high_24h' => $meta['regularMarketDayHigh'] ?? 0,
                         'low_24h' => $meta['regularMarketDayLow'] ?? 0,
@@ -1603,6 +1675,51 @@ class MultiMarketDataService
         }
 
         return ['error' => "Unable to fetch {$symbol} stock data"];
+    }
+
+    /**
+     * Map forex pair to Yahoo Finance symbol for /price command
+     */
+    private function getYahooForexSymbolForPrice(string $pair): string
+    {
+        // Metal/commodity mappings to futures symbols
+        $metalMap = [
+            'XAUUSD' => 'GC=F',
+            'XAGUSD' => 'SI=F',
+            'XPTUSD' => 'PL=F',
+            'XPDUSD' => 'PA=F',
+            'XAUEUR' => 'GC=F',
+            'XAGEUR' => 'SI=F',
+        ];
+
+        if (isset($metalMap[$pair])) {
+            return $metalMap[$pair];
+        }
+
+        // Standard forex pair format: EURUSD → EURUSD=X
+        return $pair . '=X';
+    }
+
+    /**
+     * Check if a symbol is a known bare crypto symbol
+     */
+    private function isBareConvertibleCrypto(string $symbol): bool
+    {
+        $knownCrypto = [
+            'BTC', 'ETH', 'SOL', 'BNB', 'XRP', 'ADA', 'DOGE', 'DOT',
+            'AVAX', 'MATIC', 'LINK', 'UNI', 'SHIB', 'LTC', 'ATOM',
+            'NEAR', 'APT', 'ARB', 'OP', 'SUI', 'SEI', 'TIA', 'JTO',
+            'FIL', 'INJ', 'TRX', 'TON', 'PEPE', 'WIF', 'BONK', 'FLOKI',
+            'FET', 'RNDR', 'GRT', 'AAVE', 'MKR', 'CRV', 'SNX', 'COMP',
+            'SAND', 'MANA', 'AXS', 'ICP', 'VET', 'ALGO', 'FTM', 'HBAR',
+            'EOS', 'THETA', 'XLM', 'XMR', 'EGLD', 'RUNE', 'STX', 'IMX',
+            'CFX', 'KAVA', 'NEO', 'POL', 'WLD', 'JUP', 'PYTH', 'W',
+            'STRK', 'DYM', 'PIXEL', 'PORTAL', 'ALT', 'MANTA', 'AI16Z',
+            'PENDLE', 'ENS', 'SSV', 'LDO', 'RPL', 'CAKE', 'SUSHI',
+            'CRO', 'ZIL', 'GALA', 'ENJ', 'CHZ', 'MASK', 'BAT',
+            'ONE', 'CELO', 'ROSE', 'ZEC', 'DASH', 'WAVES', 'IOTA',
+        ];
+        return in_array($symbol, $knownCrypto);
     }
 
     /**
