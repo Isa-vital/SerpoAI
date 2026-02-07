@@ -321,9 +321,14 @@ class MarketScanService
         if ($totalStocksScanned > 0) {
             $message .= "Stocks Scanned: {$totalStocksScanned} (Top US equities + ETFs)\n";
         }
-        if ($stocks['market_status'] === 'Closed') {
-            $sessionDate = \Carbon\Carbon::now('America/New_York')->subDay()->format('Y-m-d');
-            $message .= "Session: Previous Close | As of: {$sessionDate}\n";
+        $isWeekend = str_contains($stocks['market_status'], 'Weekend') || str_contains($stocks['market_status'], 'Closed');
+        if ($isWeekend) {
+            // Find the last trading day (Friday or prior)
+            $lastTrading = \Carbon\Carbon::now('America/New_York');
+            while ($lastTrading->isWeekend()) {
+                $lastTrading->subDay();
+            }
+            $message .= "Showing: Last close ({$lastTrading->format('D, M j')})\n";
         }
         $message .= "\n";
 

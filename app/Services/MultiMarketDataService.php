@@ -531,45 +531,97 @@ class MultiMarketDataService
                 }
             }
 
-            // Fetch metals via Twelve Data concurrently
+            // Fetch metals via Twelve Data concurrently, with Yahoo Finance fallback
             if (!empty($metalPairs)) {
-                $metalResponses = Http::pool(function ($pool) use ($metalPairs) {
-                    foreach ($metalPairs as $pair) {
-                        $from = substr($pair, 0, 3);
-                        $to = substr($pair, 3, 3);
-                        $twelveKey = config('services.twelvedata.key');
-                        if ($twelveKey) {
+                $metalYahooMap = [
+                    'XAUUSD' => 'GC=F',
+                    'XAGUSD' => 'SI=F',
+                    'XPTUSD' => 'PL=F',
+                    'XPDUSD' => 'PA=F',
+                ];
+                $fetchedMetals = [];
+
+                // Try Twelve Data first
+                $twelveKey = config('services.twelvedata.key');
+                if ($twelveKey) {
+                    $metalResponses = Http::pool(function ($pool) use ($metalPairs, $twelveKey) {
+                        foreach ($metalPairs as $pair) {
+                            $from = substr($pair, 0, 3);
+                            $to = substr($pair, 3, 3);
                             $pool->as($pair)->timeout(5)->get("https://api.twelvedata.com/price", [
                                 'symbol' => "{$from}/{$to}",
                                 'apikey' => $twelveKey,
                             ]);
                         }
+                    });
+
+                    foreach ($metalPairs as $pair) {
+                        try {
+                            if (isset($metalResponses[$pair]) && $metalResponses[$pair]->successful()) {
+                                $priceData = $metalResponses[$pair]->json();
+                                if (isset($priceData['price']) && floatval($priceData['price']) > 0) {
+                                    $rate = floatval($priceData['price']);
+                                    $cacheKey = "forex_24h_ago_{$pair}";
+                                    $prevRate = Cache::get($cacheKey);
+                                    Cache::put($cacheKey, $rate, 86400);
+
+                                    $change = $prevRate ? $rate - $prevRate : 0;
+                                    $changePercent = ($prevRate && $prevRate > 0) ? (($rate - $prevRate) / $prevRate) * 100 : 0;
+
+                                    $data[] = [
+                                        'pair' => $pair,
+                                        'price' => $rate,
+                                        'change' => $change,
+                                        'change_percent' => round($changePercent, 2),
+                                    ];
+                                    $fetchedMetals[] = $pair;
+                                }
+                            }
+                        } catch (\Exception $e) {
+                            Log::warning("Metal pair {$pair} Twelve Data failed", ['error' => $e->getMessage()]);
+                        }
                     }
-                });
+                }
 
-                foreach ($metalPairs as $pair) {
-                    try {
-                        if (isset($metalResponses[$pair]) && $metalResponses[$pair]->successful()) {
-                            $priceData = $metalResponses[$pair]->json();
-                            if (isset($priceData['price'])) {
-                                $rate = floatval($priceData['price']);
-                                $cacheKey = "forex_24h_ago_{$pair}";
-                                $prevRate = Cache::get($cacheKey);
-                                Cache::put($cacheKey, $rate, 86400);
-
-                                $change = $prevRate ? $rate - $prevRate : 0;
-                                $changePercent = ($prevRate && $prevRate > 0) ? (($rate - $prevRate) / $prevRate) * 100 : 0;
-
-                                $data[] = [
-                                    'pair' => $pair,
-                                    'price' => $rate,
-                                    'change' => $change,
-                                    'change_percent' => round($changePercent, 2),
-                                ];
+                // Yahoo Finance fallback for metals that failed
+                $missingMetals = array_diff($metalPairs, $fetchedMetals);
+                if (!empty($missingMetals)) {
+                    $yahooMetalResponses = Http::pool(function ($pool) use ($missingMetals, $metalYahooMap) {
+                        foreach ($missingMetals as $pair) {
+                            $yahooSym = $metalYahooMap[$pair] ?? null;
+                            if ($yahooSym) {
+                                $pool->as($pair)->timeout(8)
+                                    ->withHeaders(['User-Agent' => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'])
+                                    ->get("https://query1.finance.yahoo.com/v8/finance/chart/{$yahooSym}", [
+                                        'interval' => '1d',
+                                        'range' => '2d',
+                                    ]);
                             }
                         }
-                    } catch (\Exception $e) {
-                        Log::warning("Metal pair {$pair} failed", ['error' => $e->getMessage()]);
+                    });
+
+                    foreach ($missingMetals as $pair) {
+                        try {
+                            if (isset($yahooMetalResponses[$pair]) && $yahooMetalResponses[$pair]->successful()) {
+                                $chartData = $yahooMetalResponses[$pair]->json();
+                                if (isset($chartData['chart']['result'][0])) {
+                                    $meta = $chartData['chart']['result'][0]['meta'];
+                                    $rate = floatval($meta['regularMarketPrice'] ?? 0);
+                                    $prevClose = floatval($meta['previousClose'] ?? $meta['chartPreviousClose'] ?? $rate);
+                                    if ($rate > 0) {
+                                        $changePct = $prevClose > 0 ? (($rate - $prevClose) / $prevClose) * 100 : 0;
+                                        $data[] = [
+                                            'pair' => $pair,
+                                            'price' => $rate,
+                                            'change' => $rate - $prevClose,
+                                            'change_percent' => round($changePct, 2),
+                                        ];
+                                    }
+                                }
+                            }
+                        } catch (\Exception $e) {
+                            Log::warning("Metal pair {$pair} Yahoo fallback failed", ['error' => $e->getMessage()]);
+                        }
                     }
                 }
             }
@@ -1026,37 +1078,44 @@ class MultiMarketDataService
             }
         }
 
-        // Fallback: Yahoo Finance batch call (free, no key)
+        // Fallback: Yahoo Finance v8/chart (free, no key, no auth needed)
         try {
-            $symbols = ['^GSPC', '^DJI', '^IXIC'];
+            $symbols = ['%5EGSPC', '%5EDJI', '%5EIXIC'];
             $names = ['S&P 500', 'Dow Jones', 'NASDAQ'];
             $shortNames = ['SPX', 'DJI', 'IXIC'];
             $results = [];
 
-            $response = Http::timeout(10)
-                ->withHeaders(['User-Agent' => 'SerpoAI/2.0'])
-                ->get("https://query1.finance.yahoo.com/v7/finance/quote", [
-                    'symbols' => implode(',', $symbols),
-                ]);
+            // Concurrent v8/chart calls for indices
+            $indexResponses = Http::pool(function ($pool) use ($symbols) {
+                foreach ($symbols as $sym) {
+                    $pool->as($sym)->timeout(8)
+                        ->withHeaders(['User-Agent' => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'])
+                        ->get("https://query1.finance.yahoo.com/v8/finance/chart/{$sym}", [
+                            'interval' => '1d',
+                            'range' => '2d',
+                        ]);
+                }
+            });
 
-            if ($response->successful()) {
-                $quotes = $response->json()['quoteResponse']['result'] ?? [];
-                foreach ($quotes as $q) {
-                    $idx = array_search($q['symbol'] ?? '', $symbols);
-                    if ($idx !== false) {
-                        $price = floatval($q['regularMarketPrice'] ?? 0);
-                        $changePct = floatval($q['regularMarketChangePercent'] ?? 0);
-                        $results[$idx] = [
-                            'symbol' => $shortNames[$idx],
-                            'name' => $names[$idx],
+            foreach ($symbols as $i => $sym) {
+                if (isset($indexResponses[$sym]) && $indexResponses[$sym]->successful()) {
+                    $data = $indexResponses[$sym]->json();
+                    if (isset($data['chart']['result'][0])) {
+                        $meta = $data['chart']['result'][0]['meta'];
+                        $price = floatval($meta['regularMarketPrice'] ?? 0);
+                        $prevClose = floatval($meta['previousClose'] ?? $meta['chartPreviousClose'] ?? $price);
+                        $changePct = $prevClose > 0 ? (($price - $prevClose) / $prevClose) * 100 : 0;
+                        $results[$i] = [
+                            'symbol' => $shortNames[$i],
+                            'name' => $names[$i],
                             'price' => $price,
                             'change' => ($changePct >= 0 ? '+' : '') . round($changePct, 2) . '%',
                         ];
                     }
                 }
-                ksort($results);
-                $results = array_values($results);
             }
+            ksort($results);
+            $results = array_values($results);
 
             if (!empty($results)) {
                 return $results;
@@ -1097,52 +1156,44 @@ class MultiMarketDataService
                 $gainers = [];
                 $losers = [];
 
-                // Batch fetch ALL stocks in ONE Yahoo Finance v7 quote call
-                $symbolsStr = implode(',', $watchlist);
-                $response = Http::timeout(15)
-                    ->withHeaders(['User-Agent' => 'SerpoAI/2.0'])
-                    ->get("https://query1.finance.yahoo.com/v7/finance/quote", [
-                        'symbols' => $symbolsStr,
-                    ]);
-
-                if ($response->successful()) {
-                    $quotes = $response->json()['quoteResponse']['result'] ?? [];
-                    foreach ($quotes as $q) {
-                        $sym = $q['symbol'] ?? '';
-                        $price = floatval($q['regularMarketPrice'] ?? 0);
-                        $changePct = floatval($q['regularMarketChangePercent'] ?? 0);
-                        if ($price <= 0) continue;
-
-                        $item = [
-                            'symbol' => $sym,
-                            'price' => $price,
-                            'change_percent' => round($changePct, 2),
-                            'volume' => $q['regularMarketVolume'] ?? 0,
-                        ];
-                        if ($changePct >= 0) {
-                            $gainers[] = $item;
-                        } else {
-                            $losers[] = $item;
-                        }
+                // Concurrent v8/chart calls for all stocks (v7 requires auth)
+                $stockResponses = Http::pool(function ($pool) use ($watchlist) {
+                    foreach ($watchlist as $sym) {
+                        $pool->as($sym)->timeout(8)
+                            ->withHeaders(['User-Agent' => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'])
+                            ->get("https://query1.finance.yahoo.com/v8/finance/chart/{$sym}", [
+                                'interval' => '1d',
+                                'range' => '2d',
+                            ]);
                     }
-                } else {
-                    // Fallback: fetch top 10 individually
-                    Log::warning('Yahoo batch quote failed, falling back to individual', ['status' => $response->status()]);
-                    foreach (array_slice($watchlist, 0, 10) as $sym) {
-                        $quote = $this->getStockQuote($sym);
-                        if (!isset($quote['error']) && isset($quote['price'])) {
-                            $item = [
-                                'symbol' => $sym,
-                                'price' => $quote['price'],
-                                'change_percent' => round($quote['change_percent'], 2),
-                                'volume' => $quote['volume'] ?? 0,
-                            ];
-                            if ($quote['change_percent'] >= 0) {
-                                $gainers[] = $item;
-                            } else {
-                                $losers[] = $item;
+                });
+
+                foreach ($watchlist as $sym) {
+                    try {
+                        if (isset($stockResponses[$sym]) && $stockResponses[$sym]->successful()) {
+                            $data = $stockResponses[$sym]->json();
+                            if (isset($data['chart']['result'][0])) {
+                                $meta = $data['chart']['result'][0]['meta'];
+                                $price = floatval($meta['regularMarketPrice'] ?? 0);
+                                $prevClose = floatval($meta['previousClose'] ?? $meta['chartPreviousClose'] ?? $price);
+                                if ($price <= 0) continue;
+
+                                $changePct = $prevClose > 0 ? (($price - $prevClose) / $prevClose) * 100 : 0;
+                                $item = [
+                                    'symbol' => $sym,
+                                    'price' => $price,
+                                    'change_percent' => round($changePct, 2),
+                                    'volume' => floatval($meta['regularMarketVolume'] ?? 0),
+                                ];
+                                if ($changePct >= 0) {
+                                    $gainers[] = $item;
+                                } else {
+                                    $losers[] = $item;
+                                }
                             }
                         }
+                    } catch (\Exception $e) {
+                        // Skip failed symbols silently
                     }
                 }
 
@@ -1164,7 +1215,15 @@ class MultiMarketDataService
 
     private function getMarketStatus(): string
     {
-        $hour = now('America/New_York')->hour;
+        $ny = now('America/New_York');
+        $dayOfWeek = $ny->dayOfWeek; // 0=Sun, 6=Sat
+        $hour = $ny->hour;
+
+        // Weekend = Closed
+        if ($dayOfWeek === 0 || $dayOfWeek === 6) {
+            return 'Weekend - Closed';
+        }
+
         if ($hour >= 9 && $hour < 16) {
             return 'Open';
         } elseif ($hour >= 4 && $hour < 9) {
