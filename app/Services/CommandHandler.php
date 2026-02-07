@@ -630,7 +630,7 @@ class CommandHandler
             return;
         }
 
-        $symbol = strtoupper(implode('', $params));
+        $symbol = strtoupper($params[0]);
 
         // Show typing indicator
         $this->telegram->sendChatAction($chatId, 'typing');

@@ -188,12 +188,10 @@ class MarketDataService
             }
         }
 
-        // Try forex BEFORE stock Yahoo fallback (forex needs =X suffix)
+        // Try forex BEFORE stock Yahoo fallback (forex needs =X suffix or futures symbol)
         if ($this->isForexSymbol($symbol)) {
             try {
-                $base = substr($symbol, 0, 3);
-                $quote = substr($symbol, 3, 3);
-                $forexSymbol = "{$base}{$quote}=X";
+                $forexSymbol = $this->getYahooForexSymbol($symbol);
                 $response = Http::timeout(15)->get("https://query1.finance.yahoo.com/v8/finance/chart/{$forexSymbol}", [
                     'interval' => '1h',
                     'range' => '5d'
@@ -319,11 +317,35 @@ class MarketDataService
         }
 
         // Common currencies and metals
-        $commonCurrencies = ['USD', 'EUR', 'GBP', 'JPY', 'CHF', 'AUD', 'CAD', 'NZD', 'XAU', 'XAG'];
+        $commonCurrencies = ['USD', 'EUR', 'GBP', 'JPY', 'CHF', 'AUD', 'CAD', 'NZD', 'XAU', 'XAG', 'XPT', 'XPD'];
         $base = substr($symbol, 0, 3);
         $quote = substr($symbol, 3, 3);
 
         return in_array($base, $commonCurrencies) && in_array($quote, $commonCurrencies);
+    }
+
+    /**
+     * Get Yahoo Finance symbol for forex/commodity pairs
+     * Commodities use futures symbols (GC=F), regular forex uses =X suffix
+     */
+    private function getYahooForexSymbol(string $symbol): string
+    {
+        // Commodity futures mapping
+        $commodityMap = [
+            'XAUUSD' => 'GC=F',    // Gold
+            'XAGUSD' => 'SI=F',    // Silver
+            'XPTUSD' => 'PL=F',    // Platinum
+            'XPDUSD' => 'PA=F',    // Palladium
+        ];
+
+        if (isset($commodityMap[$symbol])) {
+            return $commodityMap[$symbol];
+        }
+
+        // Regular forex: EURUSD -> EURUSD=X
+        $base = substr($symbol, 0, 3);
+        $quote = substr($symbol, 3, 3);
+        return "{$base}{$quote}=X";
     }
 
     /**
@@ -512,9 +534,7 @@ class MarketDataService
 
             case 'forex':
                 try {
-                    $base = substr($symbol, 0, 3);
-                    $quote = substr($symbol, 3, 3);
-                    $forexSymbol = "{$base}{$quote}=X";
+                    $forexSymbol = $this->getYahooForexSymbol($symbol);
 
                     Log::info("Fetching forex data for {$forexSymbol}");
 
