@@ -597,7 +597,10 @@ class CommandHandler
             $message .= "`/signals BTCUSDT`\n";
             $message .= "`/signals ETHUSDT`\n";
             $message .= "`/signals AAPL` (stocks)\n";
-            $message .= "`/signals EURUSD` (forex)\n\n";
+            $message .= "`/signals EURUSD` (forex)\n";
+            $message .= "`/signals BTCUSDT 1D` (daily TF)\n";
+            $message .= "`/signals XAUUSD 1W` (weekly TF)\n\n";
+            $message .= "*Timeframes:* 1H (default), 4H, 1D, 1W\n\n";
             $message .= "*Analysis Includes:*\n";
             $message .= "📊 RSI (Relative Strength Index)\n";
             $message .= "📈 MACD (Moving Average Convergence Divergence)\n";
@@ -632,12 +635,21 @@ class CommandHandler
 
         $symbol = strtoupper($params[0]);
 
+        // Parse timeframe from second param (1H, 4H, 1D, 1W) - default 1H
+        $timeframe = '1H';
+        if (isset($params[1])) {
+            $tf = strtoupper($params[1]);
+            if (in_array($tf, ['1H', '4H', '1D', '1W'])) {
+                $timeframe = $tf;
+            }
+        }
+
         // Show typing indicator
         $this->telegram->sendChatAction($chatId, 'typing');
-        $this->telegram->sendMessage($chatId, "🔍 Analyzing {$symbol}...");
+        $this->telegram->sendMessage($chatId, "🔍 Analyzing {$symbol} ({$timeframe})...");
 
         // Generate trading signals
-        $analysis = $this->marketData->generateTradingSignal($symbol);
+        $analysis = $this->marketData->generateTradingSignal($symbol, $timeframe);
 
         if (empty($analysis['signals'])) {
             // Check if there's a specific error message

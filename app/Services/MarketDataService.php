@@ -104,11 +104,11 @@ class MarketDataService
     /**
      * Calculate RSI (Relative Strength Index)
      */
-    public function calculateRSI(string $symbol, int $period = 14): ?float
+    public function calculateRSI(string $symbol, int $period = 14, string $timeframe = '1H'): ?float
     {
         try {
             // Fetch live historical prices
-            $pricesArray = $this->fetchHistoricalPrices($symbol, $period + 1);
+            $pricesArray = $this->fetchHistoricalPrices($symbol, $period + 1, $timeframe);
 
             if (count($pricesArray) < $period + 1) {
                 return null;
@@ -156,7 +156,20 @@ class MarketDataService
     /**
      * Fetch historical prices from various sources
      */
-    private function fetchHistoricalPrices(string $symbol, int $limit): array
+    /**
+     * Get API interval/range config for a timeframe
+     */
+    private function getTimeframeConfig(string $timeframe): array
+    {
+        return match ($timeframe) {
+            '4H' => ['binance' => '4h', 'yahoo' => '1h',  'yahoo_range' => '60d'],
+            '1D' => ['binance' => '1d', 'yahoo' => '1d',  'yahoo_range' => '6mo'],
+            '1W' => ['binance' => '1w', 'yahoo' => '1wk', 'yahoo_range' => '2y'],
+            default => ['binance' => '1h', 'yahoo' => '1h',  'yahoo_range' => '5d'],  // 1H
+        };
+    }
+
+    private function fetchHistoricalPrices(string $symbol, int $limit, string $timeframe = '1H'): array
     {
         if ($this->isDexToken($symbol)) {
             // For DEX tokens, use current DEX price as baseline
@@ -171,10 +184,11 @@ class MarketDataService
         // Try Binance for crypto symbols (e.g., BTCUSDT, ETHUSDT)
         if ($this->isCryptoSymbol($symbol) || $this->isBareConvertibleCrypto($symbol)) {
             $binanceSymbol = $this->isBareConvertibleCrypto($symbol) ? $symbol . 'USDT' : $symbol;
+            $tfConfig = $this->getTimeframeConfig($timeframe);
             try {
                 $response = Http::timeout(10)->get('https://api.binance.com/api/v3/klines', [
                     'symbol' => $binanceSymbol,
-                    'interval' => '1h',
+                    'interval' => $tfConfig['binance'],
                     'limit' => $limit
                 ]);
 
@@ -192,9 +206,10 @@ class MarketDataService
         if ($this->isForexSymbol($symbol)) {
             try {
                 $forexSymbol = $this->getYahooForexSymbol($symbol);
+                $tfConfig = $this->getTimeframeConfig($timeframe);
                 $response = Http::timeout(15)->get("https://query1.finance.yahoo.com/v8/finance/chart/{$forexSymbol}", [
-                    'interval' => '1h',
-                    'range' => '5d'
+                    'interval' => $tfConfig['yahoo'],
+                    'range' => $tfConfig['yahoo_range']
                 ]);
 
                 if ($response->successful()) {
@@ -217,11 +232,12 @@ class MarketDataService
         }
 
         // Try Yahoo Finance for stocks (free, no API key required)
+        $tfConfig = $this->getTimeframeConfig($timeframe);
         try {
             // Yahoo Finance v8 API
             $response = Http::timeout(15)->get("https://query1.finance.yahoo.com/v8/finance/chart/{$symbol}", [
-                'interval' => '1h',
-                'range' => '5d'
+                'interval' => $tfConfig['yahoo'],
+                'range' => $tfConfig['yahoo_range']
             ]);
 
             if ($response->successful()) {
@@ -416,11 +432,11 @@ class MarketDataService
     /**
      * Calculate EMA (Exponential Moving Average)
      */
-    public function calculateEMA(string $symbol, int $period = 12): ?float
+    public function calculateEMA(string $symbol, int $period = 12, string $timeframe = '1H'): ?float
     {
         try {
             // Fetch live historical prices
-            $pricesArray = $this->fetchHistoricalPrices($symbol, $period * 2);
+            $pricesArray = $this->fetchHistoricalPrices($symbol, $period * 2, $timeframe);
 
             if (count($pricesArray) < $period) {
                 return null;
@@ -451,11 +467,11 @@ class MarketDataService
     /**
      * Calculate MACD (Moving Average Convergence Divergence)
      */
-    public function calculateMACD(string $symbol): ?array
+    public function calculateMACD(string $symbol, string $timeframe = '1H'): ?array
     {
         try {
-            $ema12 = $this->calculateEMA($symbol, 12);
-            $ema26 = $this->calculateEMA($symbol, 26);
+            $ema12 = $this->calculateEMA($symbol, 12, $timeframe);
+            $ema26 = $this->calculateEMA($symbol, 26, $timeframe);
 
             if ($ema12 === null || $ema26 === null) {
                 return null;
@@ -486,7 +502,7 @@ class MarketDataService
     /**
      * Generate trading signal based on technical indicators
      */
-    public function generateTradingSignal(string $symbol): array
+    public function generateTradingSignal(string $symbol, string $timeframe = '1H'): array
     {
         // Detect market type
         $marketType = $this->detectMarketType($symbol);
@@ -538,9 +554,10 @@ class MarketDataService
 
                     Log::info("Fetching forex data for {$forexSymbol}");
 
+                    $tfConfig = $this->getTimeframeConfig($timeframe);
                     $response = Http::timeout(15)->get("https://query1.finance.yahoo.com/v8/finance/chart/{$forexSymbol}", [
-                        'interval' => '1d',
-                        'range' => '1d'
+                        'interval' => $tfConfig['yahoo'],
+                        'range' => $tfConfig['yahoo_range']
                     ]);
 
                     if ($response->successful()) {
@@ -574,9 +591,10 @@ class MarketDataService
             case 'stock':
             default:
                 try {
+                    $tfConfig = $this->getTimeframeConfig($timeframe);
                     $response = Http::timeout(15)->get("https://query1.finance.yahoo.com/v8/finance/chart/{$symbol}", [
-                        'interval' => '1d',
-                        'range' => '1d'
+                        'interval' => $tfConfig['yahoo'],
+                        'range' => $tfConfig['yahoo_range']
                     ]);
 
                     if ($response->successful()) {
@@ -604,8 +622,8 @@ class MarketDataService
                 break;
         }
 
-        $rsi = $this->calculateRSI($tradingSymbol);
-        $macd = $this->calculateMACD($tradingSymbol);
+        $rsi = $this->calculateRSI($tradingSymbol, 14, $timeframe);
+        $macd = $this->calculateMACD($tradingSymbol, $timeframe);
 
         // Check data sufficiency and quality
         $dataQuality = 'full';
@@ -734,7 +752,7 @@ class MarketDataService
             'formatted_price' => $formattedPrice,
             'market_type' => strtoupper($marketType),
             'source' => $source,
-            'timeframe' => '1H',
+            'timeframe' => $timeframe,
             'updated_at' => now()->toIso8601String(),
             'data_quality' => $dataQuality,
             'is_data_flat' => $isDataFlat,
