@@ -641,6 +641,8 @@ class CommandHandler
             $tf = strtoupper($params[1]);
             if (in_array($tf, ['1H', '4H', '1D', '1W'])) {
                 $timeframe = $tf;
+            } else {
+                $this->telegram->sendMessage($chatId, "⚠️ Invalid timeframe `{$tf}`. Supported: 1H, 4H, 1D, 1W\nUsing default: 1H");
             }
         }
 

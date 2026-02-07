@@ -31,8 +31,20 @@ class TelegramWebhookController extends Controller
 
         try {
             $update = $request->all();
+            $updateId = $update['update_id'] ?? null;
 
-            Log::info('Telegram webhook received', ['update' => $update]);
+            // Deduplicate: prevent processing the same update twice (Telegram retries on slow responses)
+            if ($updateId) {
+                $cacheKey = "tg_update_{$updateId}";
+                if (\Illuminate\Support\Facades\Cache::has($cacheKey)) {
+                    Log::info("Skipping duplicate update {$updateId}");
+                    return response()->json(['ok' => true]);
+                }
+                // Mark this update as processed (TTL: 5 minutes)
+                \Illuminate\Support\Facades\Cache::put($cacheKey, true, 300);
+            }
+
+            Log::info('Telegram webhook received', ['update_id' => $updateId]);
 
             // Handle message
             if (isset($update['message'])) {

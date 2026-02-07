@@ -162,10 +162,10 @@ class MarketDataService
     private function getTimeframeConfig(string $timeframe): array
     {
         return match ($timeframe) {
-            '4H' => ['binance' => '4h', 'yahoo' => '1h',  'yahoo_range' => '60d'],
+            '4H' => ['binance' => '4h', 'yahoo' => '1h',  'yahoo_range' => '30d'],
             '1D' => ['binance' => '1d', 'yahoo' => '1d',  'yahoo_range' => '6mo'],
             '1W' => ['binance' => '1w', 'yahoo' => '1wk', 'yahoo_range' => '2y'],
-            default => ['binance' => '1h', 'yahoo' => '1h',  'yahoo_range' => '5d'],  // 1H
+            default => ['binance' => '1h', 'yahoo' => '1h',  'yahoo_range' => '10d'],  // 1H
         };
     }
 
@@ -728,7 +728,7 @@ class MarketDataService
         }
 
         // Format price based on market type
-        $formattedPrice = $this->formatPrice($currentPriceValue, $marketType, $symbol);
+        $formattedPrice = $this->formatPrice($currentPriceValue, $marketType, $tradingSymbol);
 
         // Determine data source
         $source = match ($marketType) {
@@ -778,17 +778,32 @@ class MarketDataService
 
         if ($marketType === 'crypto') {
             // Extract quote currency (e.g., USDT from BTCUSDT)
-            $quote = 'USD';
-            if (str_ends_with($symbol, 'USDT')) $quote = 'USDT';
-            elseif (str_ends_with($symbol, 'USDC')) $quote = 'USDC';
+            $quote = 'USDT';
+            if (str_ends_with($symbol, 'USDC')) $quote = 'USDC';
             elseif (str_ends_with($symbol, 'BTC')) $quote = 'BTC';
             elseif (str_ends_with($symbol, 'ETH')) $quote = 'ETH';
+            elseif (str_ends_with($symbol, 'BNB')) $quote = 'BNB';
 
-            return number_format($price, 8) . ' ' . $quote;
+            // Smart decimal formatting based on price magnitude
+            if ($price >= 1000) {
+                return number_format($price, 2) . ' ' . $quote;
+            } elseif ($price >= 1) {
+                return number_format($price, 4) . ' ' . $quote;
+            } elseif ($price >= 0.01) {
+                return number_format($price, 6) . ' ' . $quote;
+            } else {
+                return number_format($price, 8) . ' ' . $quote;
+            }
         }
 
         if ($marketType === 'token') {
-            return '$' . number_format($price, 8);
+            if ($price >= 1) {
+                return '$' . number_format($price, 4);
+            } elseif ($price >= 0.01) {
+                return '$' . number_format($price, 6);
+            } else {
+                return '$' . number_format($price, 8);
+            }
         }
 
         return number_format($price, 8);
