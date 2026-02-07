@@ -323,28 +323,147 @@ class NewsService
     }
 
     /**
-     * Get economic calendar (placeholder)
+     * Get economic calendar from live API sources
      */
     public function getEconomicCalendar(): string
     {
         $message = "📅 *ECONOMIC CALENDAR*\n\n";
 
-        $message .= "⚠️ *High Impact Events This Week*\n\n";
+        // Try to fetch real economic events
+        $events = $this->fetchEconomicEvents();
 
-        $message .= "🗓️ *Wednesday, Dec 4*\n";
-        $message .= "• 🇺🇸 Fed Interest Rate Decision (2:00 PM EST)\n";
-        $message .= "  Impact: Very High | Watch for volatility\n\n";
+        if (!empty($events)) {
+            $message .= "⚠️ *Upcoming High-Impact Events*\n\n";
 
-        $message .= "🗓️ *Thursday, Dec 5*\n";
-        $message .= "• 🇺🇸 Unemployment Claims (8:30 AM EST)\n";
-        $message .= "  Impact: Medium\n\n";
+            $groupedByDate = [];
+            foreach ($events as $event) {
+                $date = $event['date'] ?? 'Unknown';
+                $groupedByDate[$date][] = $event;
+            }
 
-        $message .= "🗓️ *Friday, Dec 6*\n";
-        $message .= "• 🇺🇸 Non-Farm Payrolls (8:30 AM EST)\n";
-        $message .= "  Impact: Very High | Major crypto volatility expected\n\n";
+            foreach (array_slice($groupedByDate, 0, 5, true) as $date => $dayEvents) {
+                $message .= "🗓️ *{$date}*\n";
+                foreach (array_slice($dayEvents, 0, 4) as $ev) {
+                    $impact = $ev['impact'] ?? 'Medium';
+                    $impactEmoji = match(strtolower($impact)) {
+                        'high' => '🔴',
+                        'medium' => '🟡',
+                        'low' => '🟢',
+                        default => '⚪',
+                    };
+                    $country = $ev['country'] ?? '';
+                    $flag = $this->getCountryFlag($country);
+                    $title = $ev['title'] ?? 'Event';
+                    $time = $ev['time'] ?? '';
+                    $message .= "• {$impactEmoji} {$flag} {$title}";
+                    if ($time) $message .= " ({$time})";
+                    $message .= "\n";
+                }
+                $message .= "\n";
+            }
+        } else {
+            // Fallback: static high-level guidance
+            $message .= "⚠️ *Key Recurring Events to Watch*\n\n";
+            $message .= "🇺🇸 *Federal Reserve (FOMC)*\n";
+            $message .= "• Interest Rate Decision (8x/year)\n";
+            $message .= "• Next: Check federalreserve.gov\n\n";
+            $message .= "🇺🇸 *Employment Data*\n";
+            $message .= "• Non-Farm Payrolls (1st Friday monthly)\n";
+            $message .= "• Unemployment Claims (Weekly, Thu)\n\n";
+            $message .= "🇺🇸 *Inflation Data*\n";
+            $message .= "• CPI (Monthly, ~10th-15th)\n";
+            $message .= "• PPI (Monthly)\n\n";
+            $message .= "🇪🇺 *ECB Interest Rate Decision*\n";
+            $message .= "• 6 weeks cycle\n\n";
+            $message .= "💡 _For live data, set TRADING_ECONOMICS_KEY in .env_";
+        }
 
-        $message .= "💡 _Full economic calendar integration coming soon_";
+        $message .= "💡 *Pro Tip:* High-impact events cause major volatility in crypto, stocks & forex. Reduce leverage before announcements.";
 
         return $message;
+    }
+
+    /**
+     * Fetch economic events from API sources
+     */
+    private function fetchEconomicEvents(): array
+    {
+        // Try TradingEconomics calendar API
+        $teKey = config('services.trading_economics.key', env('TRADING_ECONOMICS_KEY', ''));
+        if (!empty($teKey) && $teKey !== 'your_key_here') {
+            try {
+                $startDate = now()->format('Y-m-d');
+                $endDate = now()->addDays(7)->format('Y-m-d');
+                $response = Http::timeout(8)->get(
+                    "https://api.tradingeconomics.com/calendar/country/united states/{$startDate}/{$endDate}",
+                    ['c' => $teKey, 'f' => 'json']
+                );
+
+                if ($response->successful()) {
+                    $data = $response->json();
+                    $events = [];
+                    foreach (array_slice($data, 0, 20) as $item) {
+                        $importance = intval($item['Importance'] ?? 1);
+                        if ($importance < 2) continue; // Skip low impact
+
+                        $events[] = [
+                            'date' => date('D, M j', strtotime($item['Date'] ?? '')),
+                            'time' => date('g:i A', strtotime($item['Date'] ?? '')),
+                            'title' => $item['Event'] ?? '',
+                            'country' => $item['Country'] ?? 'US',
+                            'impact' => $importance >= 3 ? 'High' : 'Medium',
+                            'actual' => $item['Actual'] ?? null,
+                            'forecast' => $item['Forecast'] ?? null,
+                            'previous' => $item['Previous'] ?? null,
+                        ];
+                    }
+                    if (!empty($events)) return $events;
+                }
+            } catch (\Exception $e) {
+                Log::debug('TradingEconomics calendar failed', ['error' => $e->getMessage()]);
+            }
+        }
+
+        // Fallback: Try free Nager.Date public holidays API + generate basic events
+        try {
+            $response = Http::timeout(5)->get('https://date.nager.at/api/v3/NextPublicHolidays/US');
+            if ($response->successful()) {
+                $holidays = $response->json();
+                $events = [];
+                foreach (array_slice($holidays, 0, 3) as $h) {
+                    $events[] = [
+                        'date' => date('D, M j', strtotime($h['date'] ?? '')),
+                        'time' => 'All Day',
+                        'title' => ($h['localName'] ?? 'Holiday') . ' (Markets Closed)',
+                        'country' => 'US',
+                        'impact' => 'Medium',
+                    ];
+                }
+                return $events;
+            }
+        } catch (\Exception $e) {
+            // Quietly fail
+        }
+
+        return [];
+    }
+
+    /**
+     * Get country flag emoji
+     */
+    private function getCountryFlag(string $country): string
+    {
+        return match(strtolower(trim($country))) {
+            'us', 'united states', 'usa' => '🇺🇸',
+            'eu', 'euro area', 'european union' => '🇪🇺',
+            'uk', 'united kingdom', 'gb' => '🇬🇧',
+            'jp', 'japan' => '🇯🇵',
+            'cn', 'china' => '🇨🇳',
+            'au', 'australia' => '🇦🇺',
+            'ca', 'canada' => '🇨🇦',
+            'ch', 'switzerland' => '🇨🇭',
+            'de', 'germany' => '🇩🇪',
+            default => '🏳️',
+        };
     }
 }

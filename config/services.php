@@ -210,4 +210,19 @@ return [
         'model' => env('OPENAI_VISION_MODEL', 'gpt-4-vision-preview'),
     ],
 
+    // Finnhub stock data
+    'finnhub' => [
+        'key' => env('FINNHUB_API_KEY', 'demo'),
+    ],
+
+    // TradingEconomics calendar
+    'trading_economics' => [
+        'key' => env('TRADING_ECONOMICS_KEY', ''),
+    ],
+
+    // CryptoPanic news/sentiment
+    'cryptopanic' => [
+        'key' => env('CRYPTOPANIC_API_KEY', ''),
+    ],
+
 ];

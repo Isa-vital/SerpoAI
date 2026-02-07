@@ -194,44 +194,141 @@ class RealSentimentService
     }
 
     /**
-     * Fetch tweets for coin (placeholder - implement Twitter API v2)
-     */
-    private function fetchTweetsForCoin(string $symbol): array
-    {
-        // TODO: Implement Twitter API v2 integration
-        // For now, return simulated data
-        return [
-            "{$symbol} is looking bullish! Great fundamentals 🚀",
-            "Just bought more {$symbol}, the chart looks amazing",
-            "Concerns about {$symbol} liquidity...",
-            "{$symbol} to the moon! 🌙",
-            "Not sure about {$symbol}, waiting for better entry",
-        ];
-    }
-
-    /**
-     * Fetch Telegram messages (placeholder)
+     * Fetch Telegram/community sentiment via CryptoPanic news API (free, no auth)
+     * Uses crypto news headlines as a proxy for community sentiment
      */
     private function fetchTelegramMessages(string $symbol): array
     {
-        // TODO: Implement Telegram channel scraping or bot integration
-        return [
-            "Big news for {$symbol}!",
-            "{$symbol} partnership announced",
-            "Worried about {$symbol} price action",
-        ];
+        try {
+            $response = Http::timeout(8)->get('https://cryptopanic.com/api/free/v1/posts/', [
+                'auth_token' => config('services.cryptopanic.key', ''),
+                'currencies' => $symbol,
+                'kind' => 'news',
+                'filter' => 'hot',
+            ]);
+
+            if ($response->successful()) {
+                $posts = $response->json()['results'] ?? [];
+                $texts = [];
+                foreach (array_slice($posts, 0, 15) as $post) {
+                    $texts[] = $post['title'] ?? '';
+                }
+                if (!empty($texts)) {
+                    return $texts;
+                }
+            }
+        } catch (\Exception $e) {
+            Log::debug('CryptoPanic fetch failed', ['symbol' => $symbol, 'error' => $e->getMessage()]);
+        }
+
+        // Fallback: use CryptoCompare news
+        try {
+            $response = Http::timeout(8)->get('https://min-api.cryptocompare.com/data/v2/news/', [
+                'categories' => $symbol,
+                'excludeCategories' => 'Sponsored',
+            ]);
+
+            if ($response->successful()) {
+                $articles = $response->json()['Data'] ?? [];
+                $texts = [];
+                foreach (array_slice($articles, 0, 15) as $article) {
+                    $texts[] = ($article['title'] ?? '') . '. ' . ($article['body'] ?? '');
+                }
+                if (!empty($texts)) {
+                    return array_map(fn($t) => substr($t, 0, 300), $texts);
+                }
+            }
+        } catch (\Exception $e) {
+            Log::debug('CryptoCompare news fetch failed', ['error' => $e->getMessage()]);
+        }
+
+        return [];
     }
 
     /**
-     * Fetch Reddit posts (placeholder)
+     * Fetch Reddit posts from cryptocurrency subreddits via Reddit JSON API (no auth needed)
      */
     private function fetchRedditPosts(string $symbol): array
     {
-        // TODO: Implement Reddit API integration
-        return [
-            "{$symbol} fundamental analysis - looks strong",
-            "Is {$symbol} a good buy right now?",
-        ];
+        $clientId = env('REDDIT_CLIENT_ID', '');
+        $clientSecret = env('REDDIT_CLIENT_SECRET', '');
+
+        // Try authenticated Reddit API first
+        if (!empty($clientId) && $clientId !== 'your_reddit_client_id') {
+            try {
+                // Get OAuth token
+                $authResponse = Http::withBasicAuth($clientId, $clientSecret)
+                    ->asForm()
+                    ->post('https://www.reddit.com/api/v1/access_token', [
+                        'grant_type' => 'client_credentials',
+                    ]);
+
+                if ($authResponse->successful()) {
+                    $token = $authResponse->json()['access_token'] ?? '';
+
+                    $response = Http::withHeaders([
+                        'Authorization' => "Bearer {$token}",
+                        'User-Agent' => 'TradeBotAI/2.0',
+                    ])->timeout(8)->get('https://oauth.reddit.com/r/cryptocurrency/search.json', [
+                        'q' => $symbol,
+                        'sort' => 'relevance',
+                        't' => 'week',
+                        'limit' => 15,
+                    ]);
+
+                    if ($response->successful()) {
+                        $posts = $response->json()['data']['children'] ?? [];
+                        $texts = [];
+                        foreach ($posts as $post) {
+                            $d = $post['data'] ?? [];
+                            $text = ($d['title'] ?? '');
+                            if (!empty($d['selftext'])) {
+                                $text .= '. ' . substr($d['selftext'], 0, 200);
+                            }
+                            $texts[] = $text;
+                        }
+                        if (!empty($texts)) {
+                            return $texts;
+                        }
+                    }
+                }
+            } catch (\Exception $e) {
+                Log::debug('Reddit OAuth failed', ['error' => $e->getMessage()]);
+            }
+        }
+
+        // Fallback: public Reddit JSON API (no auth)
+        try {
+            $response = Http::withHeaders([
+                'User-Agent' => 'TradeBotAI/2.0',
+            ])->timeout(8)->get('https://www.reddit.com/r/cryptocurrency/search.json', [
+                'q' => $symbol,
+                'sort' => 'relevance',
+                't' => 'week',
+                'limit' => 10,
+                'restrict_sr' => 'on',
+            ]);
+
+            if ($response->successful()) {
+                $posts = $response->json()['data']['children'] ?? [];
+                $texts = [];
+                foreach ($posts as $post) {
+                    $d = $post['data'] ?? [];
+                    $text = ($d['title'] ?? '');
+                    if (!empty($d['selftext'])) {
+                        $text .= '. ' . substr($d['selftext'], 0, 200);
+                    }
+                    $texts[] = $text;
+                }
+                if (!empty($texts)) {
+                    return $texts;
+                }
+            }
+        } catch (\Exception $e) {
+            Log::debug('Reddit public API failed', ['error' => $e->getMessage()]);
+        }
+
+        return [];
     }
 
     /**

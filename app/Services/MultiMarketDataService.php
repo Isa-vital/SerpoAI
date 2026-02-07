@@ -28,6 +28,14 @@ class MultiMarketDataService
     }
 
     /**
+     * Get the TwelveDataService instance
+     */
+    public function getTwelveData(): TwelveDataService
+    {
+        return $this->twelveData;
+    }
+
+    /**
      * Detect market type from symbol
      */
     public function detectMarketType(string $symbol): string
@@ -810,11 +818,12 @@ class MultiMarketDataService
             Log::info('Yahoo Finance failed, trying Finnhub', ['symbol' => $symbol]);
         }
 
-        // Tier 3: Finnhub (free demo)
+        // Tier 3: Finnhub (with configured API key)
         try {
+            $finnhubKey = config('services.finnhub.key', env('FINNHUB_API_KEY', 'demo'));
             $response = Http::timeout(5)->get('https://finnhub.io/api/v1/quote', [
                 'symbol' => $symbol,
-                'token' => 'demo'
+                'token' => $finnhubKey
             ]);
 
             if ($response->successful()) {

@@ -361,11 +361,42 @@ class SentimentAnalysisService
     }
 
     /**
-     * Get news sentiment from Twitter (placeholder)
+     * Get Twitter/social sentiment based on market indicators
+     * Uses Fear & Greed Index + volume analysis as a proxy
      */
-    private function getTwitterSentiment(): array
+    private function getTwitterSentiment(string $symbol = 'BTC'): array
     {
-        // Implementation would go here when Twitter API is integrated
+        try {
+            // Use Alternative.me Fear & Greed Index (free, no auth)
+            $response = Http::timeout(5)->get('https://api.alternative.me/fng/', [
+                'limit' => 1,
+            ]);
+
+            if ($response->successful()) {
+                $fng = $response->json()['data'][0] ?? null;
+                if ($fng) {
+                    $score = intval($fng['value']); // 0-100
+                    $label = $fng['value_classification'] ?? 'Neutral';
+                    $emoji = match(true) {
+                        $score >= 75 => '🟢🟢',
+                        $score >= 55 => '🟢',
+                        $score <= 25 => '🔴🔴',
+                        $score <= 45 => '🔴',
+                        default => '⚪',
+                    };
+
+                    return [
+                        'score' => $score,
+                        'label' => $label,
+                        'emoji' => $emoji,
+                        'sources' => [['title' => "Fear & Greed: {$score} ({$label})", 'source' => 'Alternative.me']],
+                    ];
+                }
+            }
+        } catch (\Exception $e) {
+            Log::debug('Fear & Greed fetch failed', ['error' => $e->getMessage()]);
+        }
+
         return [
             'score' => 50,
             'label' => 'Neutral',

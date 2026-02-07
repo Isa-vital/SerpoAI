@@ -10,7 +10,6 @@ class CopyTradingService
 {
     /**
      * Get copy trading information and resources
-     * Note: This provides real platform integration info, not fake trader data
      */
     public function getCopyTradingHub(): array
     {
@@ -18,16 +17,74 @@ class CopyTradingService
             return [
                 'status' => 'integration_available',
                 'platforms' => $this->getAvailablePlatforms(),
+                'top_traders' => $this->fetchTopTraders(),
                 'how_to_connect' => $this->getConnectionGuide(),
                 'benefits' => $this->getCopyTradingBenefits(),
                 'risks' => $this->getCopyTradingRisks(),
-                'coming_soon' => [
-                    'live_trader_stats' => 'Real-time trader performance tracking',
-                    'auto_copy' => 'Automated copy trading execution',
-                    'portfolio_mirroring' => 'Mirror entire trader portfolios',
-                ],
             ];
         });
+    }
+
+    /**
+     * Fetch top traders from Binance & Bybit public leaderboards
+     */
+    private function fetchTopTraders(): array
+    {
+        $traders = [];
+
+        // Binance Futures Leaderboard (public API)
+        try {
+            $response = Http::timeout(8)->post('https://www.binance.com/bapi/futures/v3/public/future/leaderboard/getLeaderboardRank', [
+                'isShared' => true,
+                'isTrader' => true,
+                'periodType' => 'WEEKLY',
+                'statisticsType' => 'ROI',
+                'limit' => 5,
+            ]);
+
+            if ($response->successful()) {
+                $data = $response->json()['data'] ?? [];
+                foreach (array_slice($data, 0, 5) as $trader) {
+                    $traders[] = [
+                        'platform' => 'Binance',
+                        'nickname' => $trader['nickName'] ?? 'Anonymous',
+                        'roi' => round(floatval($trader['roi'] ?? 0) * 100, 2) . '%',
+                        'pnl' => '$' . number_format(floatval($trader['pnl'] ?? 0), 2),
+                        'followers' => intval($trader['followerCount'] ?? 0),
+                    ];
+                }
+            }
+        } catch (\Exception $e) {
+            Log::debug('Binance leaderboard fetch failed', ['error' => $e->getMessage()]);
+        }
+
+        // Bybit Leaderboard (public API)
+        try {
+            $response = Http::timeout(8)->get('https://api2.bybit.com/fapi/beehive/public/v1/common/dynamic-leader-list', [
+                'timeRange' => '7D',
+                'dataType' => 'ROI',
+                'page' => 1,
+                'pageSize' => 5,
+            ]);
+
+            if ($response->successful()) {
+                $result = $response->json()['result'] ?? [];
+                $list = $result['data'] ?? $result;
+                foreach (array_slice($list, 0, 5) as $trader) {
+                    $traders[] = [
+                        'platform' => 'Bybit',
+                        'nickname' => $trader['leaderName'] ?? $trader['nickName'] ?? 'Anonymous',
+                        'roi' => round(floatval($trader['roi'] ?? $trader['roiRate'] ?? 0), 2) . '%',
+                        'pnl' => '$' . number_format(floatval($trader['pnl'] ?? 0), 2),
+                        'followers' => intval($trader['followerCount'] ?? $trader['followerNum'] ?? 0),
+                    ];
+                }
+            }
+        } catch (\Exception $e) {
+            Log::debug('Bybit leaderboard fetch failed', ['error' => $e->getMessage()]);
+        }
+
+        return $traders;
     }
 
     /**

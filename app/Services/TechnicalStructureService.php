@@ -701,6 +701,17 @@ class TechnicalStructureService
                     'timeframe' => $timeframe
                 ]);
 
+                // Primary: Try Twelve Data first (better rate limits than Alpha Vantage)
+                $twelveDataKlines = $this->fetchTwelveDataKlines($symbol, $timeframe, $marketType);
+                if (!empty($twelveDataKlines)) {
+                    Log::info("Successfully fetched {$marketType} data from Twelve Data", [
+                        'symbol' => $symbol,
+                        'klines_count' => count($twelveDataKlines)
+                    ]);
+                    return $twelveDataKlines;
+                }
+
+                // Fallback: Try Alpha Vantage
                 $historicalData = $this->fetchAlphaVantageData($symbol, $timeframe, $marketType);
 
                 if (!empty($historicalData)) {
@@ -711,7 +722,7 @@ class TechnicalStructureService
                     return $historicalData;
                 }
 
-                Log::warning('Alpha Vantage data unavailable, using synthetic fallback', [
+                Log::warning('All kline data sources unavailable, using synthetic fallback', [
                     'symbol' => $symbol,
                     'timeframe' => $timeframe,
                     'market' => $marketType
@@ -722,6 +733,71 @@ class TechnicalStructureService
             return $this->generateSyntheticKlines($symbol, $marketType, $periods);
         } catch (\Exception $e) {
             Log::warning('Failed to fetch klines for non-crypto', ['symbol' => $symbol, 'market' => $marketType, 'error' => $e->getMessage()]);
+            return [];
+        }
+    }
+
+    /**
+     * Fetch historical kline data from Twelve Data
+     */
+    private function fetchTwelveDataKlines(string $symbol, string $timeframe, string $marketType): array
+    {
+        try {
+            /** @var TwelveDataService $twelveData */
+            $twelveData = $this->multiMarket->getTwelveData();
+
+            if (!$twelveData || !$twelveData->isConfigured()) {
+                return [];
+            }
+
+            $interval = match ($timeframe) {
+                '5m' => '5min',
+                '15m' => '15min',
+                '30m' => '30min',
+                '1h' => '1h',
+                '4h' => '4h',
+                '1d' => '1day',
+                '1w' => '1week',
+                default => '1day'
+            };
+
+            // Format symbol for Twelve Data
+            $tdSymbol = $symbol;
+            if ($marketType === 'forex') {
+                $from = substr($symbol, 0, 3);
+                $to = substr($symbol, 3, 3);
+                $tdSymbol = "{$from}/{$to}";
+            }
+
+            $cacheKey = "td_klines_{$symbol}_{$interval}";
+
+            return Cache::remember($cacheKey, 300, function () use ($twelveData, $tdSymbol, $interval, $marketType) {
+                $data = $twelveData->getTimeSeries($tdSymbol, $marketType, $interval, 100);
+
+                if (empty($data) || !is_array($data)) {
+                    return [];
+                }
+
+                // Convert to standard kline format [timestamp, open, high, low, close, volume]
+                $klines = [];
+                foreach ($data as $candle) {
+                    $klines[] = [
+                        0 => strtotime($candle['datetime'] ?? '') * 1000,
+                        1 => (string)($candle['open'] ?? 0),
+                        2 => (string)($candle['high'] ?? 0),
+                        3 => (string)($candle['low'] ?? 0),
+                        4 => (string)($candle['close'] ?? 0),
+                        5 => (string)($candle['volume'] ?? '1000'),
+                    ];
+                }
+
+                // Sort oldest first
+                usort($klines, fn($a, $b) => $a[0] <=> $b[0]);
+
+                return $klines;
+            });
+        } catch (\Exception $e) {
+            Log::debug('Twelve Data klines fetch failed', ['symbol' => $symbol, 'error' => $e->getMessage()]);
             return [];
         }
     }

@@ -119,7 +119,7 @@ class TokenBurnService
     }
 
     /**
-     * Get token contract address (simplified - in production use proper API)
+     * Get token contract address — known addresses + CoinGecko fallback
      */
     private function getTokenAddress(string $symbol, string $chain): ?string
     {
@@ -130,10 +130,96 @@ class TokenBurnService
             ],
             'SHIB' => [
                 'eth' => '0x95ad61b0a150d79219dcf64e1e6cc01f0b64c4ce'
-            ]
+            ],
+            'LUNC' => [
+                'eth' => '0xd2877702675e6ceb975b4a1dff9fb7baf4c91ea9'
+            ],
+            'PEPE' => [
+                'eth' => '0x6982508145454ce325ddbe47a25d4ec3d2311933'
+            ],
+            'FLOKI' => [
+                'eth' => '0xcf0c122c6b73ff809c693db761e7baebe62b6a2e',
+                'bsc' => '0xfb5b838b6cfeedc2873ab27866079ac55363d37e'
+            ],
+            'BONK' => [
+                'eth' => '0x1151cb3d861920e07745fc0b29f6764e90e28f08' // Bridged
+            ],
+            'BURN' => [
+                'eth' => '0x0000000000000000000000000000000000000000'
+            ],
         ];
 
-        return $addresses[$symbol][$chain] ?? null;
+        if (isset($addresses[$symbol][$chain])) {
+            return $addresses[$symbol][$chain];
+        }
+
+        // Dynamic fallback: CoinGecko contract address lookup
+        return $this->lookupContractAddress($symbol, $chain);
+    }
+
+    /**
+     * Look up token contract address from CoinGecko
+     */
+    private function lookupContractAddress(string $symbol, string $chain): ?string
+    {
+        try {
+            $cacheKey = "token_addr_{$symbol}_{$chain}";
+
+            return Cache::remember($cacheKey, 86400, function () use ($symbol, $chain) {
+                // Map chain names to CoinGecko platform IDs
+                $platformMap = [
+                    'eth' => 'ethereum',
+                    'bsc' => 'binance-smart-chain',
+                    'base' => 'base',
+                ];
+
+                $platform = $platformMap[$chain] ?? null;
+                if (!$platform) return null;
+
+                // Search CoinGecko for the coin
+                $response = Http::timeout(8)->get('https://api.coingecko.com/api/v3/search', [
+                    'query' => $symbol,
+                ]);
+
+                if (!$response->successful()) return null;
+
+                $coins = $response->json()['coins'] ?? [];
+                if (empty($coins)) return null;
+
+                // Find matching coin by symbol
+                $coinId = null;
+                foreach ($coins as $coin) {
+                    if (strtoupper($coin['symbol'] ?? '') === strtoupper($symbol)) {
+                        $coinId = $coin['id'];
+                        break;
+                    }
+                }
+
+                if (!$coinId) return null;
+
+                // Get coin detail with platforms
+                $detailResponse = Http::timeout(8)->get("https://api.coingecko.com/api/v3/coins/{$coinId}", [
+                    'localization' => 'false',
+                    'tickers' => 'false',
+                    'market_data' => 'false',
+                    'community_data' => 'false',
+                    'developer_data' => 'false',
+                ]);
+
+                if ($detailResponse->successful()) {
+                    $platforms = $detailResponse->json()['platforms'] ?? [];
+                    $address = $platforms[$platform] ?? null;
+                    if (!empty($address) && $address !== '' && strlen($address) > 10) {
+                        return $address;
+                    }
+                }
+
+                return null;
+            });
+        } catch (\Exception $e) {
+            Log::debug('CoinGecko contract lookup failed', ['symbol' => $symbol, 'chain' => $chain, 'error' => $e->getMessage()]);
+            return null;
+        }
     }
 
     /**

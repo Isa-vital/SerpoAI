@@ -10,11 +10,13 @@ class BlockchainMonitorService
     private string $tonApiKey;
     private string $tonApiUrl = 'https://tonapi.io/v2';
     private TelegramBotService $telegram;
+    private ?MultiMarketDataService $marketData;
 
-    public function __construct(TelegramBotService $telegram)
+    public function __construct(TelegramBotService $telegram, ?MultiMarketDataService $marketData = null)
     {
         $this->tonApiKey = env('TON_API_KEY', '');
         $this->telegram = $telegram;
+        $this->marketData = $marketData;
     }
 
     /**
@@ -135,22 +137,75 @@ class BlockchainMonitorService
     }
 
     /**
-     * Calculate USD value
+     * Calculate USD value using real market data
      */
     private function calculateUsdValue(float $amount): float
     {
-        // Get current token price and multiply
-        $tokenPrice = 0.00005769; // TODO: Get from MarketDataService
+        $tokenSymbol = env('TOKEN_SYMBOL', 'TOKEN');
+        $tokenPrice = 0;
+
+        // Try to get real price from MarketDataService
+        if ($this->marketData) {
+            try {
+                $priceData = $this->marketData->getCurrentPrice($tokenSymbol);
+                if (is_array($priceData) && isset($priceData['price']) && $priceData['price'] > 0) {
+                    $tokenPrice = floatval($priceData['price']);
+                }
+            } catch (\Exception $e) {
+                Log::debug('MarketData price fetch failed for blockchain monitor', ['error' => $e->getMessage()]);
+            }
+        }
+
+        // Fallback to DexScreener if MarketDataService failed
+        if ($tokenPrice <= 0) {
+            try {
+                $contractAddress = env('TOKEN_CONTRACT_ADDRESS', '');
+                if (!empty($contractAddress)) {
+                    $response = \Illuminate\Support\Facades\Http::timeout(5)
+                        ->get("https://api.dexscreener.com/latest/dex/tokens/{$contractAddress}");
+                    if ($response->successful()) {
+                        $pairs = $response->json()['pairs'] ?? [];
+                        if (!empty($pairs)) {
+                            $tokenPrice = floatval($pairs[0]['priceUsd'] ?? 0);
+                        }
+                    }
+                }
+            } catch (\Exception $e) {
+                Log::debug('DexScreener price fallback failed', ['error' => $e->getMessage()]);
+            }
+        }
+
         return $amount * $tokenPrice;
     }
 
     /**
-     * Calculate price impact
+     * Calculate price impact using real liquidity data
      */
     private function calculatePriceImpact(float $usdValue): float
     {
-        // Estimate price impact based on transaction size vs liquidity
-        $liquidity = 11164; // TODO: Get from MarketDataService
+        $liquidity = 0;
+
+        // Try to get liquidity from DexScreener
+        try {
+            $contractAddress = env('TOKEN_CONTRACT_ADDRESS', '');
+            if (!empty($contractAddress)) {
+                $response = \Illuminate\Support\Facades\Http::timeout(5)
+                    ->get("https://api.dexscreener.com/latest/dex/tokens/{$contractAddress}");
+                if ($response->successful()) {
+                    $pairs = $response->json()['pairs'] ?? [];
+                    if (!empty($pairs)) {
+                        $liquidity = floatval($pairs[0]['liquidity']['usd'] ?? 0);
+                    }
+                }
+            }
+        } catch (\Exception $e) {
+            Log::debug('DexScreener liquidity fetch failed', ['error' => $e->getMessage()]);
+        }
+
+        if ($liquidity <= 0) {
+            return 0; // Can't calculate impact without liquidity data
+        }
+
         return ($usdValue / $liquidity) * 100;
     }
 

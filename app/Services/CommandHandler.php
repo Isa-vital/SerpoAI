@@ -39,6 +39,8 @@ class CommandHandler
     private TokenVerificationService $tokenVerify;
     private WatchlistService $watchlist;
     private TradePortfolioService $tradePortfolio;
+    private TokenUnlocksService $tokenUnlocks;
+    private TokenBurnService $tokenBurn;
 
     public function __construct(
         TelegramBotService $telegram,
@@ -68,7 +70,9 @@ class CommandHandler
         BinanceAPIService $binance,
         TokenVerificationService $tokenVerify,
         WatchlistService $watchlist,
-        TradePortfolioService $tradePortfolio
+        TradePortfolioService $tradePortfolio,
+        TokenUnlocksService $tokenUnlocks,
+        TokenBurnService $tokenBurn
     ) {
         $this->telegram = $telegram;
         $this->marketData = $marketData;
@@ -98,6 +102,8 @@ class CommandHandler
         $this->tokenVerify = $tokenVerify;
         $this->watchlist = $watchlist;
         $this->tradePortfolio = $tradePortfolio;
+        $this->tokenUnlocks = $tokenUnlocks;
+        $this->tokenBurn = $tokenBurn;
     }
 
     /**
@@ -1382,7 +1388,18 @@ class CommandHandler
             'alert_create' => $this->telegram->sendMessage($chatId, "To create an alert, use:\n`/setalert [price]`"),
             'alert_list' => $this->handleMyAlerts($chatId, $user),
             'settings_toggle_notif' => $this->toggleNotifications($chatId, $user),
-            default => $this->telegram->sendMessage($chatId, "Action not implemented yet."),
+            default => $this->telegram->sendMessage(
+                $chatId,
+                "\u2753 *Unknown action*\n\n" .
+                "Here are some things you can do:\n\n" .
+                "\ud83d\udcb0 `/price BTC` \u2014 Check prices\n" .
+                "\ud83d\udcca `/analyze ETH` \u2014 Technical analysis\n" .
+                "\ud83d\udd14 `/setalert BTC 70000` \u2014 Set alerts\n" .
+                "\ud83d\udcbc `/portfolio` \u2014 Paper trading\n" .
+                "\u2b50 `/watchlist` \u2014 Your watchlist\n" .
+                "\ud83d\udcf0 `/news` \u2014 Latest news\n\n" .
+                "Type `/help` for all commands."
+            ),
         };
     }
 
@@ -6268,42 +6285,65 @@ class CommandHandler
         $this->telegram->sendMessage($chatId, "🔓 Fetching unlock schedule for *{$symbol}*...");
 
         try {
-            // In production, integrate with TokenUnlocks API or Messari
-            // For now, show example structure
+            $data = $this->tokenUnlocks->getFormattedUnlocks($symbol, $period);
 
-            $message = "🔓 *TOKEN UNLOCK SCHEDULE - {$symbol}*\n\n";
-            $message .= "📅 Period: " . ucfirst($period) . "\n\n";
-
-            // Mock data structure (replace with actual API calls)
-            if ($period === 'daily') {
-                $message .= "📊 *Next 7 Days*\n";
-                $message .= "• Jan 26: 100,000 {$symbol} (Team vesting)\n";
-                $message .= "• Jan 28: 50,000 {$symbol} (Investor unlock)\n";
-                $message .= "• Jan 30: 200,000 {$symbol} (Community rewards)\n\n";
-                $message .= "💰 Total: 350,000 {$symbol}\n";
-                $message .= "📈 Impact: ~2.5% of circulating supply\n\n";
-            } else {
-                $message .= "📊 *Next 4 Weeks*\n";
-                $message .= "• Week 1: 500,000 {$symbol}\n";
-                $message .= "• Week 2: 1,200,000 {$symbol} 🔴 HIGH\n";
-                $message .= "• Week 3: 300,000 {$symbol}\n";
-                $message .= "• Week 4: 800,000 {$symbol}\n\n";
-                $message .= "💰 Total: 2,800,000 {$symbol}\n";
-                $message .= "📈 Impact: ~18% of circulating supply\n\n";
+            if (!$data['has_real_data']) {
+                $message = "🔓 *TOKEN UNLOCKS - {$symbol}*\n\n";
+                $message .= "❌ No unlock data available for {$symbol}.\n\n";
+                $message .= "*Supported tokens with curated data:*\n";
+                $message .= "• APT (Aptos) — Monthly contributor vesting\n";
+                $message .= "• ARB (Arbitrum) — Team & advisor unlocks\n";
+                $message .= "• OP (Optimism) — Core contributor vesting\n";
+                $message .= "• SUI — Investor & team unlocks\n";
+                $message .= "• TIA (Celestia) — Investor cliff unlocks\n";
+                $message .= "• JTO (Jito) — Team & community unlocks\n";
+                $message .= "• SEI — Team/investor vesting\n";
+                $message .= "• STRK (Starknet) — Contributor unlocks\n\n";
+                $message .= "Try: `/unlock APT` or `/unlock ARB`";
+                $this->telegram->sendMessage($chatId, $message);
+                return;
             }
 
-            $message .= "⚠️ *Risk Assessment:*\n";
-            $message .= "🔴 Week 2 has abnormally high unlock.\n";
-            $message .= "• Recommend: Reduce exposure before Jan 30\n";
-            $message .= "• Watch: Selling pressure from early investors\n\n";
+            $message = "🔓 *TOKEN UNLOCK SCHEDULE*\n\n";
 
-            $message .= "💡 *Strategy:*\n";
+            if (isset($data['project'])) {
+                $message .= "📊 *{$data['project']} ({$symbol})*\n";
+                $message .= "📅 Period: " . ucfirst($period) . "\n\n";
+
+                if (!empty($data['unlocks'])) {
+                    $message .= "📋 *Upcoming Unlocks:*\n";
+                    foreach ($data['unlocks'] as $unlock) {
+                        $date = date('M j, Y', strtotime($unlock['date']));
+                        $amount = number_format($unlock['amount']);
+                        $message .= "• {$date}: {$amount} {$symbol}";
+                        if (isset($unlock['recipient'])) {
+                            $message .= " ({$unlock['recipient']})";
+                        }
+                        $message .= "\n";
+                    }
+                    $message .= "\n";
+                }
+
+                // Impact analysis
+                $impact = $this->tokenUnlocks->analyzeUnlockImpact(
+                    $data['unlocks'],
+                    $data['circulating_supply']
+                );
+
+                $message .= "💰 *Total Unlock:* " . number_format($data['total_unlock']) . " {$symbol}\n";
+                $message .= "📈 *Supply Impact:* " . number_format($impact['impact_percent'], 2) . "% of circulating\n";
+                $message .= "{$impact['risk_emoji']} *Risk Level:* {$impact['risk_level']}\n";
+                $message .= "💡 *Recommendation:* {$impact['recommendation']}\n";
+            } else {
+                // Raw API data
+                $message .= "📊 *{$symbol} Unlock Data*\n\n";
+                $message .= "`" . json_encode($data['data'] ?? 'No structured data', JSON_PRETTY_PRINT) . "`";
+            }
+
+            $message .= "\n\n💡 *Strategy:*\n";
             $message .= "• Exit before large unlocks\n";
             $message .= "• Re-enter after dump absorption\n";
-            $message .= "• Monitor on-chain movement post-unlock\n\n";
-
-            $message .= "📡 *Live Data Coming Soon*\n";
-            $message .= "Integrating with TokenUnlocks & Messari APIs for real-time vesting schedules.";
+            $message .= "• Monitor on-chain movement post-unlock";
 
             $this->telegram->sendMessage($chatId, $message);
         } catch (\Exception $e) {
@@ -6336,52 +6376,72 @@ class CommandHandler
         }
 
         $symbol = strtoupper($params[0]);
-        $period = strtolower($params[1] ?? 'weekly');
 
         $this->telegram->sendChatAction($chatId, 'typing');
         $this->telegram->sendMessage($chatId, "🔥 Fetching burn data for *{$symbol}*...");
 
         try {
-            // In production, integrate with on-chain data (Etherscan, BscScan, etc.)
+            $data = $this->tokenBurn->getFormattedBurnStats($symbol);
 
             $message = "🔥 *TOKEN BURN TRACKER - {$symbol}*\n\n";
-            $message .= "📅 Period: " . ucfirst($period) . "\n\n";
 
-            // Mock data structure (replace with actual on-chain queries)
-            if ($period === 'daily') {
-                $message .= "📊 *Last 7 Days*\n";
-                $message .= "• Jan 19: 10,000 {$symbol} burned\n";
-                $message .= "• Jan 20: 12,500 {$symbol} burned\n";
-                $message .= "• Jan 21: 15,000 {$symbol} burned\n";
-                $message .= "• Jan 22: 8,000 {$symbol} burned\n";
-                $message .= "• Jan 23: 20,000 {$symbol} burned\n";
-                $message .= "• Jan 24: 18,000 {$symbol} burned\n";
-                $message .= "• Jan 25: 11,500 {$symbol} burned\n\n";
-                $message .= "🔥 Total Burned: 95,000 {$symbol}\n";
-                $message .= "📉 Deflation Rate: ~0.08% per week\n\n";
-            } else {
-                $message .= "📊 *Last 4 Weeks*\n";
-                $message .= "• Week 1: 80,000 {$symbol}\n";
-                $message .= "• Week 2: 95,000 {$symbol}\n";
-                $message .= "• Week 3: 120,000 {$symbol} 🟢\n";
-                $message .= "• Week 4: 110,000 {$symbol}\n\n";
-                $message .= "🔥 Total Burned: 405,000 {$symbol}\n";
-                $message .= "📉 Deflation Rate: ~0.35% per month\n\n";
+            if (!$data['has_real_data']) {
+                $message .= "❌ No burn data found on-chain for {$symbol}.\n\n";
+                $message .= "*Possible reasons:*\n";
+                $message .= "• Token may not have a burn mechanism\n";
+                $message .= "• Contract address not in our database\n";
+                $message .= "• Burns may go to a non-standard address\n\n";
+                $message .= "*Tokens with burn tracking:*\n";
+                $message .= "• BNB — Binance quarterly auto-burn\n";
+                $message .= "• SHIB — Community burns on ETH\n";
+                $message .= "• ETH — EIP-1559 base fee burns\n";
+                $message .= "• LUNC — Tax burns on Terra Classic\n\n";
+                $message .= "Try: `/burn BNB` or `/burn SHIB`";
+                $this->telegram->sendMessage($chatId, $message);
+                return;
             }
 
-            $message .= "📈 *Net Supply Impact:*\n";
-            $message .= "• Tokens Burned: 405,000\n";
-            $message .= "• Tokens Emitted: 300,000\n";
-            $message .= "• Net Change: -105,000 🟢 (Deflationary)\n\n";
+            // BNB special case (Binance official data)
+            if (isset($data['total_burned']) && isset($data['last_burn'])) {
+                $message .= "📊 *Source:* {$data['source']}\n\n";
 
-            $message .= "💡 *Analysis:*\n";
-            $message .= "Burns are exceeding emissions. This is bullish for price action as circulating supply decreases.\n\n";
+                if ($data['total_burned']) {
+                    $totalBurned = is_numeric($data['total_burned'])
+                        ? number_format(floatval($data['total_burned']), 0)
+                        : $data['total_burned'];
+                    $message .= "🔥 *Total Burned:* {$totalBurned} {$symbol}\n";
+                }
+                if ($data['last_burn']) {
+                    $lastBurn = is_numeric($data['last_burn'])
+                        ? number_format(floatval($data['last_burn']), 0)
+                        : $data['last_burn'];
+                    $message .= "📅 *Last Burn:* {$lastBurn} {$symbol}\n";
+                }
+                if ($data['last_burn_date'] ?? null) {
+                    $message .= "📆 *Last Burn Date:* {$data['last_burn_date']}\n";
+                }
+                if ($data['next_burn_date'] ?? null) {
+                    $message .= "⏰ *Next Burn:* {$data['next_burn_date']}\n";
+                }
+            }
 
-            $message .= "🔗 *Burn Wallet:*\n";
-            $message .= "View on-chain: `0x000...dead` (example)\n\n";
+            // Chain explorer data
+            if (isset($data['burn_address'])) {
+                $burnedRaw = $data['total_burned'] ?? 0;
+                // Convert from wei if very large number
+                $burned = floatval($burnedRaw);
+                if ($burned > 1e15) {
+                    $burned = $burned / 1e18; // Convert from wei to tokens
+                }
+                $message .= "📊 *Source:* {$data['source']} ({$data['chain']})\n";
+                $message .= "🔥 *Burned:* " . number_format($burned, 2) . " {$symbol}\n";
+                $message .= "🔗 *Burn Address:* `{$data['burn_address']}`\n";
+            }
 
-            $message .= "📡 *Live Data Coming Soon*\n";
-            $message .= "Integrating with Etherscan, BscScan, and project APIs for real-time burn tracking.";
+            $message .= "\n💡 *About Token Burns:*\n";
+            $message .= "• Burns permanently remove tokens from circulation\n";
+            $message .= "• Reduces supply = potentially bullish for price\n";
+            $message .= "• Verify burns on-chain for transparency";
 
             $this->telegram->sendMessage($chatId, $message);
         } catch (\Exception $e) {

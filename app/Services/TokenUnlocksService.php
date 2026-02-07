@@ -88,6 +88,81 @@ class TokenUnlocksService
                 'total_supply' => 4_294_967_296,
                 'circulating_supply' => 1_234_000_000
             ],
+            'SUI' => [
+                'project' => 'Sui',
+                'weekly' => [
+                    ['date' => '2026-03-03', 'amount' => 64_190_000, 'recipient' => 'Series A/B Investors'],
+                    ['date' => '2026-04-03', 'amount' => 64_190_000, 'recipient' => 'Series A/B Investors'],
+                ],
+                'total_supply' => 10_000_000_000,
+                'circulating_supply' => 2_700_000_000
+            ],
+            'TIA' => [
+                'project' => 'Celestia',
+                'weekly' => [
+                    ['date' => '2025-10-31', 'amount' => 175_600_000, 'recipient' => 'Seed/Series Investors (Cliff)'],
+                ],
+                'total_supply' => 1_000_000_000,
+                'circulating_supply' => 220_000_000
+            ],
+            'JTO' => [
+                'project' => 'Jito',
+                'weekly' => [
+                    ['date' => '2025-12-07', 'amount' => 135_000_000, 'recipient' => 'Core Contributors (Cliff)'],
+                ],
+                'total_supply' => 1_000_000_000,
+                'circulating_supply' => 130_000_000
+            ],
+            'SEI' => [
+                'project' => 'Sei',
+                'weekly' => [
+                    ['date' => '2026-08-15', 'amount' => 50_000_000, 'recipient' => 'Team Vesting'],
+                    ['date' => '2026-08-15', 'amount' => 30_000_000, 'recipient' => 'Private Sale'],
+                ],
+                'total_supply' => 10_000_000_000,
+                'circulating_supply' => 3_400_000_000
+            ],
+            'STRK' => [
+                'project' => 'Starknet',
+                'weekly' => [
+                    ['date' => '2026-04-15', 'amount' => 64_000_000, 'recipient' => 'Early Contributors'],
+                ],
+                'total_supply' => 10_000_000_000,
+                'circulating_supply' => 730_000_000
+            ],
+            'DYDX' => [
+                'project' => 'dYdX',
+                'weekly' => [
+                    ['date' => '2026-06-01', 'amount' => 15_000_000, 'recipient' => 'Investor Vesting'],
+                    ['date' => '2026-07-01', 'amount' => 15_000_000, 'recipient' => 'Investor Vesting'],
+                ],
+                'total_supply' => 1_000_000_000,
+                'circulating_supply' => 280_000_000
+            ],
+            'WLD' => [
+                'project' => 'Worldcoin',
+                'weekly' => [
+                    ['date' => '2026-07-24', 'amount' => 100_000_000, 'recipient' => 'TFH & Contributors (Cliff)'],
+                ],
+                'total_supply' => 10_000_000_000,
+                'circulating_supply' => 400_000_000
+            ],
+            'PYTH' => [
+                'project' => 'Pyth Network',
+                'weekly' => [
+                    ['date' => '2026-05-20', 'amount' => 200_000_000, 'recipient' => 'Publisher Rewards'],
+                ],
+                'total_supply' => 10_000_000_000,
+                'circulating_supply' => 3_600_000_000
+            ],
+            'W' => [
+                'project' => 'Wormhole',
+                'weekly' => [
+                    ['date' => '2027-04-03', 'amount' => 600_000_000, 'recipient' => 'Core Contributors (Cliff)'],
+                ],
+                'total_supply' => 10_000_000_000,
+                'circulating_supply' => 1_800_000_000
+            ],
         ];
 
         if (isset($knownUnlocks[$symbol])) {
