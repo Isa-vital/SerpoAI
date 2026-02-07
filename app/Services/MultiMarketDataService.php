@@ -465,163 +465,96 @@ class MultiMarketDataService
     public function getForexData(): array
     {
         try {
-            // Comprehensive forex pairs including commodities
+            // All forex pairs including metals
             $displayPairs = [
-                // Major Pairs (G7)
                 'EURUSD', 'GBPUSD', 'USDJPY', 'USDCHF', 'AUDUSD', 'USDCAD', 'NZDUSD',
-                // Precious Metals (handled separately - not on ExchangeRate-API)
                 'XAUUSD', 'XAGUSD',
-                // Major Crosses
                 'EURGBP', 'EURJPY', 'GBPJPY', 'AUDJPY',
-                // Emerging
                 'USDTRY', 'USDZAR', 'USDMXN',
             ];
 
-            // Separate metals (XAU/XAG not supported by ExchangeRate-API)
-            $metalPairs = [];
-            $fxPairs = [];
-            foreach ($displayPairs as $pair) {
-                $from = substr($pair, 0, 3);
-                if (in_array($from, ['XAU', 'XAG', 'XPT', 'XPD'])) {
-                    $metalPairs[] = $pair;
-                } else {
-                    $fxPairs[] = $pair;
-                }
-            }
-
-            // Get unique base currencies to avoid duplicate API calls
-            $baseCurrencies = array_unique(array_map(fn($p) => substr($p, 0, 3), $fxPairs));
+            // Yahoo Finance symbol mapping
+            $yahooMap = [
+                'EURUSD' => 'EURUSD=X', 'GBPUSD' => 'GBPUSD=X', 'USDJPY' => 'JPY=X',
+                'USDCHF' => 'CHF=X', 'AUDUSD' => 'AUDUSD=X', 'USDCAD' => 'CAD=X',
+                'NZDUSD' => 'NZDUSD=X', 'EURGBP' => 'EURGBP=X', 'EURJPY' => 'EURJPY=X',
+                'GBPJPY' => 'GBPJPY=X', 'AUDJPY' => 'AUDJPY=X',
+                'USDTRY' => 'TRY=X', 'USDZAR' => 'ZAR=X', 'USDMXN' => 'MXN=X',
+                'XAUUSD' => 'GC=F', 'XAGUSD' => 'SI=F',
+            ];
 
             $data = [];
+            $fetched = [];
 
-            // Fetch unique base currencies concurrently (5 requests instead of 14)
-            $responses = Http::pool(function ($pool) use ($baseCurrencies) {
-                foreach ($baseCurrencies as $base) {
-                    $pool->as($base)->timeout(5)->get("https://api.exchangerate-api.com/v4/latest/{$base}");
+            // Primary: Yahoo Finance v8/chart concurrent — provides previousClose for real change %
+            $yahooResponses = Http::pool(function ($pool) use ($displayPairs, $yahooMap) {
+                foreach ($displayPairs as $pair) {
+                    $yahooSym = $yahooMap[$pair] ?? null;
+                    if ($yahooSym) {
+                        $pool->as($pair)->timeout(8)
+                            ->withHeaders(['User-Agent' => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'])
+                            ->get("https://query1.finance.yahoo.com/v8/finance/chart/{$yahooSym}", [
+                                'interval' => '1d',
+                                'range' => '2d',
+                            ]);
+                    }
                 }
             });
 
-            // Extract rates for all FX pairs from the base currency responses
-            foreach ($fxPairs as $pair) {
+            foreach ($displayPairs as $pair) {
                 try {
-                    $from = substr($pair, 0, 3);
-                    $to = substr($pair, 3, 3);
-
-                    if (isset($responses[$from]) && $responses[$from]->successful()) {
-                        $rateData = $responses[$from]->json();
-                        if (isset($rateData['rates'][$to])) {
-                            $rate = floatval($rateData['rates'][$to]);
-                            $cacheKey = "forex_24h_ago_{$pair}";
-                            $prevRate = Cache::get($cacheKey);
-                            Cache::put($cacheKey, $rate, 86400);
-
-                            $change = $prevRate ? $rate - $prevRate : 0;
-                            $changePercent = ($prevRate && $prevRate > 0) ? (($rate - $prevRate) / $prevRate) * 100 : 0;
-
-                            $data[] = [
-                                'pair' => $pair,
-                                'price' => $rate,
-                                'change' => $change,
-                                'change_percent' => round($changePercent, 2),
-                            ];
+                    if (isset($yahooResponses[$pair]) && $yahooResponses[$pair]->successful()) {
+                        $chartData = $yahooResponses[$pair]->json();
+                        if (isset($chartData['chart']['result'][0])) {
+                            $meta = $chartData['chart']['result'][0]['meta'];
+                            $rate = floatval($meta['regularMarketPrice'] ?? 0);
+                            $prevClose = floatval($meta['previousClose'] ?? $meta['chartPreviousClose'] ?? $rate);
+                            if ($rate > 0) {
+                                $changePct = $prevClose > 0 ? (($rate - $prevClose) / $prevClose) * 100 : 0;
+                                $data[] = [
+                                    'pair' => $pair,
+                                    'price' => $rate,
+                                    'change' => $rate - $prevClose,
+                                    'change_percent' => round($changePct, 2),
+                                ];
+                                $fetched[] = $pair;
+                            }
                         }
                     }
                 } catch (\Exception $e) {
-                    Log::warning("Forex pair {$pair} failed", ['error' => $e->getMessage()]);
+                    Log::warning("Forex pair {$pair} Yahoo failed", ['error' => $e->getMessage()]);
                 }
             }
 
-            // Fetch metals via Twelve Data concurrently, with Yahoo Finance fallback
-            if (!empty($metalPairs)) {
-                $metalYahooMap = [
-                    'XAUUSD' => 'GC=F',
-                    'XAGUSD' => 'SI=F',
-                    'XPTUSD' => 'PL=F',
-                    'XPDUSD' => 'PA=F',
-                ];
-                $fetchedMetals = [];
-
-                // Try Twelve Data first
-                $twelveKey = config('services.twelvedata.key');
-                if ($twelveKey) {
-                    $metalResponses = Http::pool(function ($pool) use ($metalPairs, $twelveKey) {
-                        foreach ($metalPairs as $pair) {
-                            $from = substr($pair, 0, 3);
-                            $to = substr($pair, 3, 3);
-                            $pool->as($pair)->timeout(5)->get("https://api.twelvedata.com/price", [
-                                'symbol' => "{$from}/{$to}",
-                                'apikey' => $twelveKey,
-                            ]);
-                        }
-                    });
-
-                    foreach ($metalPairs as $pair) {
-                        try {
-                            if (isset($metalResponses[$pair]) && $metalResponses[$pair]->successful()) {
-                                $priceData = $metalResponses[$pair]->json();
-                                if (isset($priceData['price']) && floatval($priceData['price']) > 0) {
-                                    $rate = floatval($priceData['price']);
-                                    $cacheKey = "forex_24h_ago_{$pair}";
-                                    $prevRate = Cache::get($cacheKey);
-                                    Cache::put($cacheKey, $rate, 86400);
-
-                                    $change = $prevRate ? $rate - $prevRate : 0;
-                                    $changePercent = ($prevRate && $prevRate > 0) ? (($rate - $prevRate) / $prevRate) * 100 : 0;
-
-                                    $data[] = [
-                                        'pair' => $pair,
-                                        'price' => $rate,
-                                        'change' => $change,
-                                        'change_percent' => round($changePercent, 2),
-                                    ];
-                                    $fetchedMetals[] = $pair;
-                                }
-                            }
-                        } catch (\Exception $e) {
-                            Log::warning("Metal pair {$pair} Twelve Data failed", ['error' => $e->getMessage()]);
-                        }
+            // Fallback: ExchangeRate-API for pairs Yahoo missed (no change data, just price)
+            $missingPairs = array_diff($displayPairs, $fetched);
+            $missingFx = array_filter($missingPairs, fn($p) => !in_array(substr($p, 0, 3), ['XAU', 'XAG', 'XPT', 'XPD']));
+            if (!empty($missingFx)) {
+                $baseCurrencies = array_unique(array_map(fn($p) => substr($p, 0, 3), $missingFx));
+                $fallbackResponses = Http::pool(function ($pool) use ($baseCurrencies) {
+                    foreach ($baseCurrencies as $base) {
+                        $pool->as($base)->timeout(5)->get("https://api.exchangerate-api.com/v4/latest/{$base}");
                     }
-                }
+                });
 
-                // Yahoo Finance fallback for metals that failed
-                $missingMetals = array_diff($metalPairs, $fetchedMetals);
-                if (!empty($missingMetals)) {
-                    $yahooMetalResponses = Http::pool(function ($pool) use ($missingMetals, $metalYahooMap) {
-                        foreach ($missingMetals as $pair) {
-                            $yahooSym = $metalYahooMap[$pair] ?? null;
-                            if ($yahooSym) {
-                                $pool->as($pair)->timeout(8)
-                                    ->withHeaders(['User-Agent' => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'])
-                                    ->get("https://query1.finance.yahoo.com/v8/finance/chart/{$yahooSym}", [
-                                        'interval' => '1d',
-                                        'range' => '2d',
-                                    ]);
+                foreach ($missingFx as $pair) {
+                    try {
+                        $from = substr($pair, 0, 3);
+                        $to = substr($pair, 3, 3);
+                        if (isset($fallbackResponses[$from]) && $fallbackResponses[$from]->successful()) {
+                            $rateData = $fallbackResponses[$from]->json();
+                            if (isset($rateData['rates'][$to])) {
+                                $rate = floatval($rateData['rates'][$to]);
+                                $data[] = [
+                                    'pair' => $pair,
+                                    'price' => $rate,
+                                    'change' => 0,
+                                    'change_percent' => 0,
+                                ];
                             }
                         }
-                    });
-
-                    foreach ($missingMetals as $pair) {
-                        try {
-                            if (isset($yahooMetalResponses[$pair]) && $yahooMetalResponses[$pair]->successful()) {
-                                $chartData = $yahooMetalResponses[$pair]->json();
-                                if (isset($chartData['chart']['result'][0])) {
-                                    $meta = $chartData['chart']['result'][0]['meta'];
-                                    $rate = floatval($meta['regularMarketPrice'] ?? 0);
-                                    $prevClose = floatval($meta['previousClose'] ?? $meta['chartPreviousClose'] ?? $rate);
-                                    if ($rate > 0) {
-                                        $changePct = $prevClose > 0 ? (($rate - $prevClose) / $prevClose) * 100 : 0;
-                                        $data[] = [
-                                            'pair' => $pair,
-                                            'price' => $rate,
-                                            'change' => $rate - $prevClose,
-                                            'change_percent' => round($changePct, 2),
-                                        ];
-                                    }
-                                }
-                            }
-                        } catch (\Exception $e) {
-                            Log::warning("Metal pair {$pair} Yahoo fallback failed", ['error' => $e->getMessage()]);
-                        }
+                    } catch (\Exception $e) {
+                        Log::warning("Forex fallback {$pair} failed", ['error' => $e->getMessage()]);
                     }
                 }
             }
@@ -1138,19 +1071,44 @@ class MultiMarketDataService
                 // Broad watchlist across sectors for real market representation
                 $watchlist = [
                     // Tech
-                    'AAPL', 'MSFT', 'NVDA', 'GOOGL', 'AMZN', 'META', 'TSLA',
+                    'AAPL',
+                    'MSFT',
+                    'NVDA',
+                    'GOOGL',
+                    'AMZN',
+                    'META',
+                    'TSLA',
                     // Finance
-                    'JPM', 'BAC', 'GS', 'V', 'MA',
+                    'JPM',
+                    'BAC',
+                    'GS',
+                    'V',
+                    'MA',
                     // Healthcare
-                    'UNH', 'JNJ', 'PFE', 'ABBV',
+                    'UNH',
+                    'JNJ',
+                    'PFE',
+                    'ABBV',
                     // Consumer
-                    'WMT', 'KO', 'MCD', 'NKE', 'DIS',
+                    'WMT',
+                    'KO',
+                    'MCD',
+                    'NKE',
+                    'DIS',
                     // Energy & Industrial
-                    'XOM', 'CVX', 'CAT', 'BA',
+                    'XOM',
+                    'CVX',
+                    'CAT',
+                    'BA',
                     // ETFs
-                    'SPY', 'QQQ', 'IWM',
+                    'SPY',
+                    'QQQ',
+                    'IWM',
                     // Popular/Trending
-                    'AMD', 'PLTR', 'COIN', 'SQ',
+                    'AMD',
+                    'PLTR',
+                    'COIN',
+                    'SQ',
                 ];
 
                 $gainers = [];
