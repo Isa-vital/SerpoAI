@@ -13,7 +13,7 @@ class GenerateWeeklyReport extends Command
      *
      * @var string
      */
-    protected $signature = 'reports:weekly {coin=SERPO}';
+    protected $signature = 'reports:weekly {coin=BTC}';
 
     /**
      * The console command description.

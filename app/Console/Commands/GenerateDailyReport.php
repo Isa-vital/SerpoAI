@@ -13,7 +13,7 @@ class GenerateDailyReport extends Command
      *
      * @var string
      */
-    protected $signature = 'reports:daily {coin=SERPO}';
+    protected $signature = 'reports:daily {coin=BTC}';
 
     /**
      * The console command description.

@@ -23,20 +23,20 @@ class MarketDataService
     }
 
     /**
-     * Get SERPO token price from DexScreener
+     * Get token price from DexScreener using configured contract address
      */
-    public function getSerpoPriceFromDex(): ?array
+    public function getTokenPriceFromDex(): ?array
     {
-        $cacheKey = 'serpo_price_dex';
+        $cacheKey = 'token_price_dex';
 
         // Cache for 1 minute
         return Cache::remember($cacheKey, 60, function () {
             try {
-                $contractAddress = env('SERPO_CONTRACT_ADDRESS');
-                $chain = env('SERPO_CHAIN', 'ethereum');
+                $contractAddress = env('TOKEN_CONTRACT_ADDRESS', env('SERPO_CONTRACT_ADDRESS'));
+                $chain = env('TOKEN_CHAIN', env('SERPO_CHAIN', 'ethereum'));
 
                 if (!$contractAddress) {
-                    Log::warning('SERPO contract address not configured');
+                    Log::warning('Token contract address not configured');
                     return null;
                 }
 
@@ -69,7 +69,7 @@ class MarketDataService
                     'updated_at' => now(),
                 ];
             } catch (\Exception $e) {
-                Log::error('Error fetching SERPO price from DexScreener', [
+                Log::error('Error fetching token price from DexScreener', [
                     'message' => $e->getMessage(),
                 ]);
                 return null;
@@ -158,9 +158,9 @@ class MarketDataService
      */
     private function fetchHistoricalPrices(string $symbol, int $limit): array
     {
-        if ($symbol === 'SERPO') {
-            // For SERPO, use current DEX price as baseline
-            $dexData = $this->getSerpoPriceFromDex();
+        if ($this->isDexToken($symbol)) {
+            // For DEX tokens, use current DEX price as baseline
+            $dexData = $this->getTokenPriceFromDex();
             if ($dexData && isset($dexData['price'])) {
                 // Return array of current price repeated (simple approximation)
                 return array_fill(0, $limit, $dexData['price']);
@@ -254,7 +254,7 @@ class MarketDataService
      */
     private function detectMarketType(string $symbol): string
     {
-        if ($symbol === 'SERPO') {
+        if ($this->isDexToken($symbol)) {
             return 'token';
         }
 
@@ -303,6 +303,16 @@ class MarketDataService
         $quote = substr($symbol, 3, 3);
 
         return in_array($base, $commonCurrencies) && in_array($quote, $commonCurrencies);
+    }
+
+    /**
+     * Check if symbol is a DEX-tracked token with a configured contract address
+     */
+    private function isDexToken(string $symbol): bool
+    {
+        // Tokens tracked via DexScreener by contract address
+        $dexTokens = array_filter(explode(',', env('DEX_TOKEN_SYMBOLS', 'SERPO')));
+        return in_array(strtoupper($symbol), array_map('strtoupper', $dexTokens));
     }
 
     /**
@@ -444,7 +454,7 @@ class MarketDataService
         // Route to appropriate data source based on market type
         switch ($marketType) {
             case 'token':
-                $dexData = $this->getSerpoPriceFromDex();
+                $dexData = $this->getTokenPriceFromDex();
                 $currentPriceValue = $dexData ? $dexData['price'] : null;
                 // Continue even if price is null - indicators might still work
                 break;

@@ -303,7 +303,7 @@ class OpenAIService
         }
 
         try {
-            $prompt = "Analyze this market data for SERPO token:\n";
+            $prompt = "Analyze this market data:\n";
             $prompt .= "Price: $" . $marketData['price'] . "\n";
             $prompt .= "24h Change: " . $marketData['price_change_24h'] . "%\n";
 
@@ -349,8 +349,8 @@ class OpenAIService
             return "🤖 AI features require API keys. Please configure them to use this feature.";
         }
 
-        $prompt = 'You are SerpoAI, an AI assistant for SERPO token traders. ';
-        $prompt .= 'Provide helpful, accurate information about crypto trading, SERPO token, and market analysis. ';
+        $prompt = 'You are a professional AI trading assistant covering crypto, stocks, and forex markets. ';
+        $prompt .= 'Provide helpful, accurate information about trading and market analysis. ';
         $prompt .= 'Keep responses concise and friendly. Avoid giving direct financial advice.\n\n';
 
         // Add context if provided
@@ -564,7 +564,7 @@ class OpenAIService
             return "AI query processing requires configuration.";
         }
 
-        $prompt = "You are SerpoAI assistant. Answer user questions using the provided real-time data. Be conversational, helpful, and concise. If you don't have specific data, say so honestly.\n\n";
+        $prompt = "You are a professional AI trading assistant. Answer user questions using the provided real-time data. Be conversational, helpful, and concise. If you don't have specific data, say so honestly.\n\n";
 
         $prompt .= "You have access to the following real-time data:\n";
         foreach ($availableData as $key => $value) {

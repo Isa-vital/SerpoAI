@@ -75,7 +75,7 @@ class PortfolioService
     {
         try {
             $balance = $this->fetchWalletBalance($wallet->wallet_address);
-            $priceData = $this->marketData->getSerpoPriceFromDex();
+            $priceData = $this->marketData->getTokenPriceFromDex();
 
             $usdValue = 0;
             if (isset($priceData['price'])) {
@@ -103,12 +103,12 @@ class PortfolioService
     }
 
     /**
-     * Fetch SERPO balance for a wallet address from TON blockchain
+     * Fetch token balance for a wallet address from TON blockchain
      */
     private function fetchWalletBalance(string $walletAddress): float
     {
         try {
-            $contractAddress = config('services.serpo.contract_address');
+            $contractAddress = config('services.serpo.contract_address', env('TOKEN_CONTRACT_ADDRESS'));
 
             // Option 1: Use TonAPI (tonapi.io)
             $apiKey = config('services.ton.api_key');
@@ -137,7 +137,7 @@ class PortfolioService
                             $balance = $jetton['balance'] ?? 0;
                             $decimals = $jetton['jetton']['decimals'] ?? 9;
 
-                            Log::info('SERPO balance found', [
+                            Log::info('Token balance found', [
                                 'wallet' => $walletAddress,
                                 'balance_raw' => $balance,
                                 'balance' => $balance / pow(10, $decimals),
@@ -148,7 +148,7 @@ class PortfolioService
                         }
                     }
 
-                    Log::warning('SERPO token not found in wallet', [
+                    Log::warning('Token not found in wallet', [
                         'wallet' => $walletAddress,
                         'jettons_count' => count($jettons),
                         'looking_for' => $contractAddress,
@@ -203,7 +203,7 @@ class PortfolioService
             $totalUsdValue += $wallet->usd_value;
         }
 
-        $priceData = $this->marketData->getSerpoPriceFromDex();
+        $priceData = $this->marketData->getTokenPriceFromDex();
 
         return [
             'total_balance' => $totalBalance,
@@ -321,7 +321,7 @@ class PortfolioService
      */
     public function formatPortfolioMessage(array $portfolioData): string
     {
-        $message = "💼 *Your SERPO Portfolio*\n\n";
+        $message = "💼 *Your Token Portfolio*\n\n";
 
         if ($portfolioData['wallet_count'] === 0) {
             $message .= "❌ No wallets added yet\n\n";
@@ -334,7 +334,7 @@ class PortfolioService
 
         // Overall portfolio stats
         $message .= "📊 *Total Holdings*\n";
-        $message .= "• Balance: `" . number_format($portfolioData['total_balance'], 2) . " SERPO`\n";
+        $message .= "• Balance: `" . number_format($portfolioData['total_balance'], 2) . " tokens`\n";
         $message .= "• Value: `$" . number_format($portfolioData['total_usd_value'], 2) . "`\n";
         $message .= "• Price: `$" . number_format($portfolioData['current_price'], 6) . "`\n";
 
@@ -352,7 +352,7 @@ class PortfolioService
 
             $message .= "*Wallet {$walletNum}*{$label}\n";
             $message .= "• Address: `{$wallet->short_address}`\n";
-            $message .= "• Balance: `" . number_format($wallet->balance, 2) . " SERPO`\n";
+            $message .= "• Balance: `" . number_format($wallet->balance, 2) . " tokens`\n";
             $message .= "• Value: `$" . number_format($wallet->usd_value, 2) . "`\n";
 
             if ($wallet->last_synced_at) {

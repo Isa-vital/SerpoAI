@@ -174,7 +174,7 @@ class AnalyticsReportService
      */
     private function generateAISummary(array $data, string $period): string
     {
-        $prompt = "Generate a concise market summary for SERPO's {$period} performance:\n\n";
+        $prompt = "Generate a concise market summary for {$period} performance:\n\n";
         $prompt .= "Price: $" . number_format($data['opening_price'] ?? 0, 8) . " → $" . number_format($data['closing_price'] ?? 0, 8) . "\n";
         $prompt .= "Change: {$data['price_change_percent']}%\n";
         $prompt .= "Volume: $" . number_format($data['volume_total'] ?? 0, 2) . "\n";
@@ -222,7 +222,7 @@ class AnalyticsReportService
             $message .= "_" . $report->summary_text . "_\n\n";
         }
 
-        $message .= "#DailyReport #SERPO";
+        $message .= "#DailyReport #Trading";
 
         return $message;
     }
@@ -261,7 +261,7 @@ class AnalyticsReportService
             $message .= "_" . $report->summary_text . "_\n\n";
         }
 
-        $message .= "#WeeklyReport #SERPO #MarketAnalysis";
+        $message .= "#WeeklyReport #Trading #MarketAnalysis";
 
         return $message;
     }

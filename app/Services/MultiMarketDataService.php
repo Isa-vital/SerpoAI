@@ -13,13 +13,15 @@ use Illuminate\Support\Facades\Cache;
 class MultiMarketDataService
 {
     private BinanceAPIService $binance;
+    private TwelveDataService $twelveData;
     private string $alphaVantageKey;
     private string $polygonKey;
     private string $coingeckoKey;
 
-    public function __construct(BinanceAPIService $binance)
+    public function __construct(BinanceAPIService $binance, TwelveDataService $twelveData)
     {
         $this->binance = $binance;
+        $this->twelveData = $twelveData;
         $this->alphaVantageKey = config('services.alpha_vantage.key', '');
         $this->polygonKey = config('services.polygon.key', '');
         $this->coingeckoKey = config('services.coingecko.key', '');
@@ -238,11 +240,6 @@ class MultiMarketDataService
             }
         }
 
-        // Special case: SERPO (our token)
-        if ($symbol === 'SERPO') {
-            return 'crypto';
-        }
-
         // Stock symbols: 1-5 characters (AAPL, TSLA, BA, etc.)
         // If it's short and doesn't match crypto/forex patterns, it's likely a stock
         if (strlen($symbol) >= 1 && strlen($symbol) <= 5 && !str_contains($symbol, 'USDT') && !str_contains($symbol, 'BTC')) {
@@ -290,13 +287,6 @@ class MultiMarketDataService
     private function getCryptoPrice(string $symbol): ?float
     {
         try {
-            // Special handling for SERPO
-            if ($symbol === 'SERPO') {
-                $marketData = app(MarketDataService::class);
-                $priceData = $marketData->getSerpoPriceFromDex();
-                return $priceData['price'] ?? null;
-            }
-
             // Normalize symbol for Binance
             $quoteAssets = ['USDT', 'BUSD', 'USDC', 'BTC', 'ETH', 'BNB'];
             $hasQuote = false;
@@ -319,11 +309,20 @@ class MultiMarketDataService
     }
 
     /**
-     * Get forex price from Alpha Vantage
+     * Get forex price — Twelve Data primary, Alpha Vantage fallback
      */
     private function getForexPrice(string $symbol): ?float
     {
         try {
+            // Primary: Twelve Data
+            if ($this->twelveData->isConfigured()) {
+                $price = $this->twelveData->getPrice($symbol, 'forex');
+                if ($price !== null) {
+                    return $price;
+                }
+            }
+
+            // Fallback: Alpha Vantage
             if (strlen($symbol) !== 6) {
                 return null;
             }
@@ -332,7 +331,7 @@ class MultiMarketDataService
             $to = substr($symbol, 3, 3);
 
             if (empty($this->alphaVantageKey)) {
-                Log::warning('Alpha Vantage API key not configured');
+                Log::warning('No forex API configured (Twelve Data + Alpha Vantage both unavailable)');
                 return null;
             }
 
@@ -358,13 +357,22 @@ class MultiMarketDataService
     }
 
     /**
-     * Get stock price from Alpha Vantage
+     * Get stock price — Twelve Data primary, Alpha Vantage fallback
      */
     private function getStockPrice(string $symbol): ?float
     {
         try {
+            // Primary: Twelve Data
+            if ($this->twelveData->isConfigured()) {
+                $price = $this->twelveData->getPrice($symbol, 'stock');
+                if ($price !== null) {
+                    return $price;
+                }
+            }
+
+            // Fallback: Alpha Vantage
             if (empty($this->alphaVantageKey)) {
-                Log::warning('Alpha Vantage API key not configured');
+                Log::warning('No stock API configured (Twelve Data + Alpha Vantage both unavailable)');
                 return null;
             }
 
@@ -512,11 +520,6 @@ class MultiMarketDataService
     {
         $symbol = strtoupper(str_replace(['/', '-'], '', $symbol));
 
-        // Special handling for SERPO - use TON API or DexScreener
-        if ($symbol === 'SERPO') {
-            return $this->analyzeSerpoToken();
-        }
-
         // Check if symbol already has a valid quote currency
         $quoteAssets = [
             'USDT',
@@ -594,54 +597,49 @@ class MultiMarketDataService
     }
 
     /**
-     * Analyze SERPO token (special handling)
-     */
-    private function analyzeSerpoToken(): array
-    {
-        try {
-            // Use MarketDataService to get SERPO data
-            $marketData = app(MarketDataService::class);
-            $serpoData = $marketData->getSerpoPriceFromDex();
-
-            // Validate we have proper data
-            if (!$serpoData || !isset($serpoData['price']) || $serpoData['price'] <= 0) {
-                return ['error' => 'Unable to fetch valid SERPO data at this time. Please use /price command for current price.'];
-            }
-
-            return [
-                'market' => 'crypto',
-                'symbol' => 'SERPO',
-                'price' => $serpoData['price'],
-                'change_24h' => 0, // DexScreener gives percentage not absolute
-                'change_percent' => $serpoData['price_change_24h'] ?? 0,
-                'volume' => $serpoData['volume_24h'] ?? 0,
-                'indicators' => [
-                    'trend' => $serpoData['price_change_24h'] > 0 ? 'Bullish' : ($serpoData['price_change_24h'] < 0 ? 'Bearish' : 'Neutral'),
-                    'liquidity_usd' => '$' . number_format($serpoData['liquidity'] ?? 0, 2),
-                    'market_cap' => '$' . number_format($serpoData['market_cap'] ?? 0, 2),
-                ],
-                'data_sources' => ['DexScreener', 'TON Blockchain'],
-            ];
-        } catch (\Exception $e) {
-            Log::error('SERPO analysis error', ['error' => $e->getMessage()]);
-            return ['error' => 'Unable to analyze SERPO at this time. Please use /price command for current price.'];
-        }
-    }
-
-    /**
-     * Analyze specific stock
+     * Analyze specific stock — Twelve Data primary, Alpha Vantage + Yahoo fallback
      */
     public function analyzeStock(string $symbol): array
     {
         return Cache::remember("stock_analysis_{$symbol}", 300, function () use ($symbol) {
             try {
-                // Get quote from Alpha Vantage
-                $quote = $this->getAlphaVantageQuote($symbol);
+                // Primary: Twelve Data
+                if ($this->twelveData->isConfigured()) {
+                    $quote = $this->twelveData->getQuote($symbol, 'stock');
+                    if ($quote) {
+                        $indicators = $this->twelveData->getTechnicalAnalysis($symbol, 'stock');
+                        $profile = $this->twelveData->getProfile($symbol);
+
+                        return [
+                            'market' => 'stock',
+                            'symbol' => $symbol,
+                            'name' => $quote['name'] ?? $symbol,
+                            'price' => $quote['price'],
+                            'change' => $quote['change'],
+                            'change_percent' => $quote['change_percent'],
+                            'volume' => $quote['volume'],
+                            'avg_volume' => $quote['average_volume'] ?? $quote['volume'],
+                            'high_24h' => $quote['high'],
+                            'low_24h' => $quote['low'],
+                            'previous_close' => $quote['previous_close'],
+                            'fifty_two_week' => $quote['fifty_two_week'] ?? [],
+                            'is_market_open' => $quote['is_market_open'] ?? false,
+                            'indicators' => $indicators,
+                            'market_cap' => $profile['market_cap'] ?? 'N/A',
+                            'sector' => $profile['sector'] ?? 'N/A',
+                            'industry' => $profile['industry'] ?? 'N/A',
+                            'pe_ratio' => 'N/A',
+                            'data_sources' => ['Twelve Data'],
+                        ];
+                    }
+                }
+
+                // Fallback: Alpha Vantage / Yahoo
+                $quote = $this->getStockQuote($symbol);
                 if (isset($quote['error'])) {
                     return $quote;
                 }
 
-                // Get technical indicators
                 $indicators = $this->getStockIndicators($symbol);
 
                 return [
@@ -661,11 +659,9 @@ class MultiMarketDataService
                 Log::error('Stock analysis error', ['symbol' => $symbol, 'error' => $e->getMessage()]);
                 return [
                     'error' => "⚠️ Unable to fetch {$symbol} data.\n\n" .
-                        "Alpha Vantage API is currently slow or unavailable.\n" .
-                        "This is a known issue with free API tiers during market hours.\n\n" .
                         "Try:\n" .
                         "• Wait a few minutes and try again\n" .
-                        "• Use crypto pairs: /flow BTCUSDT\n" .
+                        "• Use crypto pairs: /analyze BTCUSDT\n" .
                         "• Check stock after market close"
                 ];
             }
@@ -673,12 +669,36 @@ class MultiMarketDataService
     }
 
     /**
-     * Analyze forex pair
+     * Analyze forex pair — Twelve Data primary, Alpha Vantage fallback
      */
     public function analyzeForexPair(string $pair): array
     {
         return Cache::remember("forex_analysis_{$pair}", 300, function () use ($pair) {
             try {
+                // Primary: Twelve Data (provides real-time quote + technicals)
+                if ($this->twelveData->isConfigured()) {
+                    $quote = $this->twelveData->getQuote($pair, 'forex');
+                    if ($quote) {
+                        $indicators = $this->twelveData->getTechnicalAnalysis($pair, 'forex');
+
+                        return [
+                            'market' => 'forex',
+                            'pair' => $pair,
+                            'price' => $quote['price'],
+                            'change' => $quote['change'],
+                            'change_percent' => $quote['change_percent'],
+                            'open' => $quote['open'],
+                            'high' => $quote['high'],
+                            'low' => $quote['low'],
+                            'previous_close' => $quote['previous_close'],
+                            'indicators' => $indicators,
+                            'session' => $this->getCurrentForexSession(),
+                            'data_sources' => ['Twelve Data'],
+                        ];
+                    }
+                }
+
+                // Fallback: Alpha Vantage + exchangerate-api
                 $data = $this->getForexPairData($pair);
                 if (isset($data['error'])) {
                     return $data;
@@ -694,7 +714,7 @@ class MultiMarketDataService
                     'change_percent' => $data['change_percent'],
                     'indicators' => $indicators,
                     'session' => $this->getCurrentForexSession(),
-                    'data_sources' => ['Alpha Vantage', 'OANDA'],
+                    'data_sources' => ['Alpha Vantage', 'ExchangeRate-API'],
                 ];
             } catch (\Exception $e) {
                 Log::error('Forex analysis error', ['pair' => $pair, 'error' => $e->getMessage()]);
@@ -705,44 +725,38 @@ class MultiMarketDataService
 
     /**
      * Analyze stock symbol with technical indicators
+     * This delegates to analyzeStock() to avoid duplication
      */
     public function analyzeStockPair(string $symbol): array
     {
-        return Cache::remember("stock_analysis_{$symbol}", 300, function () use ($symbol) {
-            try {
-                // Get stock quote from Alpha Vantage
-                $quote = $this->getStockQuote($symbol);
-                if (isset($quote['error'])) {
-                    return $quote;
-                }
-
-                // Calculate technical indicators
-                $indicators = $this->getStockIndicators($symbol);
-
-                return [
-                    'market' => 'stock',
-                    'symbol' => $symbol,
-                    'price' => $quote['price'],
-                    'change' => $quote['change'],
-                    'change_percent' => $quote['change_percent'],
-                    'volume' => $quote['volume'] ?? 0,
-                    'indicators' => $indicators,
-                    'market_status' => $this->getMarketStatus(),
-                    'data_sources' => ['Alpha Vantage', 'Yahoo Finance'],
-                ];
-            } catch (\Exception $e) {
-                Log::error('Stock analysis error', ['symbol' => $symbol, 'error' => $e->getMessage()]);
-                return ['error' => "Unable to analyze {$symbol}. Verify symbol is correct (e.g., AAPL, TSLA, MSFT)"];
-            }
-        });
+        return $this->analyzeStock($symbol);
     }
 
     /**
-     * Get stock quote with multiple free API fallbacks
+     * Get stock quote — Twelve Data primary, then Alpha Vantage → Yahoo → Finnhub fallbacks
      */
     private function getStockQuote(string $symbol): array
     {
-        // Try Alpha Vantage first (best quality)
+        // Tier 0: Twelve Data (best, 800 calls/day)
+        if ($this->twelveData->isConfigured()) {
+            try {
+                $quote = $this->twelveData->getQuote($symbol, 'stock');
+                if ($quote) {
+                    return [
+                        'price' => $quote['price'],
+                        'change' => $quote['change'],
+                        'change_percent' => $quote['change_percent'],
+                        'volume' => $quote['volume'],
+                        'avg_volume' => $quote['average_volume'] ?? $quote['volume'],
+                        'market_cap' => $quote['market_cap'] ?? null,
+                    ];
+                }
+            } catch (\Exception $e) {
+                Log::warning('Twelve Data quote failed, trying fallbacks', ['symbol' => $symbol, 'error' => $e->getMessage()]);
+            }
+        }
+
+        // Tier 1: Alpha Vantage (25 calls/day)
         if (!empty($this->alphaVantageKey)) {
             try {
                 $response = Http::timeout(5)->get('https://www.alphavantage.co/query', [
@@ -753,16 +767,7 @@ class MultiMarketDataService
 
                 if ($response->successful()) {
                     $data = $response->json();
-
-                    // Check for API errors
-                    if (isset($data['Error Message'])) {
-                        Log::error('Alpha Vantage stock error', ['symbol' => $symbol, 'error' => $data['Error Message']]);
-                    } elseif (isset($data['Note'])) {
-                        Log::warning('Alpha Vantage rate limit', ['symbol' => $symbol, 'note' => $data['Note']]);
-                    } elseif (isset($data['Information'])) {
-                        Log::info('Alpha Vantage limitation, using fallback', ['symbol' => $symbol]);
-                    } elseif (isset($data['Global Quote']) && !empty($data['Global Quote'])) {
-                        // Success!
+                    if (isset($data['Global Quote']) && !empty($data['Global Quote'])) {
                         $quote = $data['Global Quote'];
                         return [
                             'price' => floatval($quote['05. price'] ?? 0),
@@ -773,11 +778,11 @@ class MultiMarketDataService
                     }
                 }
             } catch (\Exception $e) {
-                Log::warning('Alpha Vantage error, trying fallback', ['symbol' => $symbol, 'error' => $e->getMessage()]);
+                Log::warning('Alpha Vantage error, trying Yahoo', ['symbol' => $symbol]);
             }
         }
 
-        // Fallback 1: Yahoo Finance API (FREE, no key needed)
+        // Tier 2: Yahoo Finance (free, no key)
         try {
             $response = Http::timeout(5)
                 ->withHeaders(['User-Agent' => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'])
@@ -788,72 +793,74 @@ class MultiMarketDataService
 
             if ($response->successful()) {
                 $data = $response->json();
-
                 if (isset($data['chart']['result'][0])) {
-                    $result = $data['chart']['result'][0];
-                    $meta = $result['meta'];
-
+                    $meta = $data['chart']['result'][0]['meta'];
                     $price = floatval($meta['regularMarketPrice'] ?? 0);
                     $prevClose = floatval($meta['previousClose'] ?? $price);
                     $change = $price - $prevClose;
-                    $changePercent = $prevClose > 0 ? ($change / $prevClose) * 100 : 0;
-
-                    Log::info('Using Yahoo Finance API', ['symbol' => $symbol, 'price' => $price]);
-
                     return [
                         'price' => $price,
                         'change' => $change,
-                        'change_percent' => $changePercent,
+                        'change_percent' => $prevClose > 0 ? ($change / $prevClose) * 100 : 0,
                         'volume' => floatval($meta['regularMarketVolume'] ?? 0),
-                        'note' => 'Using Yahoo Finance (free API)'
                     ];
                 }
             }
         } catch (\Exception $e) {
-            Log::info('Yahoo Finance failed, trying next fallback', ['symbol' => $symbol, 'error' => $e->getMessage()]);
+            Log::info('Yahoo Finance failed, trying Finnhub', ['symbol' => $symbol]);
         }
 
-        // Fallback 2: Finnhub API (FREE - 60 calls/minute, no key for demo endpoint)
+        // Tier 3: Finnhub (free demo)
         try {
-            $response = Http::timeout(5)->get("https://finnhub.io/api/v1/quote", [
+            $response = Http::timeout(5)->get('https://finnhub.io/api/v1/quote', [
                 'symbol' => $symbol,
-                'token' => 'demo'  // Demo token works for major stocks
+                'token' => 'demo'
             ]);
 
             if ($response->successful()) {
                 $data = $response->json();
-
                 if (isset($data['c']) && $data['c'] > 0) {
-                    $current = floatval($data['c']);  // Current price
-                    $prevClose = floatval($data['pc'] ?? $current);  // Previous close
+                    $current = floatval($data['c']);
+                    $prevClose = floatval($data['pc'] ?? $current);
                     $change = $current - $prevClose;
-                    $changePercent = $prevClose > 0 ? ($change / $prevClose) * 100 : 0;
-
-                    Log::info('Using Finnhub API', ['symbol' => $symbol, 'price' => $current]);
-
                     return [
                         'price' => $current,
                         'change' => $change,
-                        'change_percent' => $changePercent,
-                        'volume' => 0,  // Demo endpoint doesn't provide volume
-                        'note' => 'Using Finnhub (free demo API)'
+                        'change_percent' => $prevClose > 0 ? ($change / $prevClose) * 100 : 0,
+                        'volume' => 0,
                     ];
                 }
             }
         } catch (\Exception $e) {
-            Log::error('All stock API fallbacks failed', ['symbol' => $symbol, 'error' => $e->getMessage()]);
+            Log::error('All stock API fallbacks failed', ['symbol' => $symbol]);
         }
 
         return ['error' => "Stock symbol {$symbol} not found. Verify it's a valid US stock ticker (e.g., AAPL, MSFT, TSLA)"];
     }
 
     /**
-     * Calculate stock technical indicators
+     * Calculate stock technical indicators — Twelve Data primary, Alpha Vantage fallback
      */
     private function getStockIndicators(string $symbol): array
     {
+        // Primary: Twelve Data (saves Alpha Vantage quota)
+        if ($this->twelveData->isConfigured()) {
+            try {
+                $analysis = $this->twelveData->getTechnicalAnalysis($symbol, 'stock');
+                if (!empty($analysis)) {
+                    return $analysis;
+                }
+            } catch (\Exception $e) {
+                Log::warning('Twelve Data indicators failed, trying Alpha Vantage', ['symbol' => $symbol]);
+            }
+        }
+
+        // Fallback: Alpha Vantage
         try {
-            // Get daily data for indicators
+            if (empty($this->alphaVantageKey)) {
+                return [];
+            }
+
             $response = Http::timeout(5)->get('https://www.alphavantage.co/query', [
                 'function' => 'TIME_SERIES_DAILY',
                 'symbol' => $symbol,
@@ -869,18 +876,12 @@ class MultiMarketDataService
                     return [];
                 }
 
-                // Get recent prices for calculations
                 $prices = array_slice($timeSeries, 0, 20, true);
                 $closePrices = array_map(fn($day) => floatval($day['4. close']), $prices);
 
-                // Calculate simple indicators
                 $currentPrice = $closePrices[0];
                 $sma20 = array_sum($closePrices) / count($closePrices);
-
-                // Determine trend
                 $trend = $currentPrice > $sma20 ? 'Bullish 🟢' : 'Bearish 🔴';
-
-                // Find support/resistance (simplified)
                 $high = max($closePrices);
                 $low = min($closePrices);
 
@@ -934,22 +935,104 @@ class MultiMarketDataService
 
     private function getMajorIndices(): array
     {
-        // Simulated data - Replace with real API calls
+        // Primary: Twelve Data real-time indices
+        if ($this->twelveData->isConfigured()) {
+            try {
+                $indices = $this->twelveData->getMajorIndices();
+                if (!empty($indices)) {
+                    return $indices;
+                }
+            } catch (\Exception $e) {
+                Log::warning('Twelve Data indices failed', ['error' => $e->getMessage()]);
+            }
+        }
+
+        // Fallback: Yahoo Finance (free, no key)
+        try {
+            $symbols = ['^GSPC', '^DJI', '^IXIC'];
+            $names = ['S&P 500', 'Dow Jones', 'NASDAQ'];
+            $shortNames = ['SPX', 'DJI', 'IXIC'];
+            $results = [];
+
+            foreach ($symbols as $i => $yahooSymbol) {
+                $response = Http::timeout(5)
+                    ->withHeaders(['User-Agent' => 'Mozilla/5.0'])
+                    ->get("https://query1.finance.yahoo.com/v8/finance/chart/{$yahooSymbol}", [
+                        'interval' => '1d', 'range' => '1d'
+                    ]);
+
+                if ($response->successful()) {
+                    $data = $response->json();
+                    if (isset($data['chart']['result'][0])) {
+                        $meta = $data['chart']['result'][0]['meta'];
+                        $price = floatval($meta['regularMarketPrice'] ?? 0);
+                        $prevClose = floatval($meta['previousClose'] ?? $price);
+                        $changePct = $prevClose > 0 ? (($price - $prevClose) / $prevClose) * 100 : 0;
+                        $results[] = [
+                            'symbol' => $shortNames[$i],
+                            'name' => $names[$i],
+                            'price' => $price,
+                            'change' => ($changePct >= 0 ? '+' : '') . round($changePct, 2) . '%',
+                        ];
+                    }
+                }
+            }
+
+            if (!empty($results)) {
+                return $results;
+            }
+        } catch (\Exception $e) {
+            Log::warning('Yahoo indices fallback failed', ['error' => $e->getMessage()]);
+        }
+
         return [
-            ['symbol' => 'SPX', 'name' => 'S&P 500', 'price' => 4783.45, 'change' => '+0.85%'],
-            ['symbol' => 'DJI', 'name' => 'Dow Jones', 'price' => 37863.80, 'change' => '+0.45%'],
-            ['symbol' => 'IXIC', 'name' => 'NASDAQ', 'price' => 14968.78, 'change' => '+1.12%'],
+            ['symbol' => 'SPX', 'name' => 'S&P 500', 'price' => 'N/A', 'change' => 'N/A'],
+            ['symbol' => 'DJI', 'name' => 'Dow Jones', 'price' => 'N/A', 'change' => 'N/A'],
+            ['symbol' => 'IXIC', 'name' => 'NASDAQ', 'price' => 'N/A', 'change' => 'N/A'],
         ];
     }
 
     private function getStockMovers(): array
     {
-        // Simulated data - In production, use Alpha Vantage or Polygon
-        return [
-            'gainers' => [],
-            'losers' => [],
-            'active' => [],
-        ];
+        return Cache::remember('stock_movers', 900, function () {
+            // Try Yahoo Finance screener for top movers
+            try {
+                $movers = ['gainers' => [], 'losers' => [], 'active' => []];
+
+                // Get SPY top holdings as proxy for active stocks
+                $watchlist = ['AAPL', 'MSFT', 'NVDA', 'GOOGL', 'AMZN', 'META', 'TSLA', 'JPM', 'V', 'WMT'];
+                $gainers = [];
+                $losers = [];
+
+                foreach (array_slice($watchlist, 0, 6) as $sym) {
+                    $quote = $this->getStockQuote($sym);
+                    if (!isset($quote['error']) && isset($quote['price'])) {
+                        $item = [
+                            'symbol' => $sym,
+                            'price' => $quote['price'],
+                            'change_percent' => round($quote['change_percent'], 2),
+                        ];
+                        if ($quote['change_percent'] >= 0) {
+                            $gainers[] = $item;
+                        } else {
+                            $losers[] = $item;
+                        }
+                    }
+                }
+
+                usort($gainers, fn($a, $b) => $b['change_percent'] <=> $a['change_percent']);
+                usort($losers, fn($a, $b) => $a['change_percent'] <=> $b['change_percent']);
+
+                return [
+                    'gainers' => array_slice($gainers, 0, 5),
+                    'losers' => array_slice($losers, 0, 5),
+                    'active' => array_slice($watchlist, 0, 5),
+                ];
+            } catch (\Exception $e) {
+                Log::warning('Stock movers failed', ['error' => $e->getMessage()]);
+                return ['gainers' => [], 'losers' => [], 'active' => []];
+            }
+        });
     }
 
     private function getMarketStatus(): string
@@ -967,7 +1050,24 @@ class MultiMarketDataService
 
     private function getForexPairData(string $pair): array
     {
-        // Try Alpha Vantage first (best quality)
+        // Primary: Twelve Data (real-time forex with change data)
+        if ($this->twelveData->isConfigured()) {
+            try {
+                $quote = $this->twelveData->getQuote($pair, 'forex');
+                if ($quote) {
+                    return [
+                        'pair' => $pair,
+                        'price' => $quote['price'],
+                        'change' => $quote['change'],
+                        'change_percent' => $quote['change_percent'],
+                    ];
+                }
+            } catch (\Exception $e) {
+                Log::warning('Twelve Data forex pair failed, trying fallbacks', ['pair' => $pair]);
+            }
+        }
+
+        // Fallback 1: Alpha Vantage
         if (!empty($this->alphaVantageKey)) {
             try {
                 $from = substr($pair, 0, 3);
@@ -982,16 +1082,7 @@ class MultiMarketDataService
 
                 if ($response->successful()) {
                     $data = $response->json();
-
-                    // Check for API errors
-                    if (isset($data['Error Message'])) {
-                        Log::error('Alpha Vantage forex error', ['pair' => $pair, 'error' => $data['Error Message']]);
-                    } elseif (isset($data['Note'])) {
-                        Log::warning('Alpha Vantage rate limit', ['pair' => $pair, 'note' => $data['Note']]);
-                    } elseif (isset($data['Information'])) {
-                        Log::info('Alpha Vantage limitation, using fallback', ['pair' => $pair]);
-                    } elseif (isset($data['Realtime Currency Exchange Rate'])) {
-                        // Success!
+                    if (isset($data['Realtime Currency Exchange Rate'])) {
                         $rate = $data['Realtime Currency Exchange Rate'];
                         return [
                             'pair' => $pair,
@@ -1002,11 +1093,11 @@ class MultiMarketDataService
                     }
                 }
             } catch (\Exception $e) {
-                Log::warning('Alpha Vantage error, trying fallback', ['pair' => $pair, 'error' => $e->getMessage()]);
+                Log::warning('Alpha Vantage forex error', ['pair' => $pair]);
             }
         }
 
-        // Fallback: FREE API (exchangerate-api.com - 1500 requests/month, no key needed)
+        // Fallback 2: ExchangeRate-API (free, no key)
         try {
             $from = substr($pair, 0, 3);
             $to = substr($pair, 3, 3);
@@ -1015,35 +1106,25 @@ class MultiMarketDataService
 
             if ($response->successful()) {
                 $data = $response->json();
-
                 if (isset($data['rates'][$to])) {
                     $rate = floatval($data['rates'][$to]);
-
-                    // Get cached rate from 24h ago to calculate real change
                     $cacheKey = "forex_24h_ago_{$pair}";
                     $prevRate = Cache::get($cacheKey);
-                    Cache::put($cacheKey, $rate, 86400); // Store for 24 hours
+                    Cache::put($cacheKey, $rate, 86400);
 
-                    $change = 0;
-                    $changePercent = 0;
-                    if ($prevRate && $prevRate > 0) {
-                        $change = $rate - $prevRate;
-                        $changePercent = (($rate - $prevRate) / $prevRate) * 100;
-                    }
-
-                    Log::info('Using free forex API', ['pair' => $pair, 'rate' => $rate, 'prev' => $prevRate, 'change%' => $changePercent]);
+                    $change = $prevRate ? $rate - $prevRate : 0;
+                    $changePercent = ($prevRate && $prevRate > 0) ? (($rate - $prevRate) / $prevRate) * 100 : 0;
 
                     return [
                         'pair' => $pair,
                         'price' => $rate,
                         'change' => $change,
                         'change_percent' => round($changePercent, 2),
-                        'note' => $prevRate ? 'Calculated from 24h cache' : 'First data point (no change yet)'
                     ];
                 }
             }
         } catch (\Exception $e) {
-            Log::error('Forex fallback API failed', ['pair' => $pair, 'error' => $e->getMessage()]);
+            Log::error('Forex fallback API failed', ['pair' => $pair]);
         }
 
         return ['error' => "Unable to fetch {$pair} data. Verify pair format (e.g., EURUSD, GBPJPY, XAUUSD)"];
@@ -1139,7 +1220,19 @@ class MultiMarketDataService
 
     private function getForexIndicators(string $pair): array
     {
-        // Placeholder - implement with real data
+        // Primary: Twelve Data (real indicators)
+        if ($this->twelveData->isConfigured()) {
+            try {
+                $analysis = $this->twelveData->getTechnicalAnalysis($pair, 'forex');
+                if (!empty($analysis)) {
+                    return $analysis;
+                }
+            } catch (\Exception $e) {
+                Log::warning('Twelve Data forex indicators failed', ['pair' => $pair]);
+            }
+        }
+
+        // Fallback: basic calculation from exchangerate-api price history
         return [
             'rsi' => null,
             'trend' => 'Neutral',
@@ -1240,12 +1333,34 @@ class MultiMarketDataService
     }
 
     /**
-     * Get forex price data
+     * Get forex price data — Twelve Data primary, analyzeForexPair fallback
      */
     private function getForexPriceData(string $pair): array
     {
-        $data = $this->analyzeForexPair($pair);
+        // Primary: Twelve Data
+        if ($this->twelveData->isConfigured()) {
+            try {
+                $quote = $this->twelveData->getQuote($pair, 'forex');
+                if ($quote) {
+                    return [
+                        'symbol' => $pair,
+                        'market_type' => 'forex',
+                        'source' => 'Twelve Data',
+                        'price' => $quote['price'],
+                        'change_pct' => $quote['change_percent'],
+                        'open' => $quote['open'],
+                        'high' => $quote['high'],
+                        'low' => $quote['low'],
+                        'updated_at' => gmdate('Y-m-d H:i') . ' UTC',
+                    ];
+                }
+            } catch (\Exception $e) {
+                Log::warning('Twelve Data forex price failed', ['pair' => $pair]);
+            }
+        }
 
+        // Fallback: existing analysis method
+        $data = $this->analyzeForexPair($pair);
         if (isset($data['error'])) {
             return $data;
         }
@@ -1253,7 +1368,7 @@ class MultiMarketDataService
         return [
             'symbol' => $pair,
             'market_type' => 'forex',
-            'source' => 'ExchangeRate-API',
+            'source' => $data['data_sources'][0] ?? 'ExchangeRate-API',
             'price' => $data['price'],
             'change_pct' => $data['change_percent'] ?? 0,
             'updated_at' => gmdate('Y-m-d H:i') . ' UTC',
@@ -1261,47 +1376,50 @@ class MultiMarketDataService
     }
 
     /**
-     * Get stock price data with market cap from Alpha Vantage
+     * Get stock price data — Twelve Data primary, Alpha Vantage/Yahoo fallback
      */
     private function getStockPriceData(string $symbol): array
     {
-        // Try Alpha Vantage first
-        $quote = $this->getAlphaVantageQuote($symbol);
-
-        if (isset($quote['error'])) {
-            // Fallback to Yahoo Finance
-            return $this->getYahooFinanceData($symbol);
-        }
-
-        $result = [
-            'symbol' => $symbol,
-            'market_type' => 'stock',
-            'source' => 'Alpha Vantage',
-            'price' => $quote['price'],
-            'change_pct' => floatval($quote['change_percent']),
-            'volume_24h' => $quote['volume'],
-            'updated_at' => gmdate('Y-m-d H:i') . ' UTC',
-        ];
-
-        // Try to get market cap from Alpha Vantage overview
-        try {
-            $response = Http::timeout(10)->get('https://www.alphavantage.co/query', [
-                'function' => 'OVERVIEW',
-                'symbol' => $symbol,
-                'apikey' => $this->alphaVantageKey,
-            ]);
-
-            if ($response->successful()) {
-                $data = $response->json();
-                if (isset($data['MarketCapitalization'])) {
-                    $result['market_cap'] = floatval($data['MarketCapitalization']);
+        // Primary: Twelve Data
+        if ($this->twelveData->isConfigured()) {
+            try {
+                $quote = $this->twelveData->getQuote($symbol, 'stock');
+                if ($quote) {
+                    $profile = $this->twelveData->getProfile($symbol);
+                    return [
+                        'symbol' => $symbol,
+                        'market_type' => 'stock',
+                        'source' => 'Twelve Data',
+                        'price' => $quote['price'],
+                        'change_pct' => $quote['change_percent'],
+                        'volume_24h' => $quote['volume'],
+                        'high_24h' => $quote['high'],
+                        'low_24h' => $quote['low'],
+                        'market_cap' => $profile['market_cap'] ?? null,
+                        'updated_at' => gmdate('Y-m-d H:i') . ' UTC',
+                    ];
                 }
+            } catch (\Exception $e) {
+                Log::warning('Twelve Data stock price failed', ['symbol' => $symbol]);
             }
-        } catch (\Exception $e) {
-            Log::debug('Alpha Vantage market cap fetch failed', ['symbol' => $symbol]);
         }
 
-        return $result;
+        // Fallback: Alpha Vantage
+        $quote = $this->getAlphaVantageQuote($symbol);
+        if (!isset($quote['error'])) {
+            return [
+                'symbol' => $symbol,
+                'market_type' => 'stock',
+                'source' => 'Alpha Vantage',
+                'price' => $quote['price'],
+                'change_pct' => floatval($quote['change_percent']),
+                'volume_24h' => $quote['volume'],
+                'updated_at' => gmdate('Y-m-d H:i') . ' UTC',
+            ];
+        }
+
+        // Fallback: Yahoo Finance
+        return $this->getYahooFinanceData($symbol);
     }
 
     /**

@@ -79,7 +79,7 @@ class PremiumService
     {
         $info = $this->getPremiumInfo();
 
-        $message = "💎 *SERPO PREMIUM ACCESS*\n\n";
+        $message = "💎 *PREMIUM ACCESS*\n\n";
         $message .= "Unlock advanced features and take your trading to the next level!\n\n";
 
         foreach ($info['tiers'] as $tier => $details) {
@@ -105,7 +105,7 @@ class PremiumService
         $message .= "• Telegram Stars ⭐\n";
         $message .= "• Credit/Debit Card\n\n";
 
-        $message .= "📞 Contact @SerpoSupport to upgrade!";
+        $message .= "📞 Contact support to upgrade!";
 
         return $message;
     }

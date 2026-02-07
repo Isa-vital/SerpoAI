@@ -18,7 +18,7 @@ class BlockchainMonitorService
     }
 
     /**
-     * Monitor SERPO transactions in real-time
+     * Monitor token transactions in real-time
      */
     public function monitorTransactions(string $contractAddress): array
     {
@@ -88,7 +88,7 @@ class BlockchainMonitorService
 
             return TransactionAlert::create([
                 'tx_hash' => $tx['hash'],
-                'coin_symbol' => 'SERPO',
+                'coin_symbol' => env('TOKEN_SYMBOL', 'TOKEN'),
                 'type' => $type,
                 'from_address' => $tx['from']['address'] ?? null,
                 'to_address' => $tx['to']['address'] ?? null,
@@ -139,9 +139,9 @@ class BlockchainMonitorService
      */
     private function calculateUsdValue(float $amount): float
     {
-        // Get current SERPO price and multiply
-        $serpoPrice = 0.00005769; // TODO: Get from MarketDataService
-        return $amount * $serpoPrice;
+        // Get current token price and multiply
+        $tokenPrice = 0.00005769; // TODO: Get from MarketDataService
+        return $amount * $tokenPrice;
     }
 
     /**
@@ -177,7 +177,7 @@ class BlockchainMonitorService
 
         // Check if this address has any previous transactions
         return !TransactionAlert::where('from_address', $address)
-            ->where('coin_symbol', 'SERPO')
+            ->where('coin_symbol', env('TOKEN_SYMBOL', 'TOKEN'))
             ->exists();
     }
 
@@ -187,7 +187,7 @@ class BlockchainMonitorService
     private function notifyTransaction(TransactionAlert $alert): void
     {
         try {
-            $channelId = config('serpo.telegram_channel_id');
+            $channelId = config('services.telegram.community_channel_id');
             if (!$channelId) return;
 
             $message = $this->formatTransactionAlert($alert);
@@ -222,7 +222,7 @@ class BlockchainMonitorService
         }
 
         $message .= strtoupper($alert->type) . "*\n\n";
-        $message .= "💰 Amount: " . number_format($alert->amount, 2) . " SERPO\n";
+        $message .= "💰 Amount: " . number_format($alert->amount, 2) . " tokens\n";
         $message .= "💵 Value: $" . number_format($alert->amount_usd, 2) . "\n";
 
         if ($alert->price_impact > 0.1) {
@@ -334,12 +334,12 @@ class BlockchainMonitorService
         );
 
         // Send celebration to channel
-        $channelId = config('serpo.telegram_channel_id');
+        $channelId = config('services.telegram.community_channel_id');
         if ($channelId) {
             $message = "🎉🎊 *MILESTONE ACHIEVED!* 🎊🎉\n\n";
             $message .= "🌟 {$symbol} now has *" . number_format($milestone) . " HOLDERS!* 🌟\n\n";
             $message .= "Thank you to our amazing community! 💎🙌\n\n";
-            $message .= "#Milestone #Community #SERPO";
+            $message .= "#Milestone #Community #{$symbol}";
 
             $this->telegram->sendAnimation($channelId, $celebration->gif_url, $message);
             $celebration->markAsCelebrated();

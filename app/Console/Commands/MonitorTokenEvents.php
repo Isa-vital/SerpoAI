@@ -6,19 +6,19 @@ use Illuminate\Console\Command;
 use App\Services\TokenEventMonitor;
 
 /**
- * Monitor SERPO Token Events Command
+ * Monitor Token Events Command
  * 
  * Continuously monitors blockchain for token events and sends alerts
- * Run with: php artisan serpo:monitor
+ * Run with: php artisan token:monitor
  */
 class MonitorTokenEvents extends Command
 {
-    protected $signature = 'serpo:monitor 
+    protected $signature = 'token:monitor 
                             {--interval=60 : Seconds between checks}
                             {--once : Run once instead of continuous loop}
                             {--force : Force send alerts even if cooldown is active}';
 
-    protected $description = 'Monitor SERPO token for buys, sells, liquidity changes, and price movements';
+    protected $description = 'Monitor token for buys, sells, liquidity changes, and price movements';
 
     private TokenEventMonitor $monitor;
 
@@ -34,9 +34,9 @@ class MonitorTokenEvents extends Command
         $runOnce = $this->option('once');
         $force = $this->option('force');
 
-        $this->info('🚀 Starting SERPO Token Event Monitor...');
+        $this->info('🚀 Starting Token Event Monitor...');
         $this->info("📊 Check interval: {$interval} seconds");
-        $this->info("🔗 Contract: " . config('services.serpo.contract_address'));
+        $this->info("🔗 Contract: " . config('services.serpo.contract_address', env('TOKEN_CONTRACT_ADDRESS', 'not set')));
         $this->info("📢 Channel: " . config('services.telegram.community_channel_id'));
         $this->newLine();
 

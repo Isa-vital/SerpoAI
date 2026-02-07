@@ -46,8 +46,8 @@ class ValidatePredictions extends Command
             foreach ($predictions as $prediction) {
                 $this->line("Validating prediction #{$prediction->id} for {$prediction->coin_symbol}...");
 
-                // Get actual price at prediction time
-                $actualData = $marketData->getSerpoPriceFromDex();
+                // Get actual price - use appropriate source based on symbol
+                $actualData = $marketData->getTokenPriceFromDex();
                 $actualPrice = $actualData['price'];
 
                 $prediction->validatePrediction($actualPrice);
@@ -58,8 +58,8 @@ class ValidatePredictions extends Command
                 $this->line("{$emoji} Accuracy: {$accuracy}%");
             }
 
-            // Get overall accuracy stats for SERPO
-            $stats = AIPrediction::getAccuracyStats('SERPO');
+            // Get overall accuracy stats
+            $stats = AIPrediction::getAccuracyStats($predictions->first()->coin_symbol ?? 'BTC');
 
             $this->info("\n✅ Validation completed!");
             $this->line("Predictions validated: {$validated}");

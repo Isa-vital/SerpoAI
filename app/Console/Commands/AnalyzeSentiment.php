@@ -13,7 +13,7 @@ class AnalyzeSentiment extends Command
      *
      * @var string
      */
-    protected $signature = 'sentiment:analyze {coin=SERPO}';
+    protected $signature = 'sentiment:analyze {coin=BTC}';
 
     /**
      * The console command description.

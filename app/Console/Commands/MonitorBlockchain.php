@@ -13,7 +13,7 @@ class MonitorBlockchain extends Command
      *
      * @var string
      */
-    protected $signature = 'blockchain:monitor {coin=SERPO}';
+    protected $signature = 'blockchain:monitor {coin=BTC}';
 
     /**
      * The console command description.

@@ -88,7 +88,7 @@ class TelegramWebhookController extends Controller
         // Extract command from text (remove @botname if present)
         $commandText = $text;
         if (preg_match('/^@\w+\s+(.+)/', $text, $matches)) {
-            // "@SerpoAI_Bot /help" -> "/help"
+            // "@BotName /help" -> "/help"
             $commandText = $matches[1];
         }
 

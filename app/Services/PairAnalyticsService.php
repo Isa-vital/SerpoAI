@@ -131,7 +131,7 @@ class PairAnalyticsService
                 $message .= "MA50: \$" . $this->formatPrice($indicators['ma50']) . "\n";
             }
 
-            // Special SERPO indicators
+            // DEX token indicators
             if (isset($indicators['liquidity_usd'])) {
                 $message .= "Liquidity: {$indicators['liquidity_usd']}\n";
             }

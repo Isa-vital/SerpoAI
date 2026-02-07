@@ -11,18 +11,18 @@ use Illuminate\Support\Facades\Cache;
 /**
  * Token Event Monitor Service
  * 
- * Monitors SERPO token for buys, sells, liquidity changes, price movements
+ * Monitors configured token for buys, sells, liquidity changes, price movements
  * and sends alerts to the community channel.
  * 
  * WHALE ALERT MECHANISM:
  * - Currently uses DexScreener aggregated data for general buy activity
  * - Individual whale transactions (20+ TON = $100+ USD) are detected if:
  *   1. TON API key is configured AND
- *   2. SERPO_DEX_PAIR_ADDRESS is set in .env (DeDust/StonFi pool address)
+ *   2. TOKEN_DEX_PAIR_ADDRESS is set in .env (DeDust/StonFi pool address)
  * - Without DEX pool address, whale detection relies on TonAPI jetton transfers
  *   which may miss actual DEX swaps
  * 
- * RECOMMENDATION: Set SERPO_DEX_PAIR_ADDRESS for accurate whale tracking
+ * RECOMMENDATION: Set TOKEN_DEX_PAIR_ADDRESS for accurate whale tracking
  */
 class TokenEventMonitor
 {
@@ -31,10 +31,11 @@ class TokenEventMonitor
     private string $contractAddress;
     private string $channelId;
     private ?string $officialChannelId;
+    private string $tokenSymbol;
 
     // Thresholds for alerts
     private const LARGE_TRADE_TON = 50.0; // 50+ TON trades = Whale Alert ($250+ USD)
-    private const LARGE_TRANSFER_AMOUNT = 10000; // 10k+ SERPO
+    private const LARGE_TRANSFER_AMOUNT = 10000; // 10k+ tokens
     private const PRICE_CHANGE_ALERT = 5; // 5% price change
     private const LIQUIDITY_CHANGE_ALERT = 10; // 10% liquidity change
 
@@ -44,9 +45,10 @@ class TokenEventMonitor
     ) {
         $this->telegram = $telegram;
         $this->marketData = $marketData;
-        $this->contractAddress = config('services.serpo.contract_address');
+        $this->contractAddress = config('services.serpo.contract_address', env('TOKEN_CONTRACT_ADDRESS', ''));
         $this->channelId = config('services.telegram.community_channel_id');
         $this->officialChannelId = config('services.telegram.official_channel_id');
+        $this->tokenSymbol = env('TOKEN_SYMBOL', 'TOKEN');
     }
 
     /**
@@ -222,16 +224,16 @@ class TokenEventMonitor
                     $user = $swap['user_wallet']['address'] ?? null;
 
                     // Determine if buy or sell based on which side TON is on
-                    // BUY: TON in, SERPO out (jetton_master_in is null because TON isn't a jetton)
-                    // SELL: SERPO in, TON out (jetton_master_out is null)
-                    // When someone BUYS SERPO, they send TON (ton_in > 0, jetton_master_in = null)
-                    // When someone SELLS SERPO, they receive TON (ton_out > 0, jetton_master_out = null)
+                    // BUY: TON in, token out (jetton_master_in is null because TON isn't a jetton)
+                    // SELL: token in, TON out (jetton_master_out is null)
+                    // When someone BUYS token, they send TON (ton_in > 0, jetton_master_in = null)
+                    // When someone SELLS token, they receive TON (ton_out > 0, jetton_master_out = null)
                     $isBuy = $jettonMasterIn === null && $jettonMasterOut !== null;
 
-                    // SERPO amount: 
-                    // - For buys: amount_out contains SERPO
-                    // - For sells: amount_in contains SERPO
-                    $serpoAmount = $isBuy ? $amountOut : $amountIn;
+                    // Token amount: 
+                    // - For buys: amount_out contains tokens
+                    // - For sells: amount_in contains tokens
+                    $tokenAmount = $isBuy ? $amountOut : $amountIn;
 
                     // Use actual TON value from API (buys have ton_in, sells have ton_out)
                     $tonValue = $tonIn > 0 ? $tonIn : $tonOut;
@@ -243,7 +245,7 @@ class TokenEventMonitor
                     // DEACTIVATED: Skip sell alerts
                     if (!$isBuy) {
                         Log::info('⏭️ Sell alert deactivated - skipping', [
-                            'serpo_amount' => $serpoAmount,
+                            'token_amount' => $tokenAmount,
                             'ton_value' => $tonValue,
                         ]);
                         continue;
@@ -254,7 +256,7 @@ class TokenEventMonitor
 
                     // Log buy transactions
                     Log::info($isWhale ? '🐋 Whale buy detected!' : '💎 Individual buy detected', [
-                        'serpo_amount' => $serpoAmount,
+                        'token_amount' => $tokenAmount,
                         'ton_value' => $tonValue,
                         'usd_value' => $usdValue,
                         'is_whale' => $isWhale,
@@ -267,8 +269,8 @@ class TokenEventMonitor
                         [
                             'event_type' => $isWhale ? 'whale_buy' : 'buy',
                             'from_address' => $user,
-                            'to_address' => config('services.serpo.dex_pair_address') ?? 'DEX',
-                            'amount' => $serpoAmount,
+                            'to_address' => config('services.serpo.dex_pair_address', env('TOKEN_DEX_PAIR_ADDRESS', 'DEX')),
+                            'amount' => $tokenAmount,
                             'usd_value' => $usdValue,
                             'details' => $event,
                             'event_timestamp' => now(),
@@ -384,7 +386,7 @@ class TokenEventMonitor
             // Also check the transaction's compute phase for jetton events
             if (isset($tx['compute_phase']['action_result_code']) && $tx['compute_phase']['action_result_code'] === 0) {
                 // Transaction was successful, log for monitoring
-                Log::info('Successful SERPO transaction', [
+                Log::info('Successful token transaction', [
                     'hash' => $tx['hash'],
                     'lt' => $tx['lt'],
                     'account' => $tx['account'],
@@ -409,8 +411,8 @@ class TokenEventMonitor
             // Determine if it's a buy or sell
             $eventType = $this->determineEventType($sender, $recipient);
 
-            // Get current SERPO price
-            $priceData = $this->marketData->getSerpoPriceFromDex();
+            // Get current token price
+            $priceData = $this->marketData->getTokenPriceFromDex();
             $priceInUsd = $priceData['price'] ?? 0;
 
             // Get real-time TON price
@@ -423,7 +425,7 @@ class TokenEventMonitor
             // Check if this is a whale transaction (20+ TON = $100+ USD)
             $isWhale = $serpoInTon >= self::LARGE_TRADE_TON;
 
-            // Only alert for significant transfers (whales or large SERPO amounts)
+            // Only alert for significant transfers (whales or large token amounts)
             if (!$isWhale && $amount < self::LARGE_TRANSFER_AMOUNT) {
                 return;
             }
@@ -468,7 +470,7 @@ class TokenEventMonitor
             $eventType = $this->determineEventType($sender, $recipient);
 
             // Get price data
-            $priceData = $this->marketData->getSerpoPriceFromDex();
+            $priceData = $this->marketData->getTokenPriceFromDex();
             $priceInUsd = $priceData['price'] ?? 0;
 
             // Get real-time TON price
@@ -481,7 +483,7 @@ class TokenEventMonitor
             // Check if this is a whale transaction (20+ TON = $100+ USD)
             $isWhale = $serpoInTon >= self::LARGE_TRADE_TON;
 
-            // Only alert for significant transfers (whales or large SERPO amounts)
+            // Only alert for significant transfers (whales or large token amounts)
             if (!$isWhale && $amount < self::LARGE_TRANSFER_AMOUNT) {
                 return;
             }
@@ -535,7 +537,7 @@ class TokenEventMonitor
     private function checkPriceChanges(): void
     {
         try {
-            $priceData = $this->marketData->getSerpoPriceFromDex();
+            $priceData = $this->marketData->getTokenPriceFromDex();
             $currentPrice = $priceData['price'] ?? 0;
 
             if ($currentPrice == 0) {
@@ -715,7 +717,7 @@ class TokenEventMonitor
                 $isWhale = str_starts_with($event->event_type, 'whale_');
                 $header = $isWhale ? "{$emoji} 🐋 *WHALE BUY ALERT*\n\n" : "{$emoji} *BUY ALERT*\n\n";
                 return $header .
-                    "💰 Amount: `" . number_format($event->amount, 2) . " SERPO`\n" .
+                    "💰 Amount: `" . number_format($event->amount, 2) . " tokens`\n" .
                     "💵 Value: `$" . number_format($event->usd_value, 2) . "`\n" .
                     "🔗 [View Transaction](https://tonscan.org/tx/{$event->tx_hash})";
 
@@ -724,7 +726,7 @@ class TokenEventMonitor
                 $isWhale = str_starts_with($event->event_type, 'whale_');
                 $header = $isWhale ? "{$emoji} 🐋 *WHALE SELL ALERT*\n\n" : "{$emoji} *SELL ALERT*\n\n";
                 return $header .
-                    "💰 Amount: `" . number_format($event->amount, 2) . " SERPO`\n" .
+                    "💰 Amount: `" . number_format($event->amount, 2) . " tokens`\n" .
                     "💵 Value: `$" . number_format($event->usd_value, 2) . "`\n" .
                     "🔗 [View Transaction](https://tonscan.org/tx/{$event->tx_hash})";
 
@@ -749,7 +751,7 @@ class TokenEventMonitor
             case 'large_transfer':
             case 'whale_transfer':
                 return "{$emoji} 🐋 *WHALE TRANSFER*\n\n" .
-                    "💰 Transfer: `" . number_format($event->amount, 2) . " SERPO`\n" .
+                    "💰 Transfer: `" . number_format($event->amount, 2) . " tokens`\n" .
                     "💵 Value: `$" . number_format($event->usd_value, 2) . "`\n" .
                     "🔗 [View Transaction](https://tonscan.org/tx/{$event->tx_hash})";
 
@@ -955,7 +957,7 @@ class TokenEventMonitor
     public function sendIndividualTransactionAlert(TokenEvent $event, float $tonAmount): void
     {
         // Get market data
-        $priceData = $this->marketData->getSerpoPriceFromDex();
+        $priceData = $this->marketData->getTokenPriceFromDex();
         $currentPrice = $priceData['price'] ?? 0;
         $priceChange = $priceData['price_change_24h'] ?? 0;
         $liquidity = $priceData['liquidity'] ?? 0;
@@ -975,13 +977,13 @@ class TokenEventMonitor
         $action = strtoupper($baseType);
 
         // Build the alert message
-        $caption = $isWhale ? "🐋 *WHALE ALERT!*\n\n" : "{$emoji} *SERPO {$action}!*\n\n";
-        $caption .= "💎 *SERPO Token*\n";
+        $caption = $isWhale ? "🐋 *WHALE ALERT!*\n\n" : "{$emoji} *{$this->tokenSymbol} {$action}!*\n\n";
+        $caption .= "💎 *{$this->tokenSymbol} Token*\n";
         $caption .= "📝 Contract: `{$this->contractAddress}`\n\n";
 
         $caption .= "📊 *Transaction Details:*\n";
         $caption .= "👤 Buyer: `{$shortFrom}`\n";
-        $caption .= "💰 Amount: *" . number_format($event->amount, 0) . " SERPO*\n";
+        $caption .= "💰 Amount: *" . number_format($event->amount, 0) . " {$this->tokenSymbol}*\n";
         $caption .= "💵 Value: ~" . number_format($tonAmount, 2) . " TON (\$" . number_format($event->usd_value, 2) . ")\n";
         $caption .= "🔗 [View Transaction](https://tonviewer.com/transaction/{$event->tx_hash})\n\n";
 
@@ -995,11 +997,8 @@ class TokenEventMonitor
         $caption .= "[View on DexScreener](https://dexscreener.com/ton/{$this->contractAddress})\n\n";
 
         $caption .= "━━━━━━━━━━━━━━━━\n";
-        $caption .= "Serpo started as a meme token on TON Meme Pad, but it's evolving into an AI DeFi ecosystem with real tools, utilities, and a strong community.\n\n";
-        $caption .= "📈 Serpocoin AI Assistant Trading Bot is here.\n";
-        $caption .= "Say goodbye to overcomplicated technical analysis, missed opportunities, poor trading decisions. Serpo AI is here to simplify, guide, and empower your trading journey.\n\n";
+        $caption .= "Powered by " . config('serpoai.bot.name', 'TradeBot AI') . " — your AI trading assistant for crypto, stocks, and forex.\n\n";
         $caption .= "Trade smarter. Trade together. 💎\n\n";
-        $caption .= "_Under construction... Coming soon._\n\n";
 
         // Get GIF file_id
         $gifFileId = config('services.telegram.buy_alert_gif');
@@ -1026,7 +1025,7 @@ class TokenEventMonitor
     private function sendWhaleAlert(array $data): void
     {
         // Get market data
-        $priceData = $this->marketData->getSerpoPriceFromDex();
+        $priceData = $this->marketData->getTokenPriceFromDex();
 
         $volume24h = $data['volume'];
         $buyCount = $data['buy_count'];
@@ -1037,17 +1036,17 @@ class TokenEventMonitor
         $liquidity = $priceData['liquidity'] ?? 0;
         $marketCap = $priceData['market_cap'] ?? 0;
 
-        // Calculate SERPO amount
-        $avgBuySerpo = $currentPrice > 0 ? ($avgBuyUsd / $currentPrice) : 0;
+        // Calculate token amount
+        $avgBuyTokens = $currentPrice > 0 ? ($avgBuyUsd / $currentPrice) : 0;
 
         // Get holder data
         $holders = $this->getHolderCount();
 
         $caption = "🐋 *WHALE ALERT!*\n\n";
-        $caption .= "💎 *SERPO Token*\n";
+        $caption .= "💎 *{$this->tokenSymbol} Token*\n";
         $caption .= "📝 Contract: `{$this->contractAddress}`\n\n";
         $caption .= "🔥 *Large Buy Detected:*\n";
-        $caption .= "💰 Avg Buy Size: *" . number_format($avgBuyTon, 2) . " TON* (~" . number_format($avgBuySerpo, 0) . " SERPO)\n";
+        $caption .= "💰 Avg Buy Size: *" . number_format($avgBuyTon, 2) . " TON* (~" . number_format($avgBuyTokens, 0) . " {$this->tokenSymbol})\n";
         $caption .= "💵 Value: *\$" . number_format($avgBuyUsd, 2) . "*\n";
         $caption .= "📊 Transactions: {$buyCount} buy(s)\n";
         $caption .= "📈 24h Volume: \$" . number_format($volume24h, 2) . "\n\n";
@@ -1058,13 +1057,10 @@ class TokenEventMonitor
         $caption .= "💜 Market Cap: \$" . number_format($marketCap, 2) . "\n\n";
         $caption .= "[View on DexScreener](https://dexscreener.com/ton/{$this->contractAddress})\n\n";
 
-        // Add Serpo AI message
+        // Add bot message
         $caption .= "━━━━━━━━━━━━━━━━\n";
-        $caption .= "Serpo started as a meme token on TON Meme Pad, but it's evolving into an AI DeFi ecosystem with real tools, utilities, and a strong community.\n\n";
-        $caption .= "📈 Serpocoin AI Assistant Trading Bot is here.\n";
-        $caption .= "Say goodbye to overcomplicated technical analysis, missed opportunities, poor trading decisions. Serpo AI is here to simplify, guide, and empower your trading journey.\n\n";
+        $caption .= "Powered by " . config('serpoai.bot.name', 'TradeBot AI') . " — your AI trading assistant for crypto, stocks, and forex.\n\n";
         $caption .= "Trade smarter. Trade together. 💎\n\n";
-        $caption .= "_Under construction... Coming soon._\n\n";
 
         // Get GIF file_id
         $gifFileId = config('services.telegram.buy_alert_gif');
@@ -1092,7 +1088,7 @@ class TokenEventMonitor
     private function sendBuyAlert(array $data): void
     {
         // Get market data
-        $priceData = $this->marketData->getSerpoPriceFromDex();
+        $priceData = $this->marketData->getTokenPriceFromDex();
 
         // Calculate meaningful values from 24h data
         $volume24h = $data['volume'];
@@ -1103,23 +1099,23 @@ class TokenEventMonitor
         $marketCap = $priceData['market_cap'] ?? 0;
 
         // Get real-time TON price
-        $tonPriceUsd = $this->marketData->getTonPrice(); // You can fetch this from an API
+        $tonPriceUsd = $this->marketData->getTonPrice();
 
         // Estimate average buy size
         $avgBuyUsd = $buyCount > 0 ? ($volume24h / $buyCount) : 0;
         $avgBuyTon = $avgBuyUsd / $tonPriceUsd;
-        $avgBuySerpo = $currentPrice > 0 ? ($avgBuyUsd / $currentPrice) : 0;
+        $avgBuyTokens = $currentPrice > 0 ? ($avgBuyUsd / $currentPrice) : 0;
 
         // Get holder data from TonAPI
         $holders = $this->getHolderCount();
 
-        $caption = "🟢 *SERPO BUY ACTIVITY!*\n\n";
-        $caption .= "💎 *SERPO Token*\n";
+        $caption = "🟢 *{$this->tokenSymbol} BUY ACTIVITY!*\n\n";
+        $caption .= "💎 *{$this->tokenSymbol} Token*\n";
         $caption .= "📝 Contract: `{$this->contractAddress}`\n\n";
         $caption .= "📊 *24h Trading Activity:*\n";
         $caption .= "🔥 Buy Transactions: *{$buyCount}*\n";
         $caption .= "💰 24h Volume: *\$" . number_format($volume24h, 2) . "*\n";
-        $caption .= "📈 Avg Buy Size: ~" . number_format($avgBuyTon, 2) . " TON (~" . number_format($avgBuySerpo, 0) . " SERPO)\n";
+        $caption .= "📈 Avg Buy Size: ~" . number_format($avgBuyTon, 2) . " TON (~" . number_format($avgBuyTokens, 0) . " {$this->tokenSymbol})\n";
         $caption .= "💵 Current Price: *\$" . number_format($currentPrice, 8) . "*\n";
         $caption .= "📊 24h Change: " . ($priceChange >= 0 ? "+" : "") . number_format($priceChange, 2) . "%\n\n";
         $caption .= "👥 Holders: " . ($holders > 0 ? number_format($holders) : 'N/A') . "\n";
@@ -1127,13 +1123,10 @@ class TokenEventMonitor
         $caption .= "💜 Market Cap: \$" . number_format($marketCap, 2) . "\n\n";
         $caption .= "[View on DexScreener](https://dexscreener.com/ton/{$this->contractAddress})\n\n";
 
-        // Add Serpo AI message
+        // Add bot message
         $caption .= "━━━━━━━━━━━━━━━━\n";
-        $caption .= "Serpo started as a meme token on TON Meme Pad, but it's evolving into an AI DeFi ecosystem with real tools, utilities, and a strong community.\n\n";
-        $caption .= "📈 Serpocoin AI Assistant Trading Bot is here.\n";
-        $caption .= "Say goodbye to overcomplicated technical analysis, missed opportunities, poor trading decisions. Serpo AI is here to simplify, guide, and empower your trading journey.\n\n";
+        $caption .= "Powered by " . config('serpoai.bot.name', 'TradeBot AI') . " — your AI trading assistant for crypto, stocks, and forex.\n\n";
         $caption .= "Trade smarter. Trade together. 💎\n\n";
-        $caption .= "_Under construction... Coming soon._\n\n";
 
 
         // Get GIF URL from config
@@ -1153,7 +1146,7 @@ class TokenEventMonitor
     private function sendSellAlert(array $data): void
     {
         $message = "🔴 *SELL ACTIVITY DETECTED*\n\n";
-        $message .= "📊 *SERPO Token*\n";
+        $message .= "📊 *{$this->tokenSymbol} Token*\n";
         $message .= "💰 24h Volume: $" . number_format($data['volume'], 2) . "\n";
         $message .= "📉 Sell Count: " . $data['sell_count'] . "\n";
         $message .= "💵 Price: $" . number_format($data['price'], 6) . "\n\n";

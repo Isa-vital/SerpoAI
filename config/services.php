@@ -83,6 +83,10 @@ return [
         'key' => env('ALPHA_VANTAGE_API_KEY'),
     ],
 
+    'twelve_data' => [
+        'key' => env('TWELVE_DATA_API_KEY'),
+    ],
+
     'polygon' => [
         'key' => env('POLYGON_API_KEY'),
     ],

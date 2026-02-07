@@ -54,34 +54,24 @@ class SentimentAnalysisService
     private function getMarketData(string $symbol): ?array
     {
         try {
-            if ($symbol === 'SERPO') {
-                $data = app(MarketDataService::class)->getSerpoPriceFromDex();
-                if ($data) {
-                    return [
-                        'price' => $data['price'],
-                        'price_change_24h' => $data['price_change_24h'],
-                        'trend' => $data['price_change_24h'] > 2 ? 'Bullish' : ($data['price_change_24h'] < -2 ? 'Bearish' : 'Sideways'),
-                    ];
-                }
-            } else {
-                $binance = app(BinanceAPIService::class);
-                $ticker = $binance->get24hTicker($symbol . 'USDT');
+            $binance = app(BinanceAPIService::class);
+            $binanceSymbol = str_contains($symbol, 'USDT') ? $symbol : $symbol . 'USDT';
+            $ticker = $binance->get24hTicker($binanceSymbol);
                 
-                if ($ticker) {
-                    $priceChange = floatval($ticker['priceChangePercent'] ?? 0);
-                    $price = floatval($ticker['lastPrice'] ?? 0);
+            if ($ticker) {
+                $priceChange = floatval($ticker['priceChangePercent'] ?? 0);
+                $price = floatval($ticker['lastPrice'] ?? 0);
                     
-                    // Get RSI
-                    $klines = $binance->getKlines($symbol . 'USDT', '1h', 100);
-                    $rsi = count($klines) >= 14 ? $binance->calculateRSI($klines, 14) : null;
+                // Get RSI
+                $klines = $binance->getKlines($binanceSymbol, '1h', 100);
+                $rsi = count($klines) >= 14 ? $binance->calculateRSI($klines, 14) : null;
                     
-                    return [
-                        'price' => $price,
-                        'price_change_24h' => $priceChange,
-                        'rsi' => $rsi,
-                        'trend' => $priceChange > 2 ? 'Bullish' : ($priceChange < -2 ? 'Bearish' : 'Sideways'),
-                    ];
-                }
+                return [
+                    'price' => $price,
+                    'price_change_24h' => $priceChange,
+                    'rsi' => $rsi,
+                    'trend' => $priceChange > 2 ? 'Bullish' : ($priceChange < -2 ? 'Bearish' : 'Sideways'),
+                ];
             }
         } catch (\Exception $e) {
             Log::error('Market data fetch error', ['symbol' => $symbol, 'error' => $e->getMessage()]);
@@ -281,17 +271,14 @@ class SentimentAnalysisService
             // Get latest market data
             $marketData = null;
             
-            if ($symbol === 'SERPO') {
-                $marketData = app(MarketDataService::class)->getSerpoPriceFromDex();
-            } else {
-                // Try to get data from Binance for other pairs
-                $binance = app(BinanceAPIService::class);
-                $ticker = $binance->get24hTicker($symbol . 'USDT');
-                if ($ticker) {
-                    $marketData = [
-                        'price_change_24h' => floatval($ticker['priceChangePercent'] ?? 0)
-                    ];
-                }
+            // Get data from Binance
+            $binance = app(BinanceAPIService::class);
+            $binanceSymbol = str_contains($symbol, 'USDT') ? $symbol : $symbol . 'USDT';
+            $ticker = $binance->get24hTicker($binanceSymbol);
+            if ($ticker) {
+                $marketData = [
+                    'price_change_24h' => floatval($ticker['priceChangePercent'] ?? 0)
+                ];
             }
 
             if (!$marketData) {

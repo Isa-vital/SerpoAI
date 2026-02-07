@@ -9,7 +9,7 @@ class EducationService
      */
     public function getLearnTopics(): string
     {
-        $message = "📚 *SERPO LEARNING CENTER*\n\n";
+        $message = "📚 *LEARNING CENTER*\n\n";
 
         $message .= "Choose a topic to learn:\n\n";
         $message .= "1️⃣ *Trading Basics*\n";

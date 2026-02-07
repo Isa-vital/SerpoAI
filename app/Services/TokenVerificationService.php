@@ -818,7 +818,7 @@ class TokenVerificationService
                     $geckoChain = $this->getGeckoTerminalChain($chain);
                     if ($geckoChain) {
                         $geckoResponse = Http::timeout(10)
-                            ->withHeaders(['Accept' => 'application/json', 'User-Agent' => 'SerpoAI/1.0'])
+                            ->withHeaders(['Accept' => 'application/json', 'User-Agent' => 'TradeBotAI/2.0'])
                             ->get("https://api.geckoterminal.com/api/v2/networks/{$geckoChain}/tokens/{$address}");
                         if ($geckoResponse->successful()) {
                             $geckoData = $geckoResponse->json('data.attributes', []);

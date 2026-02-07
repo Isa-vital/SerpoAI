@@ -1,6 +1,12 @@
 <?php
 
 return [
+    'bot' => [
+        'name' => env('BOT_NAME', 'TradeBot AI'),
+        'version' => env('BOT_VERSION', '2.0.0'),
+        'description' => 'Multi-market trading intelligence platform',
+    ],
+
     'telegram' => [
         'bot_token' => env('TELEGRAM_BOT_TOKEN'),
         'bot_username' => env('TELEGRAM_BOT_USERNAME'),
@@ -16,12 +22,6 @@ return [
         'dexscreener_url' => env('DEXSCREENER_API_URL', 'https://api.dexscreener.com/latest'),
         'coingecko_url' => env('COINGECKO_API_URL', 'https://api.coingecko.com/api/v3'),
         'coingecko_api_key' => env('COINGECKO_API_KEY'),
-    ],
-
-    'serpo' => [
-        'contract_address' => env('SERPO_CONTRACT_ADDRESS'),
-        'chain' => env('SERPO_CHAIN', 'ethereum'),
-        'dex_pair_address' => env('SERPO_DEX_PAIR_ADDRESS'),
     ],
 
     'n8n' => [

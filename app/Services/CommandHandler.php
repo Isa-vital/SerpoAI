@@ -37,6 +37,8 @@ class CommandHandler
     private MultiMarketDataService $multiMarket;
     private BinanceAPIService $binance;
     private TokenVerificationService $tokenVerify;
+    private WatchlistService $watchlist;
+    private TradePortfolioService $tradePortfolio;
 
     public function __construct(
         TelegramBotService $telegram,
@@ -64,7 +66,9 @@ class CommandHandler
         WhaleAlertService $whaleAlert,
         MultiMarketDataService $multiMarket,
         BinanceAPIService $binance,
-        TokenVerificationService $tokenVerify
+        TokenVerificationService $tokenVerify,
+        WatchlistService $watchlist,
+        TradePortfolioService $tradePortfolio
     ) {
         $this->telegram = $telegram;
         $this->marketData = $marketData;
@@ -92,6 +96,8 @@ class CommandHandler
         $this->multiMarket = $multiMarket;
         $this->binance = $binance;
         $this->tokenVerify = $tokenVerify;
+        $this->watchlist = $watchlist;
+        $this->tradePortfolio = $tradePortfolio;
     }
 
     /**
@@ -190,6 +196,18 @@ class CommandHandler
             '/addwallet' => $this->handleAddWallet($chatId, $params, $user),
             '/removewallet' => $this->handleRemoveWallet($chatId, $params, $user),
 
+            // Watchlist
+            '/watchlist' => $this->handleWatchlist($chatId, $user),
+            '/watch' => $this->handleWatch($chatId, $params, $user),
+            '/unwatch' => $this->handleUnwatch($chatId, $params, $user),
+
+            // Paper Trading
+            '/buy' => $this->handleBuy($chatId, $params, $user),
+            '/sell' => $this->handleSell($chatId, $params, $user),
+            '/short' => $this->handleShort($chatId, $params, $user),
+            '/positions' => $this->handlePositions($chatId, $user),
+            '/pnl' => $this->handlePnL($chatId, $user),
+
             // User Profile & Premium
             '/profile' => $this->handleProfile($chatId, $user),
             '/premium' => $this->handlePremium($chatId),
@@ -208,10 +226,11 @@ class CommandHandler
      */
     private function handleStart(int $chatId, User $user)
     {
-        $message = "🤖 *Welcome to SERPO AI*\n\n";
+        $botName = config('serpoai.bot.name', 'TradeBot AI');
+        $message = "🤖 *Welcome to {$botName}*\n\n";
         $message .= "Hello and welcome.\n";
-        $message .= "_You're early — and that is intentional._\n\n";
-        $message .= "SERPO AI is currently live in *preview mode* while we continue building a comprehensive multi-market trading intelligence platform. Below is an overview of what is coming next.\n\n";
+        $message .= "_Your all-in-one trading intelligence platform._\n\n";
+        $message .= "{$botName} is currently live in *preview mode* while we continue building a comprehensive multi-market trading intelligence platform. Below is an overview of what is coming next.\n\n";
 
         $message .= "━━━━━━━━━━━━━━━━━━━━\n\n";
 
@@ -248,12 +267,12 @@ class CommandHandler
         $message .= "• Crypto Premium\n";
         $message .= "• Forex Premium\n";
         $message .= "• Stocks Premium\n";
-        $message .= "_(Unlockable via SerpoCoin with on-chain verification)_\n\n";
+        $message .= "_(Premium access coming soon)_\n\n";
 
         $message .= "━━━━━━━━━━━━━━━━━━━━\n\n";
 
         $message .= "🚧 *What This Means for You*\n\n";
-        $message .= "You are accessing SERPO AI *before* broader public rollout.\n";
+        $message .= "You are accessing {$botName} *before* broader public rollout.\n";
         $message .= "Features will unlock progressively as modules go live.\n";
         $message .= "You are welcome to explore, ask questions, and follow development updates.\n\n";
         $message .= "_There is no pressure — only progress._\n\n";
@@ -281,15 +300,15 @@ class CommandHandler
      */
     private function handleHelp(int $chatId)
     {
-        $message = "🤖 *SerpoAI Trading Assistant*\n";
+        $botName = config('serpoai.bot.name', 'TradeBot AI');
+        $message = "🤖 *{$botName} Trading Assistant*\n";
         $message .= "━━━━━━━━━━━━━━━━━━━━\n\n";
 
         $message .= "*📊 TRADING SIGNALS*\n";
         $message .= "/signals [symbol] - Professional trading signals\n";
         $message .= "  • Crypto: `BTCUSDT`, `ETHUSDT`, `BNBUSDT`\n";
         $message .= "  • Stocks: `AAPL`, `TSLA`, `MSFT`\n";
-        $message .= "  • Forex: `EURUSD`, `GBPUSD`, `XAUUSD`\n";
-        $message .= "  • Token: `SERPO`\n\n";
+        $message .= "  • Forex: `EURUSD`, `GBPUSD`, `XAUUSD`\n\n";
 
         $message .= "*🔍 TOKEN VERIFICATION*\n";
         $message .= "/verify [address] - Professional token analysis\n";
@@ -355,7 +374,15 @@ class CommandHandler
         $message .= "/glossary [term] - Trading glossary\n\n";
 
         $message .= "*💼 PORTFOLIO & TRADING*\n";
-        $message .= "/portfolio - View your portfolio\n";
+        $message .= "/watchlist - View your watchlist\n";
+        $message .= "/watch [symbol] - Add to watchlist\n";
+        $message .= "/unwatch [symbol] - Remove from watchlist\n";
+        $message .= "/buy [symbol] [qty] - Open long position\n";
+        $message .= "/sell [symbol] - Close position\n";
+        $message .= "/short [symbol] [qty] - Open short position\n";
+        $message .= "/positions - View open positions\n";
+        $message .= "/pnl - Portfolio summary & PnL\n";
+        $message .= "/portfolio - Wallet portfolio\n";
         $message .= "/addwallet [address] - Add wallet\n";
         $message .= "/removewallet [address] - Remove wallet\n";
         $message .= "/copy - Copy trading\n";
@@ -371,7 +398,7 @@ class CommandHandler
         $message .= "/settings - Bot settings\n";
         $message .= "/language - Change language\n";
         $message .= "/premium - Premium features\n";
-        $message .= "/about - About SerpoAI\n\n";
+        $message .= "/about - About this bot\n\n";
 
         $message .= "━━━━━━━━━━━━━━━━━━━━\n";
         $message .= "💡 *Quick Start:*\n";
@@ -394,14 +421,14 @@ class CommandHandler
             $message = "💰 *Price Information*\n\n";
             $message .= "Usage: `/price [symbol]`\n\n";
             $message .= "📈 *Supported Markets:*\n";
-            $message .= "• Crypto: BTC, ETH, SOL, SERPO\n";
+            $message .= "• Crypto: BTC, ETH, SOL, DOGE\n";
             $message .= "• Stocks: AAPL, TSLA, GOOGL\n";
-            $message .= "• Forex: EURUSD, GBPJPY\n\n";
+            $message .= "• Forex: EURUSD, GBPJPY, XAUUSD\n\n";
             $message .= "📝 *Examples:*\n";
             $message .= "• `/price BTC`\n";
-            $message .= "• `/price SERPO`\n";
             $message .= "• `/price AAPL`\n";
-            $message .= "• `/price EURUSD`";
+            $message .= "• `/price EURUSD`\n";
+            $message .= "• `/price XAUUSD`";
 
             $this->telegram->sendMessage($chatId, $message);
             return;
@@ -410,43 +437,7 @@ class CommandHandler
         $symbol = strtoupper($params[0]);
         $this->telegram->sendChatAction($chatId, 'typing');
 
-        // Special handling for SERPO (uses DEX data)
-        if ($symbol === 'SERPO') {
-            $data = $this->marketData->getSerpoPriceFromDex();
-
-            if (!$data) {
-                $this->telegram->sendMessage($chatId, "❌ Unable to fetch SERPO price. Please try again later.");
-                return;
-            }
-
-            $message = "💰 *SERPO Price Information*\n";
-            $message .= "━━━━━━━━━━━━━━━━━━━━\n";
-            $message .= "Market: Crypto (DEX) 💎\n\n";
-            $message .= "💵 Price: $" . $this->telegram->formatPrice($data['price']) . "\n";
-            $message .= "📊 24h Change: " . $this->telegram->formatPercentage($data['price_change_24h']) . "\n";
-            $message .= "💧 Volume 24h: $" . number_format($data['volume_24h'], 0) . "\n";
-            $message .= "🏊 Liquidity: $" . number_format($data['liquidity'], 0) . "\n";
-            $message .= "🔄 DEX: " . strtoupper($data['dex']) . "\n\n";
-            $message .= "━━━━━━━━━━━━━━━━━━━━\n";
-            $message .= "📈 Use `/chart SERPO` for live chart\n";
-            $message .= "_Updated: " . $data['updated_at']->diffForHumans() . "_";
-
-            // Create inline keyboard with chart link
-            $pairAddress = config('serpo.dex_pair_address') ?: 'EQCPeUzKknneMlA1UbivELxd8lFUA_oaOX9m9PPc4d6lHQyw';
-            $chartUrl = "https://dexscreener.com/ton/{$pairAddress}";
-
-            $keyboard = [
-                'inline_keyboard' => array_merge(
-                    [[['text' => '📊 View Live Chart', 'url' => $chartUrl]]],
-                    $this->getContextualKeyboard('price')
-                )
-            ];
-
-            $this->telegram->sendMessage($chatId, $message, $keyboard);
-            return;
-        }
-
-        // Handle all other markets (crypto, forex, stocks)
+        // Handle all markets (crypto, forex, stocks)
         try {
             $priceData = $this->multiMarket->getUniversalPriceData($symbol);
 
@@ -552,15 +543,13 @@ class CommandHandler
             $message .= "📈 *Supported Markets:*\n";
             $message .= "• Crypto: BTC, ETH, SOL, etc.\n";
             $message .= "• Stocks: AAPL, TSLA, GOOGL\n";
-            $message .= "• Forex: EURUSD, GBPJPY\n";
-            $message .= "• SERPO: Special DEX integration\n\n";
+            $message .= "• Forex: EURUSD, GBPJPY, XAUUSD\n\n";
             $message .= "⏱ *Timeframes:*\n";
             $message .= "• 1M, 5M, 15M, 30M\n";
             $message .= "• 1H (default), 2H, 4H\n";
             $message .= "• 1D, 1W\n\n";
             $message .= "📝 *Examples:*\n";
             $message .= "• `/chart BTC` (defaults to 1H)\n";
-            $message .= "• `/chart SERPO 1H`\n";
             $message .= "• `/chart AAPL 4H`\n";
             $message .= "• `/chart EURUSD 15M`";
 
@@ -571,8 +560,8 @@ class CommandHandler
                         ['text' => '📊 ETH 4H', 'callback_data' => '/chart ETH 4H'],
                     ],
                     [
-                        ['text' => '🪙 SERPO 1H', 'callback_data' => '/chart SERPO 1H'],
                         ['text' => '📉 SOL 15M', 'callback_data' => '/chart SOL 15M'],
+                        ['text' => '📈 AAPL 1H', 'callback_data' => '/chart AAPL 1H'],
                     ],
                     [
                         ['text' => '🔙 Back to Menu', 'callback_data' => '/help'],
@@ -595,13 +584,7 @@ class CommandHandler
 
         $this->telegram->sendChatAction($chatId, 'upload_photo');
 
-        // Special handling for SERPO (uses DEX)
-        if ($symbol === 'SERPO') {
-            $this->sendSerpoChart($chatId, $symbol, $timeframe);
-            return;
-        }
-
-        // All other pairs - use TradingView
+        // All pairs use TradingView
         $this->sendTradingViewChart($chatId, $symbol, $timeframe);
     }
 
@@ -617,7 +600,6 @@ class CommandHandler
             $message .= "*Usage:*\n";
             $message .= "`/signals BTCUSDT`\n";
             $message .= "`/signals ETHUSDT`\n";
-            $message .= "`/signals SERPO`\n";
             $message .= "`/signals AAPL` (stocks)\n";
             $message .= "`/signals EURUSD` (forex)\n\n";
             $message .= "*Analysis Includes:*\n";
@@ -639,7 +621,7 @@ class CommandHandler
                         ['text' => '💎 ETH Signals', 'callback_data' => '/signals ETHUSDT'],
                     ],
                     [
-                        ['text' => '🐍 SERPO Signals', 'callback_data' => '/signals SERPO'],
+                        ['text' => '� AAPL Signals', 'callback_data' => '/signals AAPL'],
                         ['text' => '📈 SPY Signals', 'callback_data' => '/signals SPY'],
                     ],
                     [
@@ -853,12 +835,11 @@ class CommandHandler
             $message .= "*Usage:*\n";
             $message .= "`/setalert [SYMBOL] [PRICE]`\n\n";
             $message .= "*Examples:*\n";
-            $message .= "`/setalert SERPO 0.00001`\n";
-            $message .= "`/setalert BTC 50000`\n";
+            $message .= "`/setalert BTC 100000`\n";
             $message .= "`/setalert AAPL 180`\n";
             $message .= "`/setalert EURUSD 1.10`\n\n";
             $message .= "*Supported Markets:*\n";
-            $message .= "🔷 Crypto (BTC, ETH, SERPO, etc.)\n";
+            $message .= "🔷 Crypto (BTC, ETH, SOL, etc.)\n";
             $message .= "🔷 Forex (EURUSD, GBPUSD, etc.)\n";
             $message .= "🔷 Stocks (AAPL, TSLA, GOOGL, etc.)";
             $this->telegram->sendMessage($chatId, $message);
@@ -866,7 +847,7 @@ class CommandHandler
         }
 
         // Parse params - check if first param is symbol or price
-        $symbol = 'SERPO'; // Default
+        $symbol = 'BTCUSDT'; // Default
         $targetPrice = 0;
 
         if (count($params) >= 2) {
@@ -874,7 +855,7 @@ class CommandHandler
             $symbol = strtoupper($params[0]);
             $targetPrice = floatval($params[1]);
         } else {
-            // Format: /setalert PRICE (defaults to SERPO)
+            // Format: /setalert PRICE (defaults to BTC)
             $targetPrice = floatval($params[0]);
         }
 
@@ -1005,12 +986,14 @@ class CommandHandler
      */
     private function handleAbout(int $chatId)
     {
-        $message = "🤖 *About SerpoAI v1.2.1*\n\n";
+        $botName = config('serpoai.bot.name', 'TradeBot AI');
+        $version = config('serpoai.bot.version', '2.0.0');
+        $message = "🤖 *About {$botName} v{$version}*\n\n";
         $message .= "Professional multi-market trading assistant powered by AI. Trusted analysis across crypto, stocks, and forex with transparent data and professional-grade insights.\n\n";
 
-        $message .= "✨ *What's New in v1.2.1:*\n";
+        $message .= "✨ *What's New in v{$version}:*\n";
         $message .= "🎯 Multi-Market Trading Signals\n";
-        $message .= "  • Crypto (Binance), Stocks & Forex (Yahoo Finance)\n";
+        $message .= "  • Crypto (Binance), Stocks & Forex (Twelve Data)\n";
         $message .= "  • Confidence scoring: 1-5 (never negative)\n";
         $message .= "  • Signal reasoning & flip conditions\n";
         $message .= "  • Market metadata (source, timeframe, updated)\n\n";
@@ -1032,17 +1015,15 @@ class CommandHandler
 
         $message .= "🎯 *Data Sources:*\n";
         $message .= "• Binance API - Crypto pairs (free, unlimited)\n";
-        $message .= "• Yahoo Finance - Stocks & Forex (free, unlimited)\n";
+        $message .= "• Twelve Data - Stocks, Forex & Commodities\n";
         $message .= "• DexScreener - DEX tokens & pairs\n";
         $message .= "• Blockchain Explorers - Token verification\n\n";
 
-        $message .= "🔗 *Quick Links:*\n";
-        $message .= "🌐 [Website](https://serpocoin.io)\n";
-        $message .= "📱 [Telegram](https://t.me/serpocoinchannel)\n";
-        $message .= "📊 [SERPO Chart](https://dexscreener.com/ton/EQCPeUzKknneMlA1UbivELxd8lFUA_oaOX9m9PPc4d6lHQyw)\n\n";
+        $message .= "💬 *Support:*\n";
+        $message .= "Type /help to see all commands\n\n";
 
         $message .= "💡 _Type /help to see all commands_\n";
-        $message .= "_Version 1.2.1 - January 2026_\n";
+        $message .= "_Version {$version} - February 2026_\n";
         $message .= "_Made with ❤️ for traders_";
 
         $this->telegram->sendMessage($chatId, $message);
@@ -1141,7 +1122,7 @@ class CommandHandler
         $symbolMap = [
             'BTC' => 'Bitcoin',
             'ETH' => 'Ethereum',
-            'SERPO' => 'Serpo',
+            'SERPO' => 'Serpo',  // Keep for backward compat
             'XRP' => 'Ripple',
             'BNB' => 'Binance Coin',
             'SOL' => 'Solana',
@@ -1286,18 +1267,21 @@ class CommandHandler
         $this->telegram->sendChatAction($chatId, 'typing');
         $this->telegram->sendMessage($chatId, "🤖 Thinking...");
 
-        // Get current market context
-        $marketData = $this->marketData->getSerpoPriceFromDex();
+        // Get current market context (BTC as default reference)
         $context = [];
-
-        if ($marketData) {
-            $context['SERPO Price'] = '$' . number_format($marketData['price'], 8);
-            $context['24h Change'] = $marketData['price_change_24h'] . '%';
+        try {
+            $btcPrice = $this->multiMarket->getCurrentPrice('BTCUSDT');
+            if ($btcPrice) {
+                $context['BTC Price'] = '$' . number_format($btcPrice, 2);
+            }
+        } catch (\Exception $e) {
+            // Skip context if unavailable
         }
 
         $answer = $this->openai->answerQuestion($question, $context);
 
-        $this->telegram->sendMessage($chatId, "🤖 *SerpoAI:*\n\n" . $answer . "\n\n_Remember: This is not financial advice. Always DYOR!_");
+        $botName = config('serpoai.bot.name', 'TradeBot AI');
+        $this->telegram->sendMessage($chatId, "🤖 *{$botName}:*\n\n" . $answer . "\n\n_Remember: This is not financial advice. Always DYOR!_");
     }
 
     /**
@@ -1414,7 +1398,7 @@ class CommandHandler
     }
 
     /**
-     * Handle /portfolio command - View user's SERPO holdings
+     * Handle /portfolio command - View user's trading portfolio
      */
     private function handlePortfolio(int $chatId, User $user)
     {
@@ -1423,7 +1407,7 @@ class CommandHandler
 
             // If no wallets, show quick message
             if ($wallets->isEmpty()) {
-                $message = "💼 *Your SERPO Portfolio*\n\n";
+                $message = "💼 *Your Trading Portfolio*\n\n";
                 $message .= "❌ No wallets added yet\n\n";
                 $message .= "Add a wallet with:\n";
                 $message .= "`/addwallet <address>`\n\n";
@@ -1488,7 +1472,7 @@ class CommandHandler
             if ($wallet->label) {
                 $message .= "🏷️ Label: {$wallet->label}\n";
             }
-            $message .= "💰 Balance: `" . number_format($wallet->balance, 2) . " SERPO`\n";
+            $message .= "💰 Balance: `" . number_format($wallet->balance, 2) . "`\n";
             $message .= "💵 Value: `$" . number_format($wallet->usd_value, 2) . "`\n\n";
             $message .= "View your portfolio: /portfolio";
 
@@ -1562,16 +1546,272 @@ class CommandHandler
         }
     }
 
+    // ═══════════════════════════════════════════════════════
+    // WATCHLIST COMMANDS
+    // ═══════════════════════════════════════════════════════
+
+    /**
+     * Handle /watchlist command - View watchlist with prices
+     */
+    private function handleWatchlist(int $chatId, User $user)
+    {
+        try {
+            $this->telegram->sendMessage($chatId, "👀 Loading your watchlist...");
+
+            $items = $this->watchlist->getWatchlist($user);
+            $message = $this->watchlist->formatWatchlistMessage($items);
+
+            $this->telegram->sendMessage($chatId, $message);
+        } catch (\Exception $e) {
+            Log::error('Watchlist error', ['user_id' => $user->id, 'error' => $e->getMessage()]);
+            $this->telegram->sendMessage($chatId, "❌ Error loading watchlist. Please try again.");
+        }
+    }
+
+    /**
+     * Handle /watch command - Add symbol to watchlist
+     */
+    private function handleWatch(int $chatId, array $params, User $user)
+    {
+        if (empty($params)) {
+            $message = "👀 *Add to Watchlist*\n\n";
+            $message .= "*Usage:* `/watch [symbol]`\n\n";
+            $message .= "*Examples:*\n";
+            $message .= "• `/watch BTC` — Bitcoin\n";
+            $message .= "• `/watch AAPL` — Apple stock\n";
+            $message .= "• `/watch EURUSD` — EUR/USD forex\n";
+            $message .= "• `/watch SOL MyFavorite` — With label\n\n";
+            $message .= "View watchlist: `/watchlist`";
+            $this->telegram->sendMessage($chatId, $message);
+            return;
+        }
+
+        try {
+            $symbol = strtoupper($params[0]);
+            $label = isset($params[1]) ? implode(' ', array_slice($params, 1)) : null;
+
+            $item = $this->watchlist->addSymbol($user, $symbol, $label);
+
+            $priceStr = $item->last_price !== null
+                ? '$' . number_format($item->last_price, $item->last_price >= 1 ? 4 : 8)
+                : 'pending';
+            $changeStr = $item->formatted_change;
+            $typeEmoji = $item->market_emoji;
+
+            $message = "✅ *Added to Watchlist!*\n\n";
+            $message .= "{$typeEmoji} `{$item->symbol}` ({$item->market_type})\n";
+            $message .= "💵 Price: `{$priceStr}`\n";
+            $message .= "📊 24h: {$changeStr}\n";
+            if ($label) {
+                $message .= "🏷️ Label: {$label}\n";
+            }
+            $message .= "\nView full list: `/watchlist`";
+
+            $this->telegram->sendMessage($chatId, $message);
+        } catch (\OverflowException $e) {
+            $this->telegram->sendMessage($chatId, "❌ *Watchlist Full*\n\n{$e->getMessage()}\n\nRemove items with `/unwatch [symbol]`");
+        } catch (\Exception $e) {
+            Log::error('Watch error', ['user_id' => $user->id, 'error' => $e->getMessage()]);
+            $this->telegram->sendMessage($chatId, "❌ Could not add `{$params[0]}` to watchlist.\n\nMake sure the symbol is valid (e.g., BTC, AAPL, EURUSD).");
+        }
+    }
+
+    /**
+     * Handle /unwatch command - Remove from watchlist
+     */
+    private function handleUnwatch(int $chatId, array $params, User $user)
+    {
+        if (empty($params)) {
+            $this->telegram->sendMessage($chatId, "❌ *Usage:* `/unwatch [symbol]`\n\nExample: `/unwatch BTC`");
+            return;
+        }
+
+        try {
+            $symbol = strtoupper($params[0]);
+            $removed = $this->watchlist->removeSymbol($user, $symbol);
+
+            if ($removed) {
+                $this->telegram->sendMessage($chatId, "✅ *Removed* `{$symbol}` from your watchlist.\n\nView list: `/watchlist`");
+            } else {
+                $this->telegram->sendMessage($chatId, "❌ `{$symbol}` is not in your watchlist.");
+            }
+        } catch (\Exception $e) {
+            Log::error('Unwatch error', ['user_id' => $user->id, 'error' => $e->getMessage()]);
+            $this->telegram->sendMessage($chatId, "❌ Error removing from watchlist.");
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════
+    // PAPER TRADING COMMANDS
+    // ═══════════════════════════════════════════════════════
+
+    /**
+     * Handle /buy command - Open a long paper trade
+     */
+    private function handleBuy(int $chatId, array $params, User $user)
+    {
+        if (count($params) < 2) {
+            $message = "🟢 *Open Long Position*\n\n";
+            $message .= "*Usage:* `/buy [symbol] [quantity]`\n\n";
+            $message .= "*Examples:*\n";
+            $message .= "• `/buy BTCUSDT 0.5` — Buy 0.5 BTC\n";
+            $message .= "• `/buy AAPL 10` — Buy 10 Apple shares\n";
+            $message .= "• `/buy ETHUSDT 2` — Buy 2 ETH\n";
+            $message .= "• `/buy EURUSD 1000` — Buy EUR/USD\n\n";
+            $message .= "📝 _This is paper trading — no real money is used._";
+            $this->telegram->sendMessage($chatId, $message);
+            return;
+        }
+
+        $this->openTradePosition($chatId, $params, $user, 'long');
+    }
+
+    /**
+     * Handle /short command - Open a short paper trade
+     */
+    private function handleShort(int $chatId, array $params, User $user)
+    {
+        if (count($params) < 2) {
+            $message = "🔴 *Open Short Position*\n\n";
+            $message .= "*Usage:* `/short [symbol] [quantity]`\n\n";
+            $message .= "*Examples:*\n";
+            $message .= "• `/short BTCUSDT 0.5` — Short 0.5 BTC\n";
+            $message .= "• `/short AAPL 10` — Short 10 Apple\n\n";
+            $message .= "📝 _This is paper trading — no real money is used._";
+            $this->telegram->sendMessage($chatId, $message);
+            return;
+        }
+
+        $this->openTradePosition($chatId, $params, $user, 'short');
+    }
+
+    /**
+     * Open a trade position (shared by /buy and /short)
+     */
+    private function openTradePosition(int $chatId, array $params, User $user, string $side)
+    {
+        try {
+            $symbol = strtoupper($params[0]);
+            $quantity = floatval($params[1]);
+            $notes = isset($params[2]) ? implode(' ', array_slice($params, 2)) : null;
+
+            if ($quantity <= 0) {
+                $this->telegram->sendMessage($chatId, "❌ Quantity must be greater than 0.");
+                return;
+            }
+
+            $this->telegram->sendMessage($chatId, "🔄 Opening {$side} position on `{$symbol}`...");
+
+            $position = $this->tradePortfolio->openPosition($user, $symbol, $quantity, $side, $notes);
+
+            $sideEmoji = $side === 'long' ? '🟢' : '🔴';
+            $costBasis = $position->entry_price * $position->quantity;
+
+            $message = "✅ *Position Opened!*\n\n";
+            $message .= "{$sideEmoji} *{$position->symbol}* (" . strtoupper($side) . ")\n";
+            $message .= "📊 Quantity: `" . number_format($position->quantity, $position->quantity >= 100 ? 2 : 8) . "`\n";
+            $message .= "💵 Entry Price: `\$" . number_format($position->entry_price, $position->entry_price >= 1 ? 4 : 8) . "`\n";
+            $message .= "💰 Cost Basis: `\$" . number_format($costBasis, 2) . "`\n";
+
+            if ($notes) {
+                $message .= "📝 Note: _{$notes}_\n";
+            }
+
+            $message .= "\n📝 _Paper trade — no real money used._\n";
+            $message .= "Close: `/sell {$symbol}` | Positions: `/positions`";
+
+            $this->telegram->sendMessage($chatId, $message);
+        } catch (\OverflowException $e) {
+            $this->telegram->sendMessage($chatId, "❌ *Position Limit Reached*\n\n{$e->getMessage()}");
+        } catch (\RuntimeException $e) {
+            $this->telegram->sendMessage($chatId, "❌ *Price Error*\n\n{$e->getMessage()}");
+        } catch (\Exception $e) {
+            Log::error('Open position error', ['user_id' => $user->id, 'error' => $e->getMessage()]);
+            $this->telegram->sendMessage($chatId, "❌ Error opening position. Check symbol and try again.\n\nValid examples: BTCUSDT, AAPL, EURUSD");
+        }
+    }
+
+    /**
+     * Handle /sell command - Close an open position
+     */
+    private function handleSell(int $chatId, array $params, User $user)
+    {
+        if (empty($params)) {
+            $message = "📤 *Close Position*\n\n";
+            $message .= "*Usage:* `/sell [symbol]`\n\n";
+            $message .= "*Examples:*\n";
+            $message .= "• `/sell BTCUSDT` — Close BTC position\n";
+            $message .= "• `/sell AAPL` — Close Apple position\n\n";
+            $message .= "View open positions: `/positions`";
+            $this->telegram->sendMessage($chatId, $message);
+            return;
+        }
+
+        try {
+            $symbol = strtoupper($params[0]);
+
+            $this->telegram->sendMessage($chatId, "🔄 Closing position on `{$symbol}`...");
+
+            $position = $this->tradePortfolio->closePosition($user, $symbol);
+            $message = $this->tradePortfolio->formatClosedTradeMessage($position);
+
+            $this->telegram->sendMessage($chatId, $message);
+        } catch (\InvalidArgumentException $e) {
+            $this->telegram->sendMessage($chatId, "❌ *No Open Position*\n\n{$e->getMessage()}\n\nView positions: `/positions`");
+        } catch (\RuntimeException $e) {
+            $this->telegram->sendMessage($chatId, "❌ *Price Error*\n\n{$e->getMessage()}");
+        } catch (\Exception $e) {
+            Log::error('Sell error', ['user_id' => $user->id, 'error' => $e->getMessage()]);
+            $this->telegram->sendMessage($chatId, "❌ Error closing position. Please try again.");
+        }
+    }
+
+    /**
+     * Handle /positions command - View all open positions
+     */
+    private function handlePositions(int $chatId, User $user)
+    {
+        try {
+            $this->telegram->sendMessage($chatId, "💼 Loading positions...");
+
+            $positions = $this->tradePortfolio->getOpenPositions($user);
+            $message = $this->tradePortfolio->formatPositionsMessage($positions);
+
+            $this->telegram->sendMessage($chatId, $message);
+        } catch (\Exception $e) {
+            Log::error('Positions error', ['user_id' => $user->id, 'error' => $e->getMessage()]);
+            $this->telegram->sendMessage($chatId, "❌ Error loading positions. Please try again.");
+        }
+    }
+
+    /**
+     * Handle /pnl command - Portfolio summary with PnL
+     */
+    private function handlePnL(int $chatId, User $user)
+    {
+        try {
+            $this->telegram->sendMessage($chatId, "📊 Calculating PnL...");
+
+            $summary = $this->tradePortfolio->getPortfolioSummary($user);
+            $message = $this->tradePortfolio->formatSummaryMessage($summary);
+
+            $this->telegram->sendMessage($chatId, $message);
+        } catch (\Exception $e) {
+            Log::error('PnL error', ['user_id' => $user->id, 'error' => $e->getMessage()]);
+            $this->telegram->sendMessage($chatId, "❌ Error calculating PnL. Please try again.");
+        }
+    }
+
     /**
      * Handle AI query (natural language)
      */
     public function handleAIQuery(int $chatId, string $query, User $user, string $chatType = 'private')
     {
-        $message = "Serpo started as a meme token on TON Meme Pad, but it's evolving into an AI DeFi ecosystem with real tools, utilities, and a strong community.\n\n";
-        $message .= "📈 Serpocoin AI Assistant Trading Bot is here.\n";
-        $message .= "Say goodbye to overcomplicated technical analysis, missed opportunities, poor trading decisions. Serpo AI is here to simplify, guide, and empower your trading journey.\n\n";
+        $botName = config('serpoai.bot.name', 'TradeBot AI');
+        $message = "{$botName} is your all-in-one trading assistant for Crypto, Stocks, and Forex.\n\n";
+        $message .= "📈 AI-powered analysis across all markets.\n";
+        $message .= "Real-time data, technical indicators, and actionable insights.\n\n";
         $message .= "Trade smarter. Trade together. 💎\n\n";
-        $message .= "Under construction... Coming soon.\n\n";
         $message .= "Type /help to see available commands.";
 
         $this->telegram->sendMessage($chatId, $message);
@@ -1958,7 +2198,7 @@ class CommandHandler
      */
     private function handleAISentiment(int $chatId, array $params)
     {
-        $symbol = !empty($params) ? strtoupper($params[0]) : 'SERPO';
+        $symbol = !empty($params) ? strtoupper($params[0]) : 'BTCUSDT';
 
         $this->telegram->sendChatAction($chatId, 'typing');
         $this->telegram->sendMessage($chatId, "🎭 Analyzing real-time sentiment from Twitter, Telegram, and Reddit...");
@@ -1991,43 +2231,33 @@ class CommandHandler
      */
     private function handlePredict(int $chatId, array $params)
     {
-        $symbol = !empty($params) ? strtoupper($params[0]) : 'SERPO';
+        $symbol = !empty($params) ? strtoupper($params[0]) : 'BTCUSDT';
 
         $this->telegram->sendChatAction($chatId, 'typing');
         $this->telegram->sendMessage($chatId, "🔮 Generating AI prediction...");
 
         try {
             // Get market data based on symbol
-            if ($symbol === 'SERPO') {
-                $marketData = $this->marketData->getSerpoPriceFromDex();
-
-                if (!$marketData) {
-                    $this->telegram->sendMessage($chatId, "❌ Could not fetch SERPO market data. Please try again later.");
-                    return;
-                }
-            } else {
-                // For other coins, use Binance
-                $binanceSymbol = $symbol;
-                if (!str_contains($symbol, 'USDT') && !str_contains($symbol, 'BTC')) {
-                    $binanceSymbol .= 'USDT';
-                }
-
-                $ticker = app(\App\Services\BinanceAPIService::class)->get24hTicker($binanceSymbol);
-
-                if (!$ticker) {
-                    $this->telegram->sendMessage($chatId, "❌ Could not fetch market data for {$symbol}. Please check the symbol.");
-                    return;
-                }
-
-                $marketData = [
-                    'symbol' => $symbol,
-                    'price' => (float) $ticker['lastPrice'],
-                    'price_change_24h' => (float) $ticker['priceChangePercent'],
-                    'volume_24h' => (float) $ticker['volume'] * (float) $ticker['lastPrice'],
-                    'high_24h' => (float) $ticker['highPrice'],
-                    'low_24h' => (float) $ticker['lowPrice'],
-                ];
+            $binanceSymbol = $symbol;
+            if (!str_contains($symbol, 'USDT') && !str_contains($symbol, 'BTC')) {
+                $binanceSymbol .= 'USDT';
             }
+
+            $ticker = app(\App\Services\BinanceAPIService::class)->get24hTicker($binanceSymbol);
+
+            if (!$ticker) {
+                $this->telegram->sendMessage($chatId, "❌ Could not fetch market data for {$symbol}. Please check the symbol.");
+                return;
+            }
+
+            $marketData = [
+                'symbol' => $symbol,
+                'price' => (float) $ticker['lastPrice'],
+                'price_change_24h' => (float) $ticker['priceChangePercent'],
+                'volume_24h' => (float) $ticker['volume'] * (float) $ticker['lastPrice'],
+                'high_24h' => (float) $ticker['highPrice'],
+                'low_24h' => (float) $ticker['lowPrice'],
+            ];
 
             $sentimentData = \App\Models\SentimentData::getAggregatedSentiment($symbol);
             $prediction = $this->openai->generateMarketPrediction($symbol, $marketData, $sentimentData);
@@ -2090,15 +2320,21 @@ class CommandHandler
 
         try {
             $profile = \App\Models\UserProfile::getOrCreateForUser($user->id);
-            $marketData = $this->marketData->getSerpoPriceFromDex();
-            $sentimentData = \App\Models\SentimentData::getAggregatedSentiment('SERPO');
+            $context = [];
+            try {
+                $btcPrice = $this->multiMarket->getCurrentPrice('BTCUSDT');
+                if ($btcPrice) {
+                    $context['price'] = $btcPrice;
+                }
+            } catch (\Exception $e) {}
+            $sentimentData = \App\Models\SentimentData::getAggregatedSentiment('BTC');
 
             $recommendation = $this->openai->generatePersonalizedRecommendation(
                 [
                     'risk_level' => $profile->risk_level,
                     'trading_style' => $profile->trading_style,
                 ],
-                $marketData,
+                $context,
                 $sentimentData
             );
 
@@ -2138,23 +2374,21 @@ class CommandHandler
 
         try {
             // Gather available data
-            $marketData = $this->marketData->getSerpoPriceFromDex();
-            $sentiment = \App\Models\SentimentData::getAggregatedSentiment('SERPO');
+            $context = [];
+            try {
+                $btcPrice = $this->multiMarket->getCurrentPrice('BTCUSDT');
+                $ethPrice = $this->multiMarket->getCurrentPrice('ETHUSDT');
+                if ($btcPrice) $context['BTC Price'] = '$' . number_format($btcPrice, 2);
+                if ($ethPrice) $context['ETH Price'] = '$' . number_format($ethPrice, 2);
+            } catch (\Exception $e) {}
 
-            $availableData = [
-                'SERPO Price' => '$' . number_format($marketData['price'], 8),
-                '24h Change' => $marketData['price_change_24h'] . '%',
-                'Volume' => '$' . number_format($marketData['volume_24h'], 0),
-                'Liquidity' => '$' . number_format($marketData['liquidity'], 0),
-                'Sentiment' => $sentiment['overall_sentiment'],
-            ];
+            $answer = $this->openai->processNaturalQuery($query, $context);
 
-            $answer = $this->openai->processNaturalQuery($query, $availableData);
-
+            $botName = config('serpoai.bot.name', 'TradeBot AI');
             $keyboard = [
                 'inline_keyboard' => $this->getContextualKeyboard('start')
             ];
-            $this->telegram->sendMessage($chatId, "🤖 *SerpoAI:*\n\n" . $answer, $keyboard);
+            $this->telegram->sendMessage($chatId, "🤖 *{$botName}:*\n\n" . $answer, $keyboard);
         } catch (\Exception $e) {
             Log::error('Natural query error', ['error' => $e->getMessage()]);
             $keyboard = [
@@ -2170,11 +2404,11 @@ class CommandHandler
     private function handleDailyReport(int $chatId)
     {
         try {
-            $report = \App\Models\AnalyticsReport::getLatestReport('SERPO', 'daily');
+            $report = \App\Models\AnalyticsReport::getLatestReport('BTC', 'daily');
 
             if (!$report) {
                 // Generate new report
-                $report = $this->analytics->generateDailySummary('SERPO');
+                $report = $this->analytics->generateDailySummary('BTC');
                 if (!$report) {
                     $this->telegram->sendMessage($chatId, "⏳ Not enough data for daily report yet. Check back later!");
                     return;
@@ -2201,10 +2435,10 @@ class CommandHandler
     private function handleWeeklyReport(int $chatId)
     {
         try {
-            $report = \App\Models\AnalyticsReport::getLatestReport('SERPO', 'weekly');
+            $report = \App\Models\AnalyticsReport::getLatestReport('BTC', 'weekly');
 
             if (!$report) {
-                $report = $this->analytics->generateWeeklySummary('SERPO');
+                $report = $this->analytics->generateWeeklySummary('BTC');
                 if (!$report) {
                     $this->telegram->sendMessage($chatId, "⏳ Not enough data for weekly report yet.");
                     return;
@@ -2289,7 +2523,7 @@ class CommandHandler
     private function handleWhales(int $chatId)
     {
         try {
-            $whales = \App\Models\TransactionAlert::getWhaleTransactions('SERPO', 24);
+            $whales = \App\Models\TransactionAlert::getWhaleTransactions('BTC', 24);
 
             if ($whales->isEmpty()) {
                 $this->telegram->sendMessage($chatId, "🐋 No whale activity detected in the last 24 hours.");
@@ -2308,7 +2542,7 @@ class CommandHandler
                 };
 
                 $message .= "{$typeEmoji} *" . strtoupper($whale->type) . "*\n";
-                $message .= "Amount: " . number_format($whale->amount, 0) . " SERPO\n";
+                $message .= "Amount: " . number_format($whale->amount, 0) . " {$whale->coin_symbol}\n";
                 $message .= "Value: $" . number_format($whale->amount_usd, 0) . "\n";
                 $message .= "Time: " . $whale->transaction_time->diffForHumans() . "\n\n";
             }
@@ -3673,7 +3907,8 @@ class CommandHandler
         }
 
         $message .= "\n━━━━━━━━━━━━━━━━━━━━\n";
-        $message .= "🚀 *Coming Soon in SerpoAI*\n\n";
+        $botName = config('serpoai.bot.name', 'TradeBot AI');
+        $message .= "🚀 *Coming Soon in {$botName}*\n\n";
         foreach ($hub['coming_soon'] as $feature => $desc) {
             $message .= "• {$desc}\n";
         }
@@ -3747,59 +3982,6 @@ class CommandHandler
         ];
 
         return $reverseMap[$tvTimeframe] ?? $tvTimeframe;
-    }
-
-    /**
-     * Send SERPO chart from DEX
-     */
-    private function sendSerpoChart(int $chatId, string $symbol, string $timeframe): void
-    {
-        // Get SERPO data
-        $data = $this->marketData->getSerpoPriceFromDex();
-
-        if (!$data) {
-            $this->telegram->sendMessage($chatId, "❌ Unable to fetch SERPO data. Please try again later.");
-            return;
-        }
-
-        // Get the pair address from config
-        $pairAddress = config('serpo.dex_pair_address') ?: 'EQCPeUzKknneMlA1UbivELxd8lFUA_oaOX9m9PPc4d6lHQyw';
-        $chartUrl = "https://dexscreener.com/ton/{$pairAddress}";
-
-        // Build caption
-        $caption = "📊 *SERPO/TON Chart ({$timeframe})*\n\n";
-        $caption .= "💰 *Price:* $" . $this->telegram->formatPrice($data['price']) . "\n";
-
-        $changeEmoji = $data['price_change_24h'] >= 0 ? '📈' : '📉';
-        $caption .= "{$changeEmoji} *24h Change:* " . $this->telegram->formatPercentage($data['price_change_24h']) . "\n";
-        $caption .= "💧 *Volume:* $" . number_format($data['volume_24h'], 0) . "\n";
-        $caption .= "🏊 *Liquidity:* $" . number_format($data['liquidity'], 0) . "\n\n";
-
-        // Add quick price visualization
-        $caption .= $this->generatePriceBar($data['price_change_24h']) . "\n\n";
-        $caption .= "� Full DEX candlestick chart with live data!";
-
-        // Create inline keyboard
-        $keyboard = [
-            'inline_keyboard' => [
-                [
-                    ['text' => '📊 Open DEX Chart', 'url' => $chartUrl]
-                ],
-                [
-                    ['text' => '⚡ 5M', 'callback_data' => '/chart SERPO 5M'],
-                    ['text' => '📈 1H', 'callback_data' => '/chart SERPO 1H'],
-                    ['text' => '📊 4H', 'callback_data' => '/chart SERPO 4H'],
-                ],
-                [
-                    ['text' => '📈 Analyze', 'callback_data' => '/analyze SERPO'],
-                    ['text' => '🔄 Refresh', 'callback_data' => '/chart SERPO ' . $timeframe],
-                ]
-            ]
-        ];
-
-        // For now, send text with link (screenshot services have reliability issues with DEXScreener)
-        Log::info('Sending DEX chart with link', ['pair' => $pairAddress]);
-        $this->telegram->sendMessage($chatId, $caption, $keyboard);
     }
 
     /**
@@ -3962,7 +4144,7 @@ class CommandHandler
     }
 
     /**
-     * Generate DEX chart image for SERPO
+     * Generate DEX chart image
      */
     private function generateDexScreenerChart(string $pairAddress): ?string
     {
@@ -4902,7 +5084,7 @@ class CommandHandler
 
     /**
      * ═══════════════════════════════════════════════════════
-     *  ELITE FEATURES - SERPO AI ADVANCED INTELLIGENCE
+     *  ELITE FEATURES - AI ADVANCED INTELLIGENCE
      * ═══════════════════════════════════════════════════════
      */
 
@@ -4912,7 +5094,7 @@ class CommandHandler
     private function handleDeepSearch(int $chatId, array $params)
     {
         if (empty($params)) {
-            $message = "🔍 *SERPO DeepSearch™*\n\n";
+            $message = "🔍 *DeepSearch™*\n\n";
             $message .= "Search anything about any market in natural language.\n\n";
             $message .= "*Examples:*\n";
             $message .= "• `/search BTC risk management for scalping`\n";
@@ -4933,7 +5115,7 @@ class CommandHandler
             $symbol = $this->extractSymbolFromQuery($query);
 
             // Build context-aware prompt
-            $prompt = "You are Serpo AI, an elite trading assistant. Analyze this query: \"{$query}\"\n\n";
+            $prompt = "You are an elite trading assistant. Analyze this query: \"{$query}\"\n\n";
 
             if ($symbol) {
                 // Get market data for the symbol
@@ -4965,7 +5147,7 @@ class CommandHandler
                 return;
             }
 
-            $message = "🔍 *SERPO DeepSearch™ Result*\n\n";
+            $message = "🔍 *DeepSearch™ Result*\n\n";
             $message .= "Query: _{$query}_\n\n";
             $message .= $response;
 
@@ -4989,7 +5171,7 @@ class CommandHandler
     private function handleBacktest(int $chatId, array $params, User $user)
     {
         if (empty($params)) {
-            $message = "📊 *SERPO Vision Backtest™*\n\n";
+            $message = "📊 *Vision Backtest™*\n\n";
             $message .= "Backtest strategies using natural language or screenshots.\n\n";
             $message .= "*Text Usage:*\n";
             $message .= "`/backtest BTCUSDT breakout strategy 1H timeframe`\n";
@@ -5061,7 +5243,7 @@ class CommandHandler
                 return;
             }
 
-            $message = "📊 *SERPO Backtest Result*\n\n";
+            $message = "📊 *Backtest Result*\n\n";
             $message .= "Strategy: _{$strategy}_\n\n";
             $message .= $response;
             $message .= "\n\n⚠️ _Past performance does not guarantee future results_";
@@ -5079,7 +5261,7 @@ class CommandHandler
     private function handleTokenVerify(int $chatId, array $params)
     {
         if (empty($params)) {
-            $message = "🧠 *SERPO Degen Scanner™*\n\n";
+            $message = "🧠 *Degen Scanner™*\n\n";
             $message .= "Professional-grade token verification with REAL blockchain data.\n\n";
             $message .= "*Usage:*\n";
             $message .= "`/verify EQCPeUzKknneMlA1Ubiv...`  (TON)\n";
@@ -5589,7 +5771,7 @@ class CommandHandler
      */
     private function handleDegenGuide(int $chatId)
     {
-        $message = "🎓 *SERPO DEGEN GUIDE*\n";
+        $message = "🎓 *DEGEN GUIDE*\n";
         $message .= "How Professionals Detect Winners Early\n\n";
         $message .= "━━━━━━━━━━━━━━━━━━━━\n\n";
 

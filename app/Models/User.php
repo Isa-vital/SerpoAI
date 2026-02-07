@@ -63,4 +63,14 @@ class User extends Model
     {
         return $this->hasOne(PremiumSubscription::class);
     }
+
+    public function watchlistItems()
+    {
+        return $this->hasMany(WatchlistItem::class);
+    }
+
+    public function portfolioPositions()
+    {
+        return $this->hasMany(PortfolioPosition::class);
+    }
 }
