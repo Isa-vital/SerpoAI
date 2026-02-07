@@ -481,7 +481,15 @@ class CommandHandler
             $message .= "{$changeEmoji} 24h Change: " . sprintf("%+.2f%%", $data['change_24h']) . "\n";
         } elseif (isset($data['change_pct'])) {
             $changeEmoji = $data['change_pct'] >= 0 ? '🟢' : '🔴';
-            $message .= "{$changeEmoji} Change: " . sprintf("%+.2f%%", $data['change_pct']) . "\n";
+            $changeStr = sprintf("%+.2f%%", $data['change_pct']);
+            // Note weekend for forex if change is 0
+            if ($data['market_type'] === 'forex' && abs($data['change_pct']) < 0.005) {
+                $dayOfWeek = now('UTC')->dayOfWeek;
+                if ($dayOfWeek === 0 || $dayOfWeek === 6) {
+                    $changeStr .= ' (Weekend)';
+                }
+            }
+            $message .= "{$changeEmoji} Change: {$changeStr}\n";
         }
 
         // Volume (if available)
@@ -3844,7 +3852,17 @@ class CommandHandler
     private function formatPriceAdaptive(float $price, string $marketType): string
     {
         if ($marketType === 'forex') {
-            return number_format($price, 5);
+            // Metals: use $ prefix and 2 decimals
+            if ($price >= 100) {
+                return '$' . number_format($price, 2); // Gold: $4,979.80
+            } elseif ($price >= 10) {
+                return '$' . number_format($price, 2); // Silver: $76.90
+            }
+            // Currency pairs: 4 decimals for most, 2 for JPY pairs
+            if ($price < 1) {
+                return number_format($price, 5); // Minor pairs
+            }
+            return number_format($price, 4); // EURUSD: 1.1820
         }
 
         if ($marketType === 'stock') {

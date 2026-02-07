@@ -1417,6 +1417,16 @@ class MultiMarketDataService
     public function getUniversalPriceData(string $symbol): array
     {
         $symbol = strtoupper($symbol);
+
+        // Handle common aliases
+        $aliases = [
+            'GOLD' => 'XAUUSD',
+            'SILVER' => 'XAGUSD',
+        ];
+        if (isset($aliases[$symbol])) {
+            $symbol = $aliases[$symbol];
+        }
+
         $marketType = $this->detectMarketType($symbol);
         $cacheKey = "price_data_{$symbol}";
 
@@ -1443,6 +1453,20 @@ class MultiMarketDataService
      */
     private function getCryptoPriceData(string $symbol): array
     {
+        // Handle stablecoins — they ARE the quote asset, can't append USDT
+        $stablecoins = ['USDT', 'USDC', 'BUSD', 'DAI', 'TUSD', 'FDUSD'];
+        if (in_array($symbol, $stablecoins)) {
+            return [
+                'symbol' => $symbol,
+                'market_type' => 'crypto',
+                'source' => 'Fixed Rate',
+                'price' => 1.00,
+                'change_24h' => 0.00,
+                'volume_24h' => 0,
+                'updated_at' => gmdate('Y-m-d H:i') . ' UTC',
+            ];
+        }
+
         // Normalize symbol for Binance
         $quoteAssets = ['USDT', 'BUSD', 'USDC', 'BTC', 'ETH', 'BNB'];
         $hasQuote = false;
@@ -1467,7 +1491,37 @@ class MultiMarketDataService
         }
 
         if (!$ticker) {
-            return ['error' => "Unable to fetch {$symbol} from Binance. Please try again."];
+            // Try CoinGecko as last resort for tokens not on Binance
+            $coinId = $this->getCoinGeckoId($baseAsset);
+            if ($coinId) {
+                try {
+                    $response = Http::timeout(5)->get("https://api.coingecko.com/api/v3/simple/price", [
+                        'ids' => $coinId,
+                        'vs_currencies' => 'usd',
+                        'include_24hr_change' => 'true',
+                        'include_24hr_vol' => 'true',
+                        'include_market_cap' => 'true',
+                    ]);
+                    if ($response->successful()) {
+                        $cgData = $response->json();
+                        if (isset($cgData[$coinId]['usd'])) {
+                            return [
+                                'symbol' => $baseAsset,
+                                'market_type' => 'crypto',
+                                'source' => 'CoinGecko',
+                                'price' => floatval($cgData[$coinId]['usd']),
+                                'change_24h' => floatval($cgData[$coinId]['usd_24h_change'] ?? 0),
+                                'volume_24h' => floatval($cgData[$coinId]['usd_24h_vol'] ?? 0),
+                                'market_cap' => floatval($cgData[$coinId]['usd_market_cap'] ?? 0),
+                                'updated_at' => gmdate('Y-m-d H:i') . ' UTC',
+                            ];
+                        }
+                    }
+                } catch (\Exception $e) {
+                    Log::debug('CoinGecko price fallback failed', ['symbol' => $baseAsset]);
+                }
+            }
+            return ['error' => "❌ {$baseAsset} not found on major exchanges (Binance/CoinGecko).\n\nThis token may be:\n• A new/unlisted token\n• Only available on DEXs\n• Misspelled\n\nTry the full pair: `/price {$baseAsset}USDT`"];
         }
 
         $result = [
@@ -1674,7 +1728,7 @@ class MultiMarketDataService
             Log::error('Yahoo Finance error', ['symbol' => $symbol, 'error' => $e->getMessage()]);
         }
 
-        return ['error' => "Unable to fetch {$symbol} stock data"];
+        return ['error' => "❌ Unable to fetch {$symbol} data.\\n\\nNot found as a stock, crypto, or forex pair.\\n\\nTry:\\n• Crypto: `/price BTC`\\n• Stock: `/price AAPL`\\n• Forex: `/price EURUSD`\\n• Gold: `/price XAUUSD`"];
     }
 
     /**
