@@ -649,7 +649,8 @@ class MultiMarketDataService
 
         $hasQuote = false;
         foreach ($quoteAssets as $quote) {
-            if (str_ends_with($symbol, $quote)) {
+            // Must be longer than quote itself (BTC alone should NOT match BTC quote)
+            if (strlen($symbol) > strlen($quote) && str_ends_with($symbol, $quote)) {
                 $hasQuote = true;
                 break;
             }

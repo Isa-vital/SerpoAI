@@ -588,6 +588,20 @@ class CommandHandler
         $symbol = strtoupper($params[0]);
         $timeframe = isset($params[1]) ? strtoupper($params[1]) : '1H';
 
+        // Common ticker typo corrections
+        $typoCorrections = [
+            'APPL' => 'AAPL', 'GOGL' => 'GOOGL', 'GOOG' => 'GOOGL',
+            'AMZN' => 'AMZN', 'TELA' => 'TSLA', 'MIRCO' => 'MSFT',
+            'MICROSFOT' => 'MSFT', 'NETFLEX' => 'NFLX', 'BITCOINT' => 'BTC',
+            'ETHERIUM' => 'ETH', 'BITCOIN' => 'BTC', 'ETHEREUM' => 'ETH',
+            'SOLONA' => 'SOL', 'SOALANA' => 'SOL', 'DODGECOIN' => 'DOGE',
+        ];
+        if (isset($typoCorrections[$symbol])) {
+            $corrected = $typoCorrections[$symbol];
+            $this->telegram->sendMessage($chatId, "📝 Did you mean *{$corrected}*? Loading chart...");
+            $symbol = $corrected;
+        }
+
         // Validate timeframe (keep user-friendly format for display)
         $validated = $this->normalizeTimeframe($timeframe);
         if (!$validated) {
@@ -4101,28 +4115,42 @@ class CommandHandler
         // For crypto tokens, check if they're DEX-only (not on Binance/TradingView)
         // If so, redirect to DexScreener chart
         if ($marketType === 'crypto') {
-            $dexData = $this->multiMarket->getDexScreenerPrice($displaySymbol);
-            if ($dexData && isset($dexData['pair_address'], $dexData['chain_id'])) {
-                // Check if this is a DEX-only token by trying Binance first
-                $binanceSymbol = $displaySymbol;
-                $quoteAssets = ['USDT', 'BUSD', 'USDC', 'USD', 'BTC', 'ETH', 'BNB'];
-                $hasQuote = false;
-                foreach ($quoteAssets as $quote) {
-                    if (strlen($binanceSymbol) > strlen($quote) && str_ends_with($binanceSymbol, $quote)) {
-                        $hasQuote = true;
-                        break;
-                    }
+            // Build the Binance symbol to check availability
+            $binanceSymbol = $displaySymbol;
+            $quoteAssets = ['USDT', 'BUSD', 'USDC', 'USD', 'BTC', 'ETH', 'BNB'];
+            $hasQuote = false;
+            foreach ($quoteAssets as $quote) {
+                if (strlen($binanceSymbol) > strlen($quote) && str_ends_with($binanceSymbol, $quote)) {
+                    $hasQuote = true;
+                    break;
                 }
-                if (!$hasQuote) {
-                    $binanceSymbol .= 'USDT';
-                }
-                $binanceTicker = $this->binance->get24hTicker($binanceSymbol);
+            }
+            if (!$hasQuote) {
+                $binanceSymbol .= 'USDT';
+            }
+            $binanceTicker = $this->binance->get24hTicker($binanceSymbol);
 
-                if (!$binanceTicker) {
-                    // Token NOT on Binance → DEX-only → use DexScreener chart
-                    $this->sendDexScreenerChart($chatId, $displaySymbol, $displayTf, $dexData);
-                    return;
+            if (!$binanceTicker) {
+                // Not on Binance — try DexScreener for DEX-only chart
+                try {
+                    $dexData = $this->multiMarket->getDexScreenerPrice($displaySymbol);
+                    if ($dexData && isset($dexData['pair_address'], $dexData['chain_id'])) {
+                        $this->sendDexScreenerChart($chatId, $displaySymbol, $displayTf, $dexData);
+                        return;
+                    }
+                } catch (\Exception $e) {
+                    Log::warning('DexScreener chart lookup failed', ['symbol' => $displaySymbol, 'error' => $e->getMessage()]);
                 }
+
+                // Neither Binance nor DexScreener has this token
+                $this->telegram->sendMessage($chatId,
+                    "❌ *{$displaySymbol}* not found on Binance or DexScreener.\n\n" .
+                    "💡 *Tips:*\n" .
+                    "• Check the symbol spelling\n" .
+                    "• Use full pair: `/chart {$displaySymbol}USDT`\n" .
+                    "• Try `/price {$displaySymbol}` first to verify"
+                );
+                return;
             }
         }
 
@@ -4147,6 +4175,18 @@ class CommandHandler
             Log::debug('Error fetching market data for chart', ['symbol' => $dataSymbol, 'error' => $e->getMessage()]);
         }
 
+        // Fallback: if primary source returned error/null, try universal price data
+        if (!$marketData || isset($marketData['error']) || !isset($marketData['price'])) {
+            try {
+                $universalData = $this->multiMarket->getUniversalPriceData($dataSymbol);
+                if ($universalData && isset($universalData['price'])) {
+                    $marketData = $universalData;
+                }
+            } catch (\Exception $e) {
+                Log::debug('Universal price fallback failed for chart', ['symbol' => $dataSymbol]);
+            }
+        }
+
         // Build caption
         $caption = "📊 *{$displaySymbol} Chart ({$displayTf})*\n\n";
         $caption .= "📈 *Market:* " . ucfirst($marketType) . "\n";
@@ -4154,8 +4194,8 @@ class CommandHandler
 
         if ($marketData && !isset($marketData['error']) && isset($marketData['price'])) {
             $price = $marketData['price'];
-            // Field names vary: crypto='change_percent', stock/forex='change_percent'
-            $change = $marketData['change_percent'] ?? $marketData['price_change_24h'] ?? 0;
+            // Field names vary: analyzeCryptoPair='change_percent', getUniversalPriceData='change_24h'
+            $change = $marketData['change_percent'] ?? $marketData['change_24h'] ?? $marketData['price_change_24h'] ?? 0;
 
             $caption .= "💰 *Price:* " . $this->formatPriceAdaptive($price, $marketType) . "\n";
             if ($change != 0) {
@@ -4179,6 +4219,12 @@ class CommandHandler
             // Market cap if available
             if (isset($marketData['market_cap']) && is_numeric($marketData['market_cap']) && $marketData['market_cap'] > 0) {
                 $caption .= "💎 *MCap:* $" . $this->formatLargeNumber($marketData['market_cap']) . "\n";
+            }
+
+            // Data source
+            $source = $marketData['source'] ?? ($marketData['data_sources'][0] ?? null);
+            if ($source) {
+                $caption .= "📡 *Source:* {$source}\n";
             }
 
             $caption .= "\n";
