@@ -32,8 +32,8 @@ class MarketDataService
         // Cache for 1 minute
         return Cache::remember($cacheKey, 60, function () {
             try {
-                $contractAddress = env('TOKEN_CONTRACT_ADDRESS', env('SERPO_CONTRACT_ADDRESS'));
-                $chain = env('TOKEN_CHAIN', env('SERPO_CHAIN', 'ethereum'));
+                $contractAddress = env('TOKEN_CONTRACT_ADDRESS', '');
+                $chain = env('TOKEN_CHAIN', 'ethereum');
 
                 if (!$contractAddress) {
                     Log::warning('Token contract address not configured');
@@ -306,71 +306,37 @@ class MarketDataService
     }
 
     /**
-     * Check if symbol is a bare crypto ticker that can be auto-suffixed with USDT
+     * Check if symbol is a bare crypto ticker — dynamic Binance probe.
+     * Only uses Binance (curated exchange) for type classification.
+     * DEX-only tokens are handled by fallback chains elsewhere.
      */
     private function isBareConvertibleCrypto(string $symbol): bool
     {
-        $knownCrypto = [
-            'BTC',
-            'ETH',
-            'SOL',
-            'BNB',
-            'XRP',
-            'ADA',
-            'DOGE',
-            'DOT',
-            'AVAX',
-            'MATIC',
-            'LINK',
-            'UNI',
-            'SHIB',
-            'LTC',
-            'ATOM',
-            'NEAR',
-            'APT',
-            'ARB',
-            'OP',
-            'SUI',
-            'SEI',
-            'TIA',
-            'JTO',
-            'FIL',
-            'INJ',
-            'TRX',
-            'TON',
-            'PEPE',
-            'WIF',
-            'BONK',
-            'FLOKI',
-            'FET',
-            'RNDR',
-            'GRT',
-            'AAVE',
-            'MKR',
-            'CRV',
-            'SNX',
-            'COMP',
-            'SAND',
-            'MANA',
-            'AXS',
-            'ICP',
-            'VET',
-            'ALGO',
-            'FTM',
-            'HBAR',
-            'EOS',
-            'THETA',
-            'XLM',
-            'XMR',
-            'EGLD',
-            'RUNE',
-            'STX',
-            'IMX',
-            'CFX',
-            'KAVA',
-            'NEO',
-        ];
-        return in_array($symbol, $knownCrypto);
+        $symbol = strtoupper($symbol);
+
+        if (strlen($symbol) > 10 || strlen($symbol) < 1) {
+            return false;
+        }
+
+        $cacheKey = "is_crypto_{$symbol}";
+        $cached = Cache::get($cacheKey);
+        if ($cached !== null) {
+            return $cached === 'yes';
+        }
+
+        // Probe Binance only (curated, no scam tokens named AAPL etc.)
+        try {
+            $response = Http::timeout(3)->get('https://api.binance.com/api/v3/ticker/price', [
+                'symbol' => "{$symbol}USDT",
+            ]);
+            if ($response->successful() && isset($response->json()['price'])) {
+                Cache::put($cacheKey, 'yes', 3600);
+                return true;
+            }
+        } catch (\Exception $e) {}
+
+        Cache::put($cacheKey, 'no', 600);
+        return false;
     }
 
     /**
@@ -421,7 +387,7 @@ class MarketDataService
     private function isDexToken(string $symbol): bool
     {
         // Tokens tracked via DexScreener by contract address
-        $dexTokens = array_filter(explode(',', env('DEX_TOKEN_SYMBOLS', 'SERPO')));
+        $dexTokens = array_filter(explode(',', env('DEX_TOKEN_SYMBOLS', '')));
         return in_array(strtoupper($symbol), array_map('strtoupper', $dexTokens));
     }
 

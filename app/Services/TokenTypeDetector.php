@@ -41,7 +41,7 @@ class TokenTypeDetector
         'WTON'
     ];
 
-    // Liquid staking derivatives
+    // Liquid staking derivatives (only actual LSD tokens, not base L1 assets)
     private const LIQUID_STAKING = [
         'stETH',
         'rETH',
@@ -49,10 +49,8 @@ class TokenTypeDetector
         'wstETH',
         'sETH2',
         'ankrETH',
-        'MATIC',
         'stMATIC',
         'maticX',
-        'SOL',
         'mSOL',
         'stSOL',
         'jitoSOL',

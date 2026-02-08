@@ -590,11 +590,21 @@ class CommandHandler
 
         // Common ticker typo corrections
         $typoCorrections = [
-            'APPL' => 'AAPL', 'GOGL' => 'GOOGL', 'GOOG' => 'GOOGL',
-            'AMZN' => 'AMZN', 'TELA' => 'TSLA', 'MIRCO' => 'MSFT',
-            'MICROSFOT' => 'MSFT', 'NETFLEX' => 'NFLX', 'BITCOINT' => 'BTC',
-            'ETHERIUM' => 'ETH', 'BITCOIN' => 'BTC', 'ETHEREUM' => 'ETH',
-            'SOLONA' => 'SOL', 'SOALANA' => 'SOL', 'DODGECOIN' => 'DOGE',
+            'APPL' => 'AAPL',
+            'GOGL' => 'GOOGL',
+            'GOOG' => 'GOOGL',
+            'AMZN' => 'AMZN',
+            'TELA' => 'TSLA',
+            'MIRCO' => 'MSFT',
+            'MICROSFOT' => 'MSFT',
+            'NETFLEX' => 'NFLX',
+            'BITCOINT' => 'BTC',
+            'ETHERIUM' => 'ETH',
+            'BITCOIN' => 'BTC',
+            'ETHEREUM' => 'ETH',
+            'SOLONA' => 'SOL',
+            'SOALANA' => 'SOL',
+            'DODGECOIN' => 'DOGE',
         ];
         if (isset($typoCorrections[$symbol])) {
             $corrected = $typoCorrections[$symbol];
@@ -1156,37 +1166,8 @@ class CommandHandler
         // Remove USDT/BUSD suffix if present
         $symbol = preg_replace('/(USDT|BUSD|USD)$/i', '', $symbol);
 
-        // Expanded symbol map for better API mapping
-        $symbolMap = [
-            'BTC' => 'Bitcoin',
-            'ETH' => 'Ethereum',
-            'XRP' => 'Ripple',
-            'BNB' => 'Binance Coin',
-            'SOL' => 'Solana',
-            'ADA' => 'Cardano',
-            'DOGE' => 'Dogecoin',
-            'MATIC' => 'Polygon',
-            'DOT' => 'Polkadot',
-            'AVAX' => 'Avalanche',
-            'LINK' => 'Chainlink',
-            'UNI' => 'Uniswap',
-            'ATOM' => 'Cosmos',
-            'LTC' => 'Litecoin',
-            'BCH' => 'Bitcoin Cash',
-            'NEAR' => 'NEAR Protocol',
-            'APT' => 'Aptos',
-            'ARB' => 'Arbitrum',
-            'OP' => 'Optimism',
-            'PEPE' => 'Pepe',
-            'SHIB' => 'Shiba Inu',
-            'TRX' => 'TRON',
-            'TON' => 'Toncoin',
-            'WIF' => 'dogwifhat',
-            'BONK' => 'Bonk',
-            'FLOKI' => 'Floki',
-        ];
-
-        $coinName = $symbolMap[$symbol] ?? $symbol;
+        // Dynamically resolve coin name via CoinGecko search API (cached)
+        $coinName = $this->resolveCoinName($symbol);
 
         $this->telegram->sendMessage($chatId, "🔍 Analyzing {$symbol} sentiment...");
 
@@ -3857,6 +3838,56 @@ class CommandHandler
     }
 
     /**
+     * Dynamically resolve a crypto symbol to its full coin name.
+     * Uses CoinGecko search API with 24h cache — works for any token, no hardcoded list.
+     */
+    private function resolveCoinName(string $symbol): string
+    {
+        $symbol = strtoupper($symbol);
+        $cacheKey = "coin_name_{$symbol}";
+
+        return Cache::remember($cacheKey, 86400, function () use ($symbol) {
+            // Try CoinGecko search API
+            try {
+                $response = Http::timeout(5)->get('https://api.coingecko.com/api/v3/search', [
+                    'query' => $symbol,
+                ]);
+
+                if ($response->successful()) {
+                    $coins = $response->json()['coins'] ?? [];
+                    foreach ($coins as $coin) {
+                        if (strtoupper($coin['symbol'] ?? '') === $symbol) {
+                            return $coin['name'] ?? $symbol;
+                        }
+                    }
+                }
+            } catch (\Exception $e) {
+                // CoinGecko unavailable
+            }
+
+            // Try DexScreener as fallback (for DEX-only tokens)
+            try {
+                $response = Http::timeout(5)->withUserAgent('SerpoAI/2.0')
+                    ->get('https://api.dexscreener.com/latest/dex/search', ['q' => $symbol]);
+
+                if ($response->successful()) {
+                    $pairs = $response->json()['pairs'] ?? [];
+                    foreach ($pairs as $pair) {
+                        if (strtoupper($pair['baseToken']['symbol'] ?? '') === $symbol) {
+                            return $pair['baseToken']['name'] ?? $symbol;
+                        }
+                    }
+                }
+            } catch (\Exception $e) {
+                // DexScreener unavailable
+            }
+
+            // Fallback: use symbol as-is
+            return $symbol;
+        });
+    }
+
+    /**
      * Format price based on market type
      */
     private function formatPrice(float $price, string $marketType): string
@@ -4098,9 +4129,14 @@ class CommandHandler
     {
         // Resolve common commodity aliases for data fetching
         $commodityAliases = [
-            'GOLD' => 'XAUUSD', 'SILVER' => 'XAGUSD', 'OIL' => 'BCOUSD',
-            'CRUDEOIL' => 'WTOUSD', 'BRENT' => 'BCOUSD', 'NATGAS' => 'NGAS',
-            'PLATINUM' => 'XPTUSD', 'PALLADIUM' => 'XPDUSD',
+            'GOLD' => 'XAUUSD',
+            'SILVER' => 'XAGUSD',
+            'OIL' => 'BCOUSD',
+            'CRUDEOIL' => 'WTOUSD',
+            'BRENT' => 'BCOUSD',
+            'NATGAS' => 'NGAS',
+            'PLATINUM' => 'XPTUSD',
+            'PALLADIUM' => 'XPDUSD',
         ];
         $displaySymbol = strtoupper($symbol);
         $dataSymbol = $commodityAliases[$displaySymbol] ?? $displaySymbol;
@@ -4143,12 +4179,13 @@ class CommandHandler
                 }
 
                 // Neither Binance nor DexScreener has this token
-                $this->telegram->sendMessage($chatId,
+                $this->telegram->sendMessage(
+                    $chatId,
                     "❌ *{$displaySymbol}* not found on Binance or DexScreener.\n\n" .
-                    "💡 *Tips:*\n" .
-                    "• Check the symbol spelling\n" .
-                    "• Use full pair: `/chart {$displaySymbol}USDT`\n" .
-                    "• Try `/price {$displaySymbol}` first to verify"
+                        "💡 *Tips:*\n" .
+                        "• Check the symbol spelling\n" .
+                        "• Use full pair: `/chart {$displaySymbol}USDT`\n" .
+                        "• Try `/price {$displaySymbol}` first to verify"
                 );
                 return;
             }
@@ -4291,7 +4328,8 @@ class CommandHandler
         $chartUrl = "https://dexscreener.com/{$chainId}/{$pairAddress}";
 
         Log::info('Building DexScreener chart', [
-            'symbol' => $symbol, 'chain' => $chainId,
+            'symbol' => $symbol,
+            'chain' => $chainId,
             'price' => $dexData['price'] ?? 'null',
             'change' => $dexData['change_24h'] ?? 'null',
             'volume' => $dexData['volume_24h'] ?? 'null',
@@ -4802,10 +4840,43 @@ class CommandHandler
 
             case 'stock':
                 // Map well-known exchanges; default to NASDAQ
-                $nyseSymbols = ['BA', 'GE', 'DIS', 'KO', 'PFE', 'JNJ', 'JPM', 'WMT', 'V', 'HD',
-                                'UNH', 'CVX', 'XOM', 'PG', 'MRK', 'ABT', 'VZ', 'T', 'CSCO', 'CRM',
-                                'NKE', 'MCD', 'CAT', 'GS', 'MMM', 'IBM', 'RTX', 'HON', 'AXP', 'TRV',
-                                'DOW', 'WBA', 'AA', 'F', 'GM'];
+                $nyseSymbols = [
+                    'BA',
+                    'GE',
+                    'DIS',
+                    'KO',
+                    'PFE',
+                    'JNJ',
+                    'JPM',
+                    'WMT',
+                    'V',
+                    'HD',
+                    'UNH',
+                    'CVX',
+                    'XOM',
+                    'PG',
+                    'MRK',
+                    'ABT',
+                    'VZ',
+                    'T',
+                    'CSCO',
+                    'CRM',
+                    'NKE',
+                    'MCD',
+                    'CAT',
+                    'GS',
+                    'MMM',
+                    'IBM',
+                    'RTX',
+                    'HON',
+                    'AXP',
+                    'TRV',
+                    'DOW',
+                    'WBA',
+                    'AA',
+                    'F',
+                    'GM'
+                ];
                 $exchange = in_array(str_replace('USD', '', $symbol), $nyseSymbols) ? 'NYSE' : 'NASDAQ';
                 return $exchange . ':' . str_replace('USD', '', $symbol);
 

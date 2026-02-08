@@ -1803,136 +1803,84 @@ class MultiMarketDataService
     }
 
     /**
-     * Check if a symbol is a known bare crypto symbol
+     * Check if a symbol is a crypto token by dynamically probing Binance.
+     * Uses Binance ticker check with caching — any token listed on Binance is discoverable.
+     * DEX-only tokens (not on Binance) are handled by getUniversalPriceData() fallback chain.
      */
     private function isBareConvertibleCrypto(string $symbol): bool
     {
-        $knownCrypto = [
-            'BTC',
-            'ETH',
-            'SOL',
-            'BNB',
-            'XRP',
-            'ADA',
-            'DOGE',
-            'DOT',
-            'AVAX',
-            'MATIC',
-            'LINK',
-            'UNI',
-            'SHIB',
-            'LTC',
-            'ATOM',
-            'NEAR',
-            'APT',
-            'ARB',
-            'OP',
-            'SUI',
-            'SEI',
-            'TIA',
-            'JTO',
-            'FIL',
-            'INJ',
-            'TRX',
-            'TON',
-            'PEPE',
-            'WIF',
-            'BONK',
-            'FLOKI',
-            'FET',
-            'RNDR',
-            'GRT',
-            'AAVE',
-            'MKR',
-            'CRV',
-            'SNX',
-            'COMP',
-            'SAND',
-            'MANA',
-            'AXS',
-            'ICP',
-            'VET',
-            'ALGO',
-            'FTM',
-            'HBAR',
-            'EOS',
-            'THETA',
-            'XLM',
-            'XMR',
-            'EGLD',
-            'RUNE',
-            'STX',
-            'IMX',
-            'CFX',
-            'KAVA',
-            'NEO',
-            'POL',
-            'WLD',
-            'JUP',
-            'PYTH',
-            'W',
-            'STRK',
-            'DYM',
-            'PIXEL',
-            'PORTAL',
-            'ALT',
-            'MANTA',
-            'AI16Z',
-            'PENDLE',
-            'ENS',
-            'SSV',
-            'LDO',
-            'RPL',
-            'CAKE',
-            'SUSHI',
-            'CRO',
-            'ZIL',
-            'GALA',
-            'ENJ',
-            'CHZ',
-            'MASK',
-            'BAT',
-            'ONE',
-            'CELO',
-            'ROSE',
-            'ZEC',
-            'DASH',
-            'WAVES',
-            'IOTA',
-            'SERPO',
-        ];
-        return in_array($symbol, $knownCrypto);
+        $symbol = strtoupper($symbol);
+
+        // Quick reject: symbols that are clearly not crypto
+        if (strlen($symbol) > 10 || strlen($symbol) < 1) {
+            return false;
+        }
+
+        // Check cache first (avoid repeated API calls)
+        $cacheKey = "is_crypto_{$symbol}";
+        $cached = Cache::get($cacheKey);
+        if ($cached !== null) {
+            return $cached === 'yes';
+        }
+
+        // Probe Binance: check if {SYMBOL}USDT exists
+        // Binance is a curated exchange — no scam tokens named AAPL/TSLA etc.
+        // DEX-only tokens (SERPO, memecoins) are found via fallback in getUniversalPriceData()
+        try {
+            $ticker = $this->binance->get24hTicker("{$symbol}USDT");
+            if ($ticker && isset($ticker['lastPrice'])) {
+                Cache::put($cacheKey, 'yes', 3600); // Cache 1 hour
+                return true;
+            }
+        } catch (\Exception $e) {
+            // Binance unavailable, don't assume crypto
+        }
+
+        // Not found on Binance — don't cache as non-crypto for long
+        // (stock→crypto fallback in getUniversalPriceData handles DEX tokens)
+        Cache::put($cacheKey, 'no', 600); // 10 minutes
+        return false;
     }
 
     /**
-     * Map crypto symbols to CoinGecko IDs
+     * Map crypto symbol to CoinGecko ID dynamically.
+     * Uses CoinGecko search API with caching — no hardcoded token list.
      */
     private function getCoinGeckoId(string $symbol): ?string
     {
-        $map = [
-            'BTC' => 'bitcoin',
-            'ETH' => 'ethereum',
-            'BNB' => 'binancecoin',
-            'SOL' => 'solana',
-            'XRP' => 'ripple',
-            'ADA' => 'cardano',
-            'DOGE' => 'dogecoin',
-            'DOT' => 'polkadot',
-            'MATIC' => 'matic-network',
-            'AVAX' => 'avalanche-2',
-            'LINK' => 'chainlink',
-            'UNI' => 'uniswap',
-            'ATOM' => 'cosmos',
-            'LTC' => 'litecoin',
-            'BCH' => 'bitcoin-cash',
-            'NEAR' => 'near',
-            'APT' => 'aptos',
-            'ARB' => 'arbitrum',
-            'OP' => 'optimism',
-            'SERPO' => 'serpo-coin',
-        ];
+        $symbol = strtoupper($symbol);
 
-        return $map[$symbol] ?? null;
+        // Check cache first
+        $cacheKey = "coingecko_id_{$symbol}";
+        $cached = Cache::get($cacheKey);
+        if ($cached !== null) {
+            return $cached === '__none__' ? null : $cached;
+        }
+
+        // Use CoinGecko search API to find the ID dynamically
+        try {
+            $response = Http::timeout(5)->get('https://api.coingecko.com/api/v3/search', [
+                'query' => $symbol,
+            ]);
+
+            if ($response->successful()) {
+                $coins = $response->json()['coins'] ?? [];
+                foreach ($coins as $coin) {
+                    // Match by symbol (exact, case-insensitive)
+                    if (strtoupper($coin['symbol'] ?? '') === $symbol) {
+                        $coinId = $coin['id'];
+                        Cache::put($cacheKey, $coinId, 86400); // Cache 24 hours
+                        return $coinId;
+                    }
+                }
+            }
+        } catch (\Exception $e) {
+            Log::debug('CoinGecko search failed', ['symbol' => $symbol, 'error' => $e->getMessage()]);
+        }
+
+        // Not found — cache negative result for 1 hour
+        Cache::put($cacheKey, '__none__', 3600);
+        return null;
     }
 
     /**

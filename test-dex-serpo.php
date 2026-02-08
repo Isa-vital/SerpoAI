@@ -8,7 +8,7 @@ curl_close($ch);
 $data = json_decode($resp, true);
 $pairs = $data['pairs'] ?? [];
 echo 'Total pairs: ' . count($pairs) . PHP_EOL;
-foreach($pairs as $p) {
+foreach ($pairs as $p) {
     if (strtoupper($p['baseToken']['symbol'] ?? '') === 'SERPO') {
         echo 'Chain: ' . $p['chainId'] . PHP_EOL;
         echo 'DEX: ' . $p['dexId'] . PHP_EOL;

@@ -4,6 +4,7 @@ namespace App\Services;
 
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Cache;
 
 /**
  * Asset Type Detector
@@ -89,61 +90,77 @@ class AssetTypeDetector
     }
 
     /**
-     * Check if string is a native asset symbol
+     * Check if string is a native asset symbol.
+     * Uses Binance ticker probe — works for any crypto, no hardcoded list.
      */
     private function isNativeAssetSymbol(string $input): bool
     {
-        $nativeAssets = [
-            'BTC',
-            'BITCOIN',
-            'ETH',
-            'ETHEREUM',
-            'BNB',
-            'BINANCE',
-            'SOL',
-            'SOLANA',
-            'ADA',
-            'CARDANO',
-            'AVAX',
-            'AVALANCHE',
-            'MATIC',
-            'POLYGON',
-            'DOT',
-            'POLKADOT',
-            'XRP',
-            'RIPPLE',
-        ];
+        $symbol = strtoupper(trim($input));
 
-        return in_array(strtoupper($input), $nativeAssets);
+        // Must be short (1-10 chars) and not look like an address
+        if (strlen($symbol) > 10 || strlen($symbol) < 2 || str_starts_with($symbol, '0X')) {
+            return false;
+        }
+
+        $cacheKey = "is_native_asset_{$symbol}";
+        $cached = Cache::get($cacheKey);
+        if ($cached !== null) {
+            return $cached === 'yes';
+        }
+
+        // Try Binance ticker — if {SYMBOL}USDT exists, it's a crypto asset
+        try {
+            $response = Http::timeout(3)->get('https://api.binance.com/api/v3/ticker/price', [
+                'symbol' => "{$symbol}USDT",
+            ]);
+            if ($response->successful() && isset($response->json()['price'])) {
+                Cache::put($cacheKey, 'yes', 3600);
+                return true;
+            }
+        } catch (\Exception $e) {}
+
+        // Try DexScreener as fallback
+        try {
+            $response = Http::timeout(5)->withUserAgent('SerpoAI/2.0')
+                ->get('https://api.dexscreener.com/latest/dex/search', ['q' => $symbol]);
+            if ($response->successful()) {
+                foreach ($response->json()['pairs'] ?? [] as $pair) {
+                    if (strtoupper($pair['baseToken']['symbol'] ?? '') === $symbol) {
+                        Cache::put($cacheKey, 'yes', 3600);
+                        return true;
+                    }
+                }
+            }
+        } catch (\Exception $e) {}
+
+        Cache::put($cacheKey, 'no', 600);
+        return false;
     }
 
     /**
-     * Get native asset full name
+     * Get native asset full name dynamically via CoinGecko search API.
      */
     private function getNativeAssetName(string $symbol): string
     {
-        $names = [
-            'BTC' => 'Bitcoin',
-            'BITCOIN' => 'Bitcoin',
-            'ETH' => 'Ethereum',
-            'ETHEREUM' => 'Ethereum',
-            'BNB' => 'Binance Coin',
-            'BINANCE' => 'Binance Coin',
-            'SOL' => 'Solana',
-            'SOLANA' => 'Solana',
-            'ADA' => 'Cardano',
-            'CARDANO' => 'Cardano',
-            'AVAX' => 'Avalanche',
-            'AVALANCHE' => 'Avalanche',
-            'MATIC' => 'Polygon',
-            'POLYGON' => 'Polygon',
-            'DOT' => 'Polkadot',
-            'POLKADOT' => 'Polkadot',
-            'XRP' => 'Ripple',
-            'RIPPLE' => 'Ripple',
-        ];
+        $symbol = strtoupper(trim($symbol));
+        $cacheKey = "coin_name_{$symbol}";
 
-        return $names[strtoupper($symbol)] ?? strtoupper($symbol);
+        return Cache::remember($cacheKey, 86400, function () use ($symbol) {
+            try {
+                $response = Http::timeout(5)->get('https://api.coingecko.com/api/v3/search', [
+                    'query' => $symbol,
+                ]);
+                if ($response->successful()) {
+                    foreach ($response->json()['coins'] ?? [] as $coin) {
+                        if (strtoupper($coin['symbol'] ?? '') === $symbol) {
+                            return $coin['name'] ?? $symbol;
+                        }
+                    }
+                }
+            } catch (\Exception $e) {}
+
+            return $symbol;
+        });
     }
 
     /**
