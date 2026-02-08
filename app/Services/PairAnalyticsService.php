@@ -42,12 +42,18 @@ class PairAnalyticsService
             $universalData = $this->multiMarket->getUniversalPriceData($pair);
             if (!isset($universalData['error']) && isset($universalData['price'])) {
                 // Convert universal price data to analysis format
+                // Note: getUniversalPriceData returns percentage in 'change_24h' field
+                $changePercent = floatval($universalData['change_24h'] ?? $universalData['change_percent'] ?? 0);
+                $price = floatval($universalData['price']);
+                $dollarChange = $price * $changePercent / 100;
+
                 return [
                     'market' => $universalData['market_type'] ?? $marketType,
                     'symbol' => $universalData['symbol'] ?? strtoupper($pair),
-                    'price' => $universalData['price'],
-                    'change_24h' => $universalData['change_24h'] ?? 0,
-                    'change_percent' => $universalData['change_24h'] ?? $universalData['change_percent'] ?? 0,
+                    'price' => $price,
+                    'change' => $dollarChange,
+                    'change_24h' => $dollarChange,
+                    'change_percent' => $changePercent,
                     'volume' => $universalData['volume_24h'] ?? 0,
                     'market_cap' => $universalData['market_cap'] ?? null,
                     'liquidity' => $universalData['liquidity'] ?? null,
@@ -125,58 +131,111 @@ class PairAnalyticsService
         }
 
         // Technical Indicators
-        if (isset($analysis['indicators'])) {
+        if (isset($analysis['indicators']) && !empty($analysis['indicators'])) {
             $indicators = $analysis['indicators'];
-            $message .= "📈 *Technical Analysis*\n";
+            $hasIndicatorData = false;
+            $indicatorBlock = "📈 *Technical Analysis*\n";
 
-            if (isset($indicators['trend'])) {
-                $trendEmoji = match ($indicators['trend']) {
-                    'Bullish' => '🐂',
-                    'Bearish' => '🐻',
-                    default => '➡️'
-                };
-                $message .= "Trend: {$trendEmoji} {$indicators['trend']}\n";
+            if (isset($indicators['trend']) && $indicators['trend']) {
+                $hasIndicatorData = true;
+                $trendStr = $indicators['trend'];
+                // Check if trend already has emoji (from TwelveData/AlphaVantage)
+                if (str_contains($trendStr, '🟢') || str_contains($trendStr, '🔴') || str_contains($trendStr, '⚪')) {
+                    $indicatorBlock .= "Trend: {$trendStr}\n";
+                } else {
+                    $trendEmoji = match ($trendStr) {
+                        'Bullish' => '🐂',
+                        'Bearish' => '🐻',
+                        default => '➡️'
+                    };
+                    $indicatorBlock .= "Trend: {$trendEmoji} {$trendStr}\n";
+                }
             }
 
             if (isset($indicators['rsi'])) {
                 $rsiData = $indicators['rsi'];
                 if (is_array($rsiData)) {
-                    $message .= "RSI: ";
-                    if (isset($rsiData['1h'])) $message .= "1H: {$rsiData['1h']} ";
-                    if (isset($rsiData['4h'])) $message .= "| 4H: {$rsiData['4h']}";
-                    $message .= "\n";
-                } else {
-                    $message .= "RSI: {$rsiData}\n";
+                    $hasIndicatorData = true;
+                    $indicatorBlock .= "RSI: ";
+                    if (isset($rsiData['1h'])) $indicatorBlock .= "1H: {$rsiData['1h']} ";
+                    if (isset($rsiData['4h'])) $indicatorBlock .= "| 4H: {$rsiData['4h']}";
+                    $indicatorBlock .= "\n";
+                } elseif ($rsiData !== null) {
+                    $hasIndicatorData = true;
+                    $indicatorBlock .= "RSI: " . round(floatval($rsiData), 2) . "\n";
                 }
             }
 
-            if (isset($indicators['ma20']) && isset($indicators['ma50'])) {
-                $message .= "MA20: \$" . $this->formatPrice($indicators['ma20']) . "\n";
-                $message .= "MA50: \$" . $this->formatPrice($indicators['ma50']) . "\n";
+            // Support both key formats: ma20/ma50 (crypto) and sma_20/sma_50 (stocks)
+            $ma20 = $indicators['ma20'] ?? $indicators['sma_20'] ?? null;
+            $ma50 = $indicators['ma50'] ?? $indicators['sma_50'] ?? null;
+            if ($ma20) {
+                $hasIndicatorData = true;
+                $indicatorBlock .= "MA20: \$" . $this->formatPrice($ma20) . "\n";
+            }
+            if ($ma50) {
+                $hasIndicatorData = true;
+                $indicatorBlock .= "MA50: \$" . $this->formatPrice($ma50) . "\n";
+            }
+
+            // Stock-specific: support/resistance from indicators
+            if (isset($indicators['support']) && isset($indicators['resistance'])) {
+                $hasIndicatorData = true;
+                $indicatorBlock .= "Support: \$" . $this->formatPrice($indicators['support']) . "\n";
+                $indicatorBlock .= "Resistance: \$" . $this->formatPrice($indicators['resistance']) . "\n";
+            }
+
+            // Volatility (from stock indicators)
+            if (isset($indicators['volatility']) && $indicators['volatility']) {
+                $hasIndicatorData = true;
+                $indicatorBlock .= "Volatility: {$indicators['volatility']}%\n";
             }
 
             // DEX token indicators
             if (isset($indicators['liquidity_usd'])) {
-                $message .= "Liquidity: {$indicators['liquidity_usd']}\n";
+                $hasIndicatorData = true;
+                $indicatorBlock .= "Liquidity: {$indicators['liquidity_usd']}\n";
             }
             if (isset($indicators['market_cap'])) {
-                $message .= "Market Cap: {$indicators['market_cap']}\n";
+                $hasIndicatorData = true;
+                $indicatorBlock .= "Market Cap: {$indicators['market_cap']}\n";
             }
 
-            $message .= "\n";
+            // Only show section if we actually have data
+            if ($hasIndicatorData) {
+                $message .= $indicatorBlock . "\n";
+            }
         }
 
         // Support/Resistance for crypto
         if (isset($analysis['support_resistance'])) {
             $sr = $analysis['support_resistance'];
-            $message .= "🎯 *Key Levels*\n";
-            if (isset($sr['nearest_support']) && $sr['nearest_support']) {
-                $message .= "Support: \$" . $this->formatPrice($sr['nearest_support']) . "\n";
+            $support = $sr['nearest_support'] ?? null;
+            $resistance = $sr['nearest_resistance'] ?? null;
+
+            // Fallback: if nearest levels are null, use closest from full arrays
+            if (!$support && !empty($sr['support'])) {
+                $support = max($sr['support']); // Highest support level
             }
-            if (isset($sr['nearest_resistance']) && $sr['nearest_resistance']) {
-                $message .= "Resistance: \$" . $this->formatPrice($sr['nearest_resistance']) . "\n";
+            if (!$resistance && !empty($sr['resistance'])) {
+                $currentPrice = $analysis['price'] ?? 0;
+                // Find highest resistance (even if below current price, still informative)
+                $allResistance = $sr['resistance'];
+                rsort($allResistance);
+                $resistance = $allResistance[0] ?? null;
             }
-            $message .= "\n";
+
+            // Only show section if we have at least one level
+            if ($support || $resistance) {
+                $message .= "🎯 *Key Levels*\n";
+                if ($support) {
+                    $message .= "Support: \$" . $this->formatPrice($support) . "\n";
+                }
+                if ($resistance) {
+                    $message .= "Resistance: \$" . $this->formatPrice($resistance) . "\n";
+                }
+                $message .= "\n";
+            }
         }
 
         // Risk Assessment for crypto
