@@ -4193,32 +4193,23 @@ class CommandHandler
         }
 
         // For symbols classified as "stock" (1-5 chars not on Binance),
-        // verify they actually exist as stocks before rendering TradingView chart.
-        // If stock lookup fails, try DexScreener — handles DEX-only tokens like SERPO
-        // that are short symbols misclassified as stocks.
+        // check DexScreener FIRST — handles DEX-only tokens like SERPO
+        // that are short symbols misclassified as stocks by detectMarketType().
+        // DexScreener is faster than trying all 4 stock APIs.
         if ($marketType === 'stock') {
-            $stockCheck = null;
             try {
-                $stockCheck = $this->multiMarket->analyzeStockPair($dataSymbol);
-            } catch (\Exception $e) {
-                Log::debug('Stock check failed for chart', ['symbol' => $dataSymbol]);
-            }
-
-            if (!$stockCheck || isset($stockCheck['error']) || !isset($stockCheck['price'])) {
-                // Not a valid stock — try DexScreener
-                try {
-                    $dexData = $this->multiMarket->getDexScreenerPrice($displaySymbol);
-                    if ($dexData && isset($dexData['pair_address'], $dexData['chain_id'])) {
-                        $this->sendDexScreenerChart($chatId, $displaySymbol, $displayTf, $dexData);
-                        return;
-                    }
-                } catch (\Exception $e) {
-                    Log::warning('DexScreener fallback for stock-classified symbol failed', [
-                        'symbol' => $displaySymbol, 'error' => $e->getMessage()
-                    ]);
+                $dexData = $this->multiMarket->getDexScreenerPrice($displaySymbol);
+                if ($dexData && isset($dexData['pair_address'], $dexData['chain_id'])) {
+                    // Found on DEX — redirect to DexScreener chart
+                    $this->sendDexScreenerChart($chatId, $displaySymbol, $displayTf, $dexData);
+                    return;
                 }
-                // If DexScreener also fails, fall through to TradingView anyway
+            } catch (\Exception $e) {
+                Log::debug('DexScreener check for stock-classified symbol failed', [
+                    'symbol' => $displaySymbol, 'error' => $e->getMessage()
+                ]);
             }
+            // Not on DexScreener — proceed with stock/TradingView chart
         }
 
         // Format symbol for TradingView (uses display symbol for better mapping)
