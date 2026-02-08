@@ -204,6 +204,12 @@ class MultiMarketDataService
             return 'forex';
         }
 
+        // Bare commodity aliases (GOLD, SILVER, OIL, etc.) — treat as forex/commodity
+        $commodityAliases = ['GOLD', 'SILVER', 'OIL', 'CRUDEOIL', 'BRENT', 'NATGAS', 'PLATINUM', 'PALLADIUM', 'COPPER'];
+        if (in_array(strtoupper($symbol), $commodityAliases)) {
+            return 'forex';
+        }
+
         // Crypto pairs - support ALL major quote currencies
         // USDT, BTC, ETH, BUSD, USDC, BNB, DAI, TUSD, FDUSD, EUR, GBP, AUD, TRY, etc.
         $cryptoSuffixes = [
@@ -1430,6 +1436,12 @@ class MultiMarketDataService
         $aliases = [
             'GOLD' => 'XAUUSD',
             'SILVER' => 'XAGUSD',
+            'OIL' => 'BCOUSD',
+            'CRUDEOIL' => 'WTOUSD',
+            'BRENT' => 'BCOUSD',
+            'NATGAS' => 'NGAS',
+            'PLATINUM' => 'XPTUSD',
+            'PALLADIUM' => 'XPDUSD',
         ];
         if (isset($aliases[$symbol])) {
             $symbol = $aliases[$symbol];

@@ -588,16 +588,16 @@ class CommandHandler
         $symbol = strtoupper($params[0]);
         $timeframe = isset($params[1]) ? strtoupper($params[1]) : '1H';
 
-        // Validate and normalize timeframe
-        $timeframe = $this->normalizeTimeframe($timeframe);
-        if (!$timeframe) {
+        // Validate timeframe (keep user-friendly format for display)
+        $validated = $this->normalizeTimeframe($timeframe);
+        if (!$validated) {
             $this->telegram->sendMessage($chatId, __('trading.chart.invalid_tf'));
             return;
         }
 
         $this->telegram->sendChatAction($chatId, 'upload_photo');
 
-        // All pairs use TradingView
+        // Pass original user-friendly timeframe; sendTradingViewChart will normalize
         $this->sendTradingViewChart($chatId, $symbol, $timeframe);
     }
 
@@ -4082,37 +4082,47 @@ class CommandHandler
      */
     private function sendTradingViewChart(int $chatId, string $symbol, string $timeframe): void
     {
+        // Resolve common commodity aliases for data fetching
+        $commodityAliases = [
+            'GOLD' => 'XAUUSD', 'SILVER' => 'XAGUSD', 'OIL' => 'BCOUSD',
+            'CRUDEOIL' => 'WTOUSD', 'BRENT' => 'BCOUSD', 'NATGAS' => 'NGAS',
+            'PLATINUM' => 'XPTUSD', 'PALLADIUM' => 'XPDUSD',
+        ];
+        $displaySymbol = strtoupper($symbol);
+        $dataSymbol = $commodityAliases[$displaySymbol] ?? $displaySymbol;
+
         // Detect market type
-        $marketType = $this->multiMarket->detectMarketType($symbol);
+        $marketType = $this->multiMarket->detectMarketType($dataSymbol);
 
-        // Format symbol for TradingView
-        $tvSymbol = $this->formatSymbolForTradingView($symbol, $marketType);
+        // Format symbol for TradingView (uses display symbol for better mapping)
+        $tvSymbol = $this->formatSymbolForTradingView($displaySymbol, $marketType);
 
-        // Get interval in TradingView format
-        $interval = $this->normalizeTimeframe($timeframe);
+        // Get interval in TradingView format, keep display-friendly version
+        $interval = $this->normalizeTimeframe($timeframe) ?? '60';
+        $displayTf = $this->denormalizeTimeframe($interval);
 
         // Try to get market data for current stats
         $marketData = null;
         try {
             switch ($marketType) {
                 case 'crypto':
-                    $marketData = $this->multiMarket->analyzeCryptoPair($symbol);
+                    $marketData = $this->multiMarket->analyzeCryptoPair($dataSymbol);
                     break;
                 case 'stock':
-                    $marketData = $this->multiMarket->analyzeStockPair($symbol);
+                    $marketData = $this->multiMarket->analyzeStockPair($dataSymbol);
                     break;
                 case 'forex':
-                    $marketData = $this->multiMarket->analyzeForexPair($symbol);
+                    $marketData = $this->multiMarket->analyzeForexPair($dataSymbol);
                     break;
             }
         } catch (\Exception $e) {
-            Log::debug('Error fetching market data for chart', ['symbol' => $symbol, 'error' => $e->getMessage()]);
+            Log::debug('Error fetching market data for chart', ['symbol' => $dataSymbol, 'error' => $e->getMessage()]);
         }
 
         // Build caption
-        $caption = "📊 *{$symbol} Chart ({$timeframe})*\n\n";
+        $caption = "📊 *{$displaySymbol} Chart ({$displayTf})*\n\n";
         $caption .= "📈 *Market:* " . ucfirst($marketType) . "\n";
-        $caption .= "⏱ *Timeframe:* {$timeframe}\n\n";
+        $caption .= "⏱ *Timeframe:* {$displayTf}\n\n";
 
         if ($marketData && !isset($marketData['error']) && isset($marketData['price'])) {
             $price = $marketData['price'];
@@ -4143,18 +4153,18 @@ class CommandHandler
                     ['text' => '📊 Open TradingView', 'url' => $chartUrl]
                 ],
                 [
-                    ['text' => '⚡ 5M', 'callback_data' => "/chart {$symbol} 5M"],
-                    ['text' => '📈 15M', 'callback_data' => "/chart {$symbol} 15M"],
-                    ['text' => '📊 1H', 'callback_data' => "/chart {$symbol} 1H"],
+                    ['text' => '⚡ 5M', 'callback_data' => "/chart {$displaySymbol} 5M"],
+                    ['text' => '📈 15M', 'callback_data' => "/chart {$displaySymbol} 15M"],
+                    ['text' => '📊 1H', 'callback_data' => "/chart {$displaySymbol} 1H"],
                 ],
                 [
-                    ['text' => '⏰ 4H', 'callback_data' => "/chart {$symbol} 4H"],
-                    ['text' => '📅 1D', 'callback_data' => "/chart {$symbol} 1D"],
-                    ['text' => '📆 1W', 'callback_data' => "/chart {$symbol} 1W"],
+                    ['text' => '⏰ 4H', 'callback_data' => "/chart {$displaySymbol} 4H"],
+                    ['text' => '📅 1D', 'callback_data' => "/chart {$displaySymbol} 1D"],
+                    ['text' => '📆 1W', 'callback_data' => "/chart {$displaySymbol} 1W"],
                 ],
                 [
-                    ['text' => '📈 Analyze', 'callback_data' => "/analyze {$symbol}"],
-                    ['text' => '📊 RSI', 'callback_data' => "/rsi {$symbol}"],
+                    ['text' => '📈 Analyze', 'callback_data' => "/analyze {$displaySymbol}"],
+                    ['text' => '📊 RSI', 'callback_data' => "/rsi {$displaySymbol}"],
                 ],
             ]
         ];
@@ -4561,6 +4571,38 @@ class CommandHandler
     {
         $symbol = strtoupper($symbol);
 
+        // Commodity & precious metal aliases → TradingView commodity symbols
+        $commodityMap = [
+            'GOLD' => 'TVC:GOLD',
+            'SILVER' => 'TVC:SILVER',
+            'OIL' => 'TVC:USOIL',
+            'CRUDEOIL' => 'TVC:USOIL',
+            'BRENT' => 'TVC:UKOIL',
+            'NATGAS' => 'TVC:NATGAS',
+            'PLATINUM' => 'TVC:PLATINUM',
+            'PALLADIUM' => 'TVC:PALLADIUM',
+            'COPPER' => 'TVC:COPPER',
+            'WHEAT' => 'TVC:WHEAT',
+            'CORN' => 'TVC:CORN',
+            'SOYBEAN' => 'TVC:SOYBEAN',
+        ];
+        if (isset($commodityMap[$symbol])) {
+            return $commodityMap[$symbol];
+        }
+
+        // Forex commodity pairs → OANDA
+        $forexCommodityMap = [
+            'XAUUSD' => 'OANDA:XAUUSD',
+            'XAGUSD' => 'OANDA:XAGUSD',
+            'XPTUSD' => 'OANDA:XPTUSD',
+            'XPDUSD' => 'OANDA:XPDUSD',
+            'XAUEUR' => 'OANDA:XAUEUR',
+            'XAGEUR' => 'OANDA:XAGEUR',
+        ];
+        if (isset($forexCommodityMap[$symbol])) {
+            return $forexCommodityMap[$symbol];
+        }
+
         switch ($marketType) {
             case 'crypto':
                 // Check if symbol already has a quote currency
@@ -4579,11 +4621,19 @@ class CommandHandler
                 if (!$hasQuote) {
                     $symbol .= 'USDT';
                 }
+
+                // Check if on Binance; DEX-only tokens may not have a TradingView listing
+                // Try Binance first, which is most common
                 return 'BINANCE:' . $symbol;
 
             case 'stock':
-                // Default to NASDAQ (can be enhanced)
-                return 'NASDAQ:' . str_replace('USD', '', $symbol);
+                // Map well-known exchanges; default to NASDAQ
+                $nyseSymbols = ['BA', 'GE', 'DIS', 'KO', 'PFE', 'JNJ', 'JPM', 'WMT', 'V', 'HD',
+                                'UNH', 'CVX', 'XOM', 'PG', 'MRK', 'ABT', 'VZ', 'T', 'CSCO', 'CRM',
+                                'NKE', 'MCD', 'CAT', 'GS', 'MMM', 'IBM', 'RTX', 'HON', 'AXP', 'TRV',
+                                'DOW', 'WBA', 'AA', 'F', 'GM'];
+                $exchange = in_array(str_replace('USD', '', $symbol), $nyseSymbols) ? 'NYSE' : 'NASDAQ';
+                return $exchange . ':' . str_replace('USD', '', $symbol);
 
             case 'forex':
                 return 'FX:' . str_replace('/', '', $symbol);
