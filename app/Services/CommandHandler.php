@@ -502,6 +502,16 @@ class CommandHandler
             $message .= "📊 Market Cap: $" . $this->formatLargeNumber($data['market_cap']) . "\n";
         }
 
+        // Liquidity (DEX tokens)
+        if (isset($data['liquidity']) && $data['liquidity'] > 0) {
+            $message .= "🏊 Liquidity: $" . $this->formatLargeNumber($data['liquidity']) . "\n";
+        }
+
+        // Chain info (DEX tokens)
+        if (isset($data['chain'])) {
+            $message .= "⛓️ Chain: {$data['chain']}\n";
+        }
+
         // High/Low (if available)
         if (isset($data['high_24h']) && isset($data['low_24h'])) {
             $high = $this->formatPriceAdaptive($data['high_24h'], $data['market_type']);

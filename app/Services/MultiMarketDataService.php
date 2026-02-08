@@ -1545,7 +1545,18 @@ class MultiMarketDataService
                     Log::debug('CoinGecko price fallback failed', ['symbol' => $baseAsset]);
                 }
             }
-            return ['error' => "❌ {$baseAsset} not found on major exchanges (Binance/CoinGecko).\n\nThis token may be:\n• A new/unlisted token\n• Only available on DEXs\n• Misspelled\n\nTry the full pair: `/price {$baseAsset}USDT`"];
+
+            // Fallback 3: DexScreener — covers DEX tokens on TON, Solana, ETH, BSC, etc.
+            try {
+                $dexResult = $this->getDexScreenerPrice($baseAsset);
+                if ($dexResult) {
+                    return $dexResult;
+                }
+            } catch (\Exception $e) {
+                Log::debug('DexScreener price fallback failed', ['symbol' => $baseAsset]);
+            }
+
+            return ['error' => "❌ {$baseAsset} not found on exchanges (Binance, CoinGecko, or DEXs).\n\nThis token may be:\n• Too new or very low liquidity\n• Misspelled\n\nTry the full pair: `/price {$baseAsset}USDT`"];
         }
 
         $result = [
@@ -1830,5 +1841,78 @@ class MultiMarketDataService
         ];
 
         return $map[$symbol] ?? null;
+    }
+
+    /**
+     * Get price data from DexScreener for DEX-only tokens (TON, Solana, ETH, BSC, etc.)
+     * Searches by token symbol and returns the highest-liquidity pair
+     */
+    private function getDexScreenerPrice(string $symbol): ?array
+    {
+        try {
+            $response = Http::timeout(8)->withUserAgent('SerpoAI/2.0')
+                ->get("https://api.dexscreener.com/latest/dex/search", [
+                    'q' => $symbol,
+                ]);
+
+            if (!$response->successful()) {
+                return null;
+            }
+
+            $data = $response->json();
+            $pairs = $data['pairs'] ?? [];
+
+            if (empty($pairs)) {
+                return null;
+            }
+
+            // Filter pairs to match the exact base token symbol
+            $matchingPairs = array_filter($pairs, function ($pair) use ($symbol) {
+                $baseSymbol = strtoupper($pair['baseToken']['symbol'] ?? '');
+                return $baseSymbol === strtoupper($symbol);
+            });
+
+            if (empty($matchingPairs)) {
+                return null;
+            }
+
+            // Sort by liquidity (highest first) to get the most reliable price
+            usort($matchingPairs, function ($a, $b) {
+                $liqA = floatval($a['liquidity']['usd'] ?? 0);
+                $liqB = floatval($b['liquidity']['usd'] ?? 0);
+                return $liqB <=> $liqA;
+            });
+
+            $bestPair = $matchingPairs[0];
+            $price = floatval($bestPair['priceUsd'] ?? 0);
+
+            if ($price <= 0) {
+                return null;
+            }
+
+            $chainName = ucfirst($bestPair['chainId'] ?? 'Unknown');
+            $dexName = $bestPair['dexId'] ?? 'DEX';
+            $change24h = floatval($bestPair['priceChange']['h24'] ?? 0);
+            $volume24h = floatval($bestPair['volume']['h24'] ?? 0);
+            $liquidity = floatval($bestPair['liquidity']['usd'] ?? 0);
+            $marketCap = floatval($bestPair['marketCap'] ?? $bestPair['fdv'] ?? 0);
+
+            return [
+                'symbol' => strtoupper($symbol),
+                'market_type' => 'crypto',
+                'source' => "DexScreener ({$chainName})",
+                'price' => $price,
+                'change_24h' => $change24h,
+                'volume_24h' => $volume24h,
+                'market_cap' => $marketCap > 0 ? $marketCap : null,
+                'liquidity' => $liquidity,
+                'dex' => $dexName,
+                'chain' => $chainName,
+                'updated_at' => gmdate('Y-m-d H:i') . ' UTC',
+            ];
+        } catch (\Exception $e) {
+            Log::debug('DexScreener search failed', ['symbol' => $symbol, 'error' => $e->getMessage()]);
+            return null;
+        }
     }
 }
