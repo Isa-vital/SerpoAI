@@ -243,7 +243,7 @@ class MultiMarketDataService
         ];
 
         foreach ($cryptoSuffixes as $suffix) {
-            if (str_ends_with($symbol, $suffix)) {
+            if (strlen($symbol) > strlen($suffix) && str_ends_with($symbol, $suffix)) {
                 return 'crypto';
             }
         }
@@ -253,8 +253,16 @@ class MultiMarketDataService
             return 'crypto';
         }
 
+        // Bare fiat currency codes — redirect to XXXUSD forex pair
+        // Prevents AUD/EUR/GBP from being misclassified as stock/crypto
+        $bareFiat = ['USD', 'EUR', 'GBP', 'JPY', 'CHF', 'CAD', 'AUD', 'NZD', 'CNY', 'HKD', 'SGD', 'SEK', 'NOK', 'DKK', 'INR', 'KRW', 'MXN', 'ZAR', 'TRY', 'BRL', 'RUB', 'PLN', 'THB', 'IDR', 'MYR', 'PHP', 'TWD', 'CZK', 'HUF', 'ILS', 'CLP', 'ARS', 'COP', 'PEN', 'NGN', 'KES', 'EGP', 'PKR', 'BDT', 'VND', 'UAH', 'RON', 'BGN', 'HRK', 'SAR', 'AED', 'QAR', 'KWD', 'BHD', 'OMR'];
+        if (in_array($symbol, $bareFiat)) {
+            return 'forex';
+        }
+
         // Stock symbols: 1-5 characters (AAPL, TSLA, BA, etc.)
         // If it's short and doesn't match crypto/forex patterns, it's likely a stock
+        // Note: if stock lookup fails, getUniversalPriceData() will try crypto as fallback
         if (strlen($symbol) >= 1 && strlen($symbol) <= 5 && !str_contains($symbol, 'USDT') && !str_contains($symbol, 'BTC')) {
             return 'stock';
         }
@@ -1427,6 +1435,12 @@ class MultiMarketDataService
             $symbol = $aliases[$symbol];
         }
 
+        // Handle bare fiat currencies (AUD → AUDUSD, EUR → EURUSD, etc.)
+        $bareFiat = ['EUR', 'GBP', 'JPY', 'CHF', 'CAD', 'AUD', 'NZD', 'CNY', 'HKD', 'SGD', 'SEK', 'NOK', 'DKK', 'INR', 'KRW', 'MXN', 'ZAR', 'TRY', 'BRL', 'RUB', 'PLN', 'THB', 'IDR', 'MYR', 'PHP', 'TWD', 'CZK', 'HUF', 'ILS', 'CLP', 'ARS', 'COP', 'PEN', 'NGN', 'KES', 'EGP', 'PKR', 'BDT', 'VND', 'UAH', 'RON', 'BGN', 'HRK', 'SAR', 'AED', 'QAR', 'KWD', 'BHD', 'OMR'];
+        if (in_array($symbol, $bareFiat)) {
+            $symbol = $symbol . 'USD';
+        }
+
         $marketType = $this->detectMarketType($symbol);
         $cacheKey = "price_data_{$symbol}";
 
@@ -1437,7 +1451,17 @@ class MultiMarketDataService
                 } elseif ($marketType === 'forex') {
                     return $this->getForexPriceData($symbol);
                 } elseif ($marketType === 'stock') {
-                    return $this->getStockPriceData($symbol);
+                    $result = $this->getStockPriceData($symbol);
+                    // If stock lookup failed, try crypto as fallback
+                    // This handles new tokens (TRUMP, PNUT, etc.) that are 1-5 chars
+                    // and get misclassified as stocks by detectMarketType()
+                    if (isset($result['error'])) {
+                        $cryptoResult = $this->getCryptoPriceData($symbol);
+                        if (!isset($cryptoResult['error'])) {
+                            return $cryptoResult;
+                        }
+                    }
+                    return $result;
                 }
 
                 return ['error' => "Unable to determine market type for {$symbol}"];
@@ -1728,7 +1752,7 @@ class MultiMarketDataService
             Log::error('Yahoo Finance error', ['symbol' => $symbol, 'error' => $e->getMessage()]);
         }
 
-        return ['error' => "❌ Unable to fetch {$symbol} data.\\n\\nNot found as a stock, crypto, or forex pair.\\n\\nTry:\\n• Crypto: `/price BTC`\\n• Stock: `/price AAPL`\\n• Forex: `/price EURUSD`\\n• Gold: `/price XAUUSD`"];
+        return ['error' => "❌ Unable to fetch {$symbol} stock data. Verify it's a valid ticker (e.g., AAPL, MSFT, TSLA)."];
     }
 
     /**
@@ -1772,6 +1796,7 @@ class MultiMarketDataService
             'PENDLE', 'ENS', 'SSV', 'LDO', 'RPL', 'CAKE', 'SUSHI',
             'CRO', 'ZIL', 'GALA', 'ENJ', 'CHZ', 'MASK', 'BAT',
             'ONE', 'CELO', 'ROSE', 'ZEC', 'DASH', 'WAVES', 'IOTA',
+            'SERPO',
         ];
         return in_array($symbol, $knownCrypto);
     }
@@ -1801,6 +1826,7 @@ class MultiMarketDataService
             'APT' => 'aptos',
             'ARB' => 'arbitrum',
             'OP' => 'optimism',
+            'SERPO' => 'serpo-coin',
         ];
 
         return $map[$symbol] ?? null;
