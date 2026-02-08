@@ -4192,6 +4192,35 @@ class CommandHandler
             }
         }
 
+        // For symbols classified as "stock" (1-5 chars not on Binance),
+        // verify they actually exist as stocks before rendering TradingView chart.
+        // If stock lookup fails, try DexScreener — handles DEX-only tokens like SERPO
+        // that are short symbols misclassified as stocks.
+        if ($marketType === 'stock') {
+            $stockCheck = null;
+            try {
+                $stockCheck = $this->multiMarket->analyzeStockPair($dataSymbol);
+            } catch (\Exception $e) {
+                Log::debug('Stock check failed for chart', ['symbol' => $dataSymbol]);
+            }
+
+            if (!$stockCheck || isset($stockCheck['error']) || !isset($stockCheck['price'])) {
+                // Not a valid stock — try DexScreener
+                try {
+                    $dexData = $this->multiMarket->getDexScreenerPrice($displaySymbol);
+                    if ($dexData && isset($dexData['pair_address'], $dexData['chain_id'])) {
+                        $this->sendDexScreenerChart($chatId, $displaySymbol, $displayTf, $dexData);
+                        return;
+                    }
+                } catch (\Exception $e) {
+                    Log::warning('DexScreener fallback for stock-classified symbol failed', [
+                        'symbol' => $displaySymbol, 'error' => $e->getMessage()
+                    ]);
+                }
+                // If DexScreener also fails, fall through to TradingView anyway
+            }
+        }
+
         // Format symbol for TradingView (uses display symbol for better mapping)
         $tvSymbol = $this->formatSymbolForTradingView($displaySymbol, $marketType);
 
