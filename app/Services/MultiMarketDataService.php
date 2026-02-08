@@ -1938,7 +1938,7 @@ class MultiMarketDataService
      * Get price data from DexScreener for DEX-only tokens (TON, Solana, ETH, BSC, etc.)
      * Searches by token symbol and returns the highest-liquidity pair
      */
-    private function getDexScreenerPrice(string $symbol): ?array
+    public function getDexScreenerPrice(string $symbol): ?array
     {
         try {
             $response = Http::timeout(8)->withUserAgent('SerpoAI/2.0')
@@ -1999,6 +1999,8 @@ class MultiMarketDataService
                 'liquidity' => $liquidity,
                 'dex' => $dexName,
                 'chain' => $chainName,
+                'chain_id' => $bestPair['chainId'] ?? null,
+                'pair_address' => $bestPair['pairAddress'] ?? null,
                 'updated_at' => gmdate('Y-m-d H:i') . ' UTC',
             ];
         } catch (\Exception $e) {

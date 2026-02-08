@@ -2228,12 +2228,12 @@ class CommandHandler
     /**
      * Get DexScreener chart image for a token pair
      */
-    private function getDexScreenerChartImage(string $pairAddress): ?string
+    private function getDexScreenerChartImage(string $pairAddress, string $chainId = 'ton'): ?string
     {
         try {
             // Use screenshot service to capture DexScreener chart
             // This will always generate an image of the live chart page
-            return "https://image.thum.io/get/width/1200/crop/800/noanimate/https://dexscreener.com/ton/{$pairAddress}";
+            return "https://image.thum.io/get/width/1200/crop/800/noanimate/https://dexscreener.com/{$chainId}/{$pairAddress}";
         } catch (\Exception $e) {
             Log::warning('Failed to get DexScreener chart image', [
                 'pair' => $pairAddress,
@@ -4094,12 +4094,40 @@ class CommandHandler
         // Detect market type
         $marketType = $this->multiMarket->detectMarketType($dataSymbol);
 
-        // Format symbol for TradingView (uses display symbol for better mapping)
-        $tvSymbol = $this->formatSymbolForTradingView($displaySymbol, $marketType);
-
         // Get interval in TradingView format, keep display-friendly version
         $interval = $this->normalizeTimeframe($timeframe) ?? '60';
         $displayTf = $this->denormalizeTimeframe($interval);
+
+        // For crypto tokens, check if they're DEX-only (not on Binance/TradingView)
+        // If so, redirect to DexScreener chart
+        if ($marketType === 'crypto') {
+            $dexData = $this->multiMarket->getDexScreenerPrice($displaySymbol);
+            if ($dexData && isset($dexData['pair_address'], $dexData['chain_id'])) {
+                // Check if this is a DEX-only token by trying Binance first
+                $binanceSymbol = $displaySymbol;
+                $quoteAssets = ['USDT', 'BUSD', 'USDC', 'USD', 'BTC', 'ETH', 'BNB'];
+                $hasQuote = false;
+                foreach ($quoteAssets as $quote) {
+                    if (strlen($binanceSymbol) > strlen($quote) && str_ends_with($binanceSymbol, $quote)) {
+                        $hasQuote = true;
+                        break;
+                    }
+                }
+                if (!$hasQuote) {
+                    $binanceSymbol .= 'USDT';
+                }
+                $binanceTicker = $this->binance->get24hTicker($binanceSymbol);
+
+                if (!$binanceTicker) {
+                    // Token NOT on Binance → DEX-only → use DexScreener chart
+                    $this->sendDexScreenerChart($chatId, $displaySymbol, $displayTf, $dexData);
+                    return;
+                }
+            }
+        }
+
+        // Format symbol for TradingView (uses display symbol for better mapping)
+        $tvSymbol = $this->formatSymbolForTradingView($displaySymbol, $marketType);
 
         // Try to get market data for current stats
         $marketData = null;
@@ -4190,6 +4218,89 @@ class CommandHandler
     }
 
     /**
+     * Send a DexScreener chart for DEX-only tokens (not listed on Binance/TradingView)
+     */
+    private function sendDexScreenerChart(int $chatId, string $symbol, string $displayTf, array $dexData): void
+    {
+        $chainId = $dexData['chain_id'];
+        $pairAddress = $dexData['pair_address'];
+        $chartUrl = "https://dexscreener.com/{$chainId}/{$pairAddress}";
+
+        // Build caption with DexScreener data
+        $chainName = $dexData['chain'] ?? ucfirst($chainId);
+        $dexName = $dexData['dex'] ?? 'DEX';
+        $caption = "📊 *{$symbol} Chart ({$displayTf})*\n\n";
+        $caption .= "🔗 *Chain:* {$chainName}\n";
+        $caption .= "🏦 *DEX:* {$dexName}\n";
+        $caption .= "⏱ *Timeframe:* {$displayTf}\n\n";
+
+        $price = $dexData['price'] ?? 0;
+        if ($price > 0) {
+            $caption .= "💰 *Price:* " . $this->formatPriceAdaptive($price, 'crypto') . "\n";
+        }
+
+        $change = $dexData['change_24h'] ?? 0;
+        if ($change != 0) {
+            $emoji = $change > 0 ? '📈' : '📉';
+            $caption .= "{$emoji} *24h Change:* " . ($change > 0 ? '+' : '') . number_format($change, 2) . "%\n";
+            $caption .= $this->generatePriceBar($change) . "\n";
+        }
+
+        if (isset($dexData['volume_24h']) && $dexData['volume_24h'] > 0) {
+            $caption .= "💧 *Volume:* $" . $this->formatLargeNumber($dexData['volume_24h']) . "\n";
+        }
+
+        if (isset($dexData['liquidity']) && $dexData['liquidity'] > 0) {
+            $caption .= "🏊 *Liquidity:* $" . $this->formatLargeNumber($dexData['liquidity']) . "\n";
+        }
+
+        if (isset($dexData['market_cap']) && $dexData['market_cap'] > 0) {
+            $caption .= "💎 *Market Cap:* $" . $this->formatLargeNumber($dexData['market_cap']) . "\n";
+        }
+
+        $caption .= "\n🟢 View full chart on DexScreener with candlesticks & tools!";
+
+        // Create inline keyboard
+        $keyboard = [
+            'inline_keyboard' => [
+                [
+                    ['text' => '📊 Open DexScreener Chart', 'url' => $chartUrl]
+                ],
+                [
+                    ['text' => '⚡ 5M', 'callback_data' => "/chart {$symbol} 5M"],
+                    ['text' => '📈 15M', 'callback_data' => "/chart {$symbol} 15M"],
+                    ['text' => '📊 1H', 'callback_data' => "/chart {$symbol} 1H"],
+                ],
+                [
+                    ['text' => '⏰ 4H', 'callback_data' => "/chart {$symbol} 4H"],
+                    ['text' => '📅 1D', 'callback_data' => "/chart {$symbol} 1D"],
+                    ['text' => '📆 1W', 'callback_data' => "/chart {$symbol} 1W"],
+                ],
+                [
+                    ['text' => '💰 Price', 'callback_data' => "/price {$symbol}"],
+                    ['text' => '🔍 Verify', 'callback_data' => "/verify {$symbol}"],
+                ],
+            ]
+        ];
+
+        // Try to generate DexScreener chart snapshot
+        $chartImage = $this->generateDexScreenerSnapshot($pairAddress, $displayTf, $chainId);
+
+        if ($chartImage) {
+            try {
+                $this->telegram->sendPhoto($chatId, $chartImage, $caption, $keyboard);
+                Log::info('DexScreener chart sent', ['symbol' => $symbol, 'chain' => $chainId]);
+                return;
+            } catch (\Exception $e) {
+                Log::error('DexScreener chart photo failed', ['error' => $e->getMessage()]);
+            }
+        }
+
+        // Fallback to text with link
+        $this->telegram->sendMessage($chatId, $caption, $keyboard);
+    }
+
+    /**
      * Generate TradingView chart snapshot with candlesticks
      */
     private function generateTradingViewSnapshot(string $symbol, string $interval, string $marketType): ?string
@@ -4249,11 +4360,11 @@ class CommandHandler
     /**
      * Generate DEX chart image
      */
-    private function generateDexScreenerChart(string $pairAddress): ?string
+    private function generateDexScreenerChart(string $pairAddress, string $chainId = 'ton'): ?string
     {
         try {
             // Using thum.io for screenshot (free tier, reliable)
-            $url = "https://image.thum.io/get/width/1200/crop/800/noanimate/https://dexscreener.com/ton/{$pairAddress}";
+            $url = "https://image.thum.io/get/width/1200/crop/800/noanimate/https://dexscreener.com/{$chainId}/{$pairAddress}";
             return $url;
         } catch (\Exception $e) {
             Log::debug('DEX chart generation failed', ['error' => $e->getMessage()]);
@@ -4264,14 +4375,14 @@ class CommandHandler
     /**
      * Generate DEXScreener snapshot with candlestick chart
      */
-    private function generateDexScreenerSnapshot(string $pairAddress, string $timeframe): ?string
+    private function generateDexScreenerSnapshot(string $pairAddress, string $timeframe, string $chainId = 'ton'): ?string
     {
         try {
             $width = 1200;
             $height = 675;
 
             // Build DEXScreener chart URL with proper candlestick view
-            $dexUrl = "https://dexscreener.com/ton/{$pairAddress}";
+            $dexUrl = "https://dexscreener.com/{$chainId}/{$pairAddress}";
 
             // Use screenshot service to capture DEXScreener with candlesticks visible
             // URL encode the target URL properly
