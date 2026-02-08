@@ -4169,14 +4169,21 @@ class CommandHandler
 
             if (!$binanceTicker) {
                 // Not on Binance — try DexScreener for DEX-only chart
-                try {
-                    $dexData = $this->multiMarket->getDexScreenerPrice($displaySymbol);
-                    if ($dexData && isset($dexData['pair_address'], $dexData['chain_id'])) {
-                        $this->sendDexScreenerChart($chatId, $displaySymbol, $displayTf, $dexData);
-                        return;
+                $dexCacheKey = "dex_pair_data_{$displaySymbol}";
+                $dexData = Cache::get($dexCacheKey);
+                if (!$dexData) {
+                    try {
+                        $dexData = $this->multiMarket->getDexScreenerPrice($displaySymbol);
+                        if ($dexData && isset($dexData['pair_address'], $dexData['chain_id'])) {
+                            Cache::put($dexCacheKey, $dexData, 300);
+                        }
+                    } catch (\Exception $e) {
+                        Log::warning('DexScreener chart lookup failed', ['symbol' => $displaySymbol, 'error' => $e->getMessage()]);
                     }
-                } catch (\Exception $e) {
-                    Log::warning('DexScreener chart lookup failed', ['symbol' => $displaySymbol, 'error' => $e->getMessage()]);
+                }
+                if ($dexData && isset($dexData['pair_address'], $dexData['chain_id'])) {
+                    $this->sendDexScreenerChart($chatId, $displaySymbol, $displayTf, $dexData);
+                    return;
                 }
 
                 // Neither Binance nor DexScreener has this token
@@ -4197,17 +4204,24 @@ class CommandHandler
         // that are short symbols misclassified as stocks by detectMarketType().
         // DexScreener is faster than trying all 4 stock APIs.
         if ($marketType === 'stock') {
-            try {
-                $dexData = $this->multiMarket->getDexScreenerPrice($displaySymbol);
-                if ($dexData && isset($dexData['pair_address'], $dexData['chain_id'])) {
-                    // Found on DEX — redirect to DexScreener chart
-                    $this->sendDexScreenerChart($chatId, $displaySymbol, $displayTf, $dexData);
-                    return;
+            // Check cache first (populated by previous /chart calls)
+            $dexCacheKey = "dex_pair_data_{$displaySymbol}";
+            $dexData = Cache::get($dexCacheKey);
+            if (!$dexData) {
+                try {
+                    $dexData = $this->multiMarket->getDexScreenerPrice($displaySymbol);
+                    if ($dexData && isset($dexData['pair_address'], $dexData['chain_id'])) {
+                        Cache::put($dexCacheKey, $dexData, 300); // cache 5 min
+                    }
+                } catch (\Exception $e) {
+                    Log::debug('DexScreener check for stock-classified symbol failed', [
+                        'symbol' => $displaySymbol, 'error' => $e->getMessage()
+                    ]);
                 }
-            } catch (\Exception $e) {
-                Log::debug('DexScreener check for stock-classified symbol failed', [
-                    'symbol' => $displaySymbol, 'error' => $e->getMessage()
-                ]);
+            }
+            if ($dexData && isset($dexData['pair_address'], $dexData['chain_id'])) {
+                $this->sendDexScreenerChart($chatId, $displaySymbol, $displayTf, $dexData);
+                return;
             }
             // Not on DexScreener — proceed with stock/TradingView chart
         }
@@ -4416,10 +4430,39 @@ class CommandHandler
             ]
         ];
 
-        // Send as text message with DexScreener link button
-        // (thum.io screenshots of DexScreener SPA pages are unreliable)
+        // Try to send a chart screenshot via GeckoTerminal embed (more reliable than DexScreener SPA)
+        $chartImage = null;
+        try {
+            // Map DexScreener chainId to GeckoTerminal network name
+            $geckoNetworks = [
+                'ton' => 'ton', 'ethereum' => 'eth', 'bsc' => 'bsc',
+                'solana' => 'solana', 'polygon_pos' => 'polygon_pos',
+                'arbitrum' => 'arbitrum', 'avalanche' => 'avax', 'base' => 'base',
+                'optimism' => 'optimism', 'fantom' => 'ftm',
+            ];
+            $geckoNetwork = $geckoNetworks[$chainId] ?? $chainId;
+            $geckoUrl = "https://www.geckoterminal.com/{$geckoNetwork}/pools/{$pairAddress}?embed=1&info=0&swaps=0";
+            $ts = time();
+            $chartImage = "https://image.thum.io/get/maxAge/1/width/1200/crop/675/noanimate/" . urlencode($geckoUrl . "&t={$ts}");
+        } catch (\Exception $e) {
+            Log::debug('GeckoTerminal chart image failed', ['error' => $e->getMessage()]);
+        }
+
+        if ($chartImage) {
+            try {
+                $result = $this->telegram->sendPhoto($chatId, $chartImage, $caption, $keyboard);
+                if (isset($result['ok']) && $result['ok']) {
+                    Log::info('DexScreener chart photo sent', ['symbol' => $symbol, 'chain' => $chainId]);
+                    return;
+                }
+            } catch (\Exception $e) {
+                Log::warning('Chart photo send failed, falling back to text', ['error' => $e->getMessage()]);
+            }
+        }
+
+        // Fallback: text message with DexScreener link button
         $this->telegram->sendMessage($chatId, $caption, $keyboard);
-        Log::info('DexScreener chart sent', ['symbol' => $symbol, 'chain' => $chainId]);
+        Log::info('DexScreener chart sent (text)', ['symbol' => $symbol, 'chain' => $chainId]);
     }
 
     /**
