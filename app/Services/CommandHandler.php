@@ -4154,7 +4154,8 @@ class CommandHandler
 
         if ($marketData && !isset($marketData['error']) && isset($marketData['price'])) {
             $price = $marketData['price'];
-            $change = $marketData['price_change_24h'] ?? 0;
+            // Field names vary: crypto='change_percent', stock/forex='change_percent'
+            $change = $marketData['change_percent'] ?? $marketData['price_change_24h'] ?? 0;
 
             $caption .= "💰 *Price:* " . $this->formatPriceAdaptive($price, $marketType) . "\n";
             if ($change != 0) {
@@ -4163,10 +4164,23 @@ class CommandHandler
                 $caption .= $this->generatePriceBar($change) . "\n";
             }
 
-            // Add volume if available
-            if (isset($marketData['volume_24h']) && $marketData['volume_24h'] > 0) {
-                $caption .= "💧 *Volume:* $" . $this->formatLargeNumber($marketData['volume_24h']) . "\n";
+            // High/Low if available (stocks)
+            if (isset($marketData['high_24h']) && isset($marketData['low_24h'])) {
+                $caption .= "📊 *H/L:* " . $this->formatPriceAdaptive($marketData['high_24h'], $marketType)
+                    . " / " . $this->formatPriceAdaptive($marketData['low_24h'], $marketType) . "\n";
             }
+
+            // Volume: field name is 'volume' (crypto/stock) or 'volume_24h'
+            $vol = $marketData['volume'] ?? $marketData['volume_24h'] ?? 0;
+            if ($vol > 0) {
+                $caption .= "💧 *Volume:* $" . $this->formatLargeNumber($vol) . "\n";
+            }
+
+            // Market cap if available
+            if (isset($marketData['market_cap']) && is_numeric($marketData['market_cap']) && $marketData['market_cap'] > 0) {
+                $caption .= "💎 *MCap:* $" . $this->formatLargeNumber($marketData['market_cap']) . "\n";
+            }
+
             $caption .= "\n";
         }
 
