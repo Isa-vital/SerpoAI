@@ -1,0 +1,27 @@
+<?php
+
+return [
+    'generic' => "❌ Ocurrió un error. Intenta de nuevo.",
+    'try_again' => "Intenta más tarde.",
+    'fetch_failed' => "❌ Error al obtener datos. Intenta más tarde.",
+    'symbol_required' => "Por favor especifica un símbolo.",
+    'symbol_example' => "Ejemplo: `:example`",
+    'invalid_symbol' => "❌ Símbolo inválido: :symbol",
+    'api_unavailable' => "⚠️ Servicio temporalmente no disponible.",
+    'api_timeout' => "⚠️ Tiempo de espera agotado. Intenta de nuevo.",
+    'loading_error' => "❌ Error al cargar :feature. Intenta más tarde.",
+    'calendar_error' => "❌ Error al obtener calendario. Intenta más tarde.",
+    'learn_error' => "❌ Error al cargar contenido educativo. Intenta más tarde.",
+    'glossary_error' => "❌ Error al cargar glosario. Intenta más tarde.",
+    'profile_error' => "❌ Error al cargar perfil. Intenta más tarde.",
+    'premium_error' => "❌ Error al cargar info premium. Intenta más tarde.",
+    'sentiment_error' => "❌ Error al analizar sentimiento. Intenta más tarde.",
+    'prediction_error' => "❌ Error al generar predicción. Intenta más tarde.",
+    'recommendation_error' => "❌ Error al generar recomendación. Intenta más tarde.",
+    'query_error' => "❌ Error al procesar consulta. Intenta de nuevo.",
+    'daily_error' => "❌ Error al cargar reporte diario.",
+    'weekly_error' => "❌ Error al cargar reporte semanal.",
+    'trends_error' => "❌ Error al cargar tendencias. Intenta de nuevo.",
+    'whales_error' => "❌ Error al cargar actividad de ballenas.",
+    'scan_error' => "❌ Error al escanear mercado. Intenta de nuevo.",
+];

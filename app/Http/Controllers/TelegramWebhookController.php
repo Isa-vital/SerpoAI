@@ -9,16 +9,19 @@ use App\Services\CommandHandler;
 use App\Models\User;
 use App\Models\BotLog;
 use App\Jobs\ProcessTelegramCommand;
+use App\Services\MultiLanguageService;
 
 class TelegramWebhookController extends Controller
 {
     private TelegramBotService $telegram;
     private CommandHandler $commandHandler;
+    private MultiLanguageService $language;
 
-    public function __construct(TelegramBotService $telegram, CommandHandler $commandHandler)
+    public function __construct(TelegramBotService $telegram, CommandHandler $commandHandler, MultiLanguageService $language)
     {
         $this->telegram = $telegram;
         $this->commandHandler = $commandHandler;
+        $this->language = $language;
     }
 
     /**
@@ -85,6 +88,9 @@ class TelegramWebhookController extends Controller
 
         // Get or create user
         $user = $this->getOrCreateUser($from);
+
+        // Set locale for this request based on user's language preference
+        $this->language->setLocaleForUser($user);
 
         // Update last interaction
         $user->update(['last_interaction_at' => now()]);
@@ -160,8 +166,11 @@ class TelegramWebhookController extends Controller
         // Get or create user
         $user = $this->getOrCreateUser($from);
 
+        // Set locale for this request based on user's language preference
+        $this->language->setLocaleForUser($user);
+
         // Answer callback query
-        $this->telegram->answerCallbackQuery($callbackQueryId, 'Processing...');
+        $this->telegram->answerCallbackQuery($callbackQueryId, __('commands.callback.processing'));
 
         // Handle callback
         $this->commandHandler->handleCallback($chatId, $messageId, $data, $user);

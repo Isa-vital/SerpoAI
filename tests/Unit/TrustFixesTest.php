@@ -152,10 +152,9 @@ class TrustFixesTest extends TestCase
     {
         $startSection = $this->extractMethod('handleStart');
 
-        $this->assertStringContainsString('Crypto', $startSection);
-        $this->assertStringContainsString('Stocks', $startSection);
-        $this->assertStringContainsString('Forex', $startSection);
-        $this->assertStringContainsString('Commodities', $startSection);
+        // Strings are now in lang files, check translation keys reference multi-market content
+        $this->assertStringContainsString('commands.start.coverage', $startSection);
+        $this->assertStringContainsString('commands.start.market_intel', $startSection);
     }
 
     public function test_start_has_action_oriented_cta(): void
@@ -163,7 +162,7 @@ class TrustFixesTest extends TestCase
         $startSection = $this->extractMethod('handleStart');
 
         $this->assertStringContainsString('/help', $startSection, '/start should reference /help command');
-        $this->assertStringContainsString('Get Started', $startSection, '/start should have a Get Started section');
+        $this->assertStringContainsString('get_started', $startSection, '/start should have a Get Started section');
     }
 
     // ===== YELLOW FIX #6: /backtest AI disclosure =====

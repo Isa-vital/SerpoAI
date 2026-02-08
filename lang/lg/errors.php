@@ -1,0 +1,27 @@
+<?php
+
+return [
+    'generic' => "❌ Wabaddewo ensobi. Ddamu ogezeko.",
+    'try_again' => "Geza oluvannyuma.",
+    'fetch_failed' => "❌ Tetusobodde kufuna data. Geza oluvannyuma.",
+    'symbol_required' => "Bambi wandika kabonero.",
+    'symbol_example' => "Ekyokulabirako: `:example`",
+    'invalid_symbol' => "❌ Kabonero akatali ka mazima: :symbol",
+    'api_unavailable' => "⚠️ Service tetuyambye mukiseera kino.",
+    'api_timeout' => "⚠️ Ekiseera kiweddeko. Ddamu ogezeko.",
+    'loading_error' => "❌ Ensobi mu kupiisa :feature. Geza oluvannyuma.",
+    'calendar_error' => "❌ Ensobi mu kufuna kalenda. Geza oluvannyuma.",
+    'learn_error' => "❌ Ensobi mu kupiisa ebisomesebwa. Geza oluvannyuma.",
+    'glossary_error' => "❌ Ensobi mu kupiisa enkuluze. Geza oluvannyuma.",
+    'profile_error' => "❌ Ensobi mu kupiisa profile. Geza oluvannyuma.",
+    'premium_error' => "❌ Ensobi mu kupiisa premium info. Geza oluvannyuma.",
+    'sentiment_error' => "❌ Ensobi mu kussennyiga engeri omukatale gye yewuliramu. Geza oluvannyuma.",
+    'prediction_error' => "❌ Ensobi mu kulaga enneyisa. Geza oluvannyuma.",
+    'recommendation_error' => "❌ Ensobi mu kuwa ebiragirwa. Geza oluvannyuma.",
+    'query_error' => "❌ Ensobi mu kukola ekibuuzo kyo. Ddamu ogezeko.",
+    'daily_error' => "❌ Ensobi mu kupiisa lipoota ya buli lunaku.",
+    'weekly_error' => "❌ Ensobi mu kupiisa lipoota ya buli wiiki.",
+    'trends_error' => "❌ Ensobi mu kupiisa ebyenkyukakyuka. Ddamu ogezeko.",
+    'whales_error' => "❌ Ensobi mu kupiisa eneyisa z'ennyanja.",
+    'scan_error' => "❌ Ensobi mu kwiwa omukatale. Ddamu ogezeko.",
+];

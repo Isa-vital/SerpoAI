@@ -1,0 +1,27 @@
+<?php
+
+return [
+    'generic' => "❌ 发生错误。请重试。",
+    'try_again' => "请稍后重试。",
+    'fetch_failed' => "❌ 获取数据失败。请稍后重试。",
+    'symbol_required' => "请指定一个代码。",
+    'symbol_example' => "示例：`:example`",
+    'invalid_symbol' => "❌ 无效代码：:symbol",
+    'api_unavailable' => "⚠️ 服务暂时不可用。",
+    'api_timeout' => "⚠️ 请求超时。请重试。",
+    'loading_error' => "❌ 加载 :feature 失败。请稍后重试。",
+    'calendar_error' => "❌ 获取日历失败。请稍后重试。",
+    'learn_error' => "❌ 加载教育内容失败。请稍后重试。",
+    'glossary_error' => "❌ 加载词汇表失败。请稍后重试。",
+    'profile_error' => "❌ 加载个人资料失败。请稍后重试。",
+    'premium_error' => "❌ 加载高级信息失败。请稍后重试。",
+    'sentiment_error' => "❌ 情绪分析失败。请稍后重试。",
+    'prediction_error' => "❌ 生成预测失败。请稍后重试。",
+    'recommendation_error' => "❌ 生成推荐失败。请稍后重试。",
+    'query_error' => "❌ 处理查询失败。请重试。",
+    'daily_error' => "❌ 加载每日报告失败。",
+    'weekly_error' => "❌ 加载每周报告失败。",
+    'trends_error' => "❌ 加载趋势失败。请重试。",
+    'whales_error' => "❌ 加载巨鲸活动失败。",
+    'scan_error' => "❌ 市场扫描失败。请重试。",
+];
