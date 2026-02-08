@@ -2228,7 +2228,7 @@ class CommandHandler
         try {
             // Use screenshot service to capture DexScreener chart
             // This will always generate an image of the live chart page
-            return "https://image.thum.io/get/width/1200/crop/800/noanimate/https://dexscreener.com/{$chainId}/{$pairAddress}";
+            return "https://image.thum.io/get/maxAge/1/width/1200/crop/800/noanimate/https://dexscreener.com/{$chainId}/{$pairAddress}";
         } catch (\Exception $e) {
             Log::warning('Failed to get DexScreener chart image', [
                 'pair' => $pairAddress,
@@ -4448,7 +4448,7 @@ class CommandHandler
             ]);
 
             // Use screenshot API to capture the embed
-            $screenshotUrl = "https://image.thum.io/get/width/{$width}/crop/{$height}/noanimate/{$embedUrl}";
+            $screenshotUrl = "https://image.thum.io/get/maxAge/1/width/{$width}/crop/{$height}/noanimate/{$embedUrl}";
 
             Log::info('Generated TradingView snapshot URL', ['url' => substr($screenshotUrl, 0, 100)]);
             return $screenshotUrl;
@@ -4488,7 +4488,7 @@ class CommandHandler
             // Use screenshot service to capture DEXScreener with candlesticks visible
             // URL encode the target URL properly
             $encodedUrl = urlencode($dexUrl);
-            $screenshotUrl = "https://image.thum.io/get/width/{$width}/crop/{$height}/wait/5/{$encodedUrl}";
+            $screenshotUrl = "https://image.thum.io/get/maxAge/1/width/{$width}/crop/{$height}/wait/5/{$encodedUrl}";
 
             Log::info('Generated DEXScreener snapshot URL', ['pair' => $pairAddress, 'url' => $screenshotUrl]);
             return $screenshotUrl;
@@ -4741,7 +4741,7 @@ class CommandHandler
     {
         try {
             $widgetUrl = "https://www.tradingview.com/chart/?symbol={$tvSymbol}&interval={$interval}";
-            return "https://image.thum.io/get/width/1200/crop/800/noanimate/{$widgetUrl}";
+            return "https://image.thum.io/get/maxAge/1/width/1200/crop/800/noanimate/{$widgetUrl}";
         } catch (\Exception $e) {
             Log::debug('TradingView widget failed', ['error' => $e->getMessage()]);
             return null;
