@@ -4265,12 +4265,16 @@ class CommandHandler
             Log::info('Sending chart photo to Telegram', ['chat_id' => $chatId]);
             try {
                 $result = $this->telegram->sendPhoto($chatId, $chartImage, $caption, $keyboard);
-                Log::info('Chart photo sent successfully');
+                if (isset($result['ok']) && $result['ok']) {
+                    Log::info('Chart photo sent successfully');
+                    return;
+                }
+                Log::warning('sendPhoto returned error, falling back to text', ['result' => $result['description'] ?? 'unknown']);
             } catch (\Exception $e) {
                 Log::error('Telegram sendPhoto failed', ['error' => $e->getMessage()]);
-                // Fallback to text with link
-                $this->telegram->sendMessage($chatId, $caption, $keyboard);
             }
+            // Fallback to text with link
+            $this->telegram->sendMessage($chatId, $caption, $keyboard);
         } else {
             Log::info('No chart image generated, sending text with link');
             $this->telegram->sendMessage($chatId, $caption, $keyboard);
@@ -4286,6 +4290,13 @@ class CommandHandler
         $pairAddress = $dexData['pair_address'];
         $chartUrl = "https://dexscreener.com/{$chainId}/{$pairAddress}";
 
+        Log::info('Building DexScreener chart', [
+            'symbol' => $symbol, 'chain' => $chainId,
+            'price' => $dexData['price'] ?? 'null',
+            'change' => $dexData['change_24h'] ?? 'null',
+            'volume' => $dexData['volume_24h'] ?? 'null',
+        ]);
+
         // Build caption with DexScreener data
         $chainName = $dexData['chain'] ?? ucfirst($chainId);
         $dexName = $dexData['dex'] ?? 'DEX';
@@ -4294,28 +4305,31 @@ class CommandHandler
         $caption .= "🏦 *DEX:* {$dexName}\n";
         $caption .= "⏱ *Timeframe:* {$displayTf}\n\n";
 
-        $price = $dexData['price'] ?? 0;
+        $price = floatval($dexData['price'] ?? 0);
         if ($price > 0) {
             $caption .= "💰 *Price:* " . $this->formatPriceAdaptive($price, 'crypto') . "\n";
         }
 
-        $change = $dexData['change_24h'] ?? 0;
+        $change = floatval($dexData['change_24h'] ?? 0);
         if ($change != 0) {
             $emoji = $change > 0 ? '📈' : '📉';
             $caption .= "{$emoji} *24h Change:* " . ($change > 0 ? '+' : '') . number_format($change, 2) . "%\n";
             $caption .= $this->generatePriceBar($change) . "\n";
         }
 
-        if (isset($dexData['volume_24h']) && $dexData['volume_24h'] > 0) {
-            $caption .= "💧 *Volume:* $" . $this->formatLargeNumber($dexData['volume_24h']) . "\n";
+        $vol = floatval($dexData['volume_24h'] ?? 0);
+        if ($vol > 0) {
+            $caption .= "💧 *Volume:* $" . $this->formatLargeNumber($vol) . "\n";
         }
 
-        if (isset($dexData['liquidity']) && $dexData['liquidity'] > 0) {
-            $caption .= "🏊 *Liquidity:* $" . $this->formatLargeNumber($dexData['liquidity']) . "\n";
+        $liq = floatval($dexData['liquidity'] ?? 0);
+        if ($liq > 0) {
+            $caption .= "🏊 *Liquidity:* $" . $this->formatLargeNumber($liq) . "\n";
         }
 
-        if (isset($dexData['market_cap']) && $dexData['market_cap'] > 0) {
-            $caption .= "💎 *Market Cap:* $" . $this->formatLargeNumber($dexData['market_cap']) . "\n";
+        $mcap = floatval($dexData['market_cap'] ?? 0);
+        if ($mcap > 0) {
+            $caption .= "💎 *Market Cap:* $" . $this->formatLargeNumber($mcap) . "\n";
         }
 
         $caption .= "\n🟢 View full chart on DexScreener with candlesticks & tools!";
@@ -4343,21 +4357,10 @@ class CommandHandler
             ]
         ];
 
-        // Try to generate DexScreener chart snapshot
-        $chartImage = $this->generateDexScreenerSnapshot($pairAddress, $displayTf, $chainId);
-
-        if ($chartImage) {
-            try {
-                $this->telegram->sendPhoto($chatId, $chartImage, $caption, $keyboard);
-                Log::info('DexScreener chart sent', ['symbol' => $symbol, 'chain' => $chainId]);
-                return;
-            } catch (\Exception $e) {
-                Log::error('DexScreener chart photo failed', ['error' => $e->getMessage()]);
-            }
-        }
-
-        // Fallback to text with link
+        // Send as text message with DexScreener link button
+        // (thum.io screenshots of DexScreener SPA pages are unreliable)
         $this->telegram->sendMessage($chatId, $caption, $keyboard);
+        Log::info('DexScreener chart sent', ['symbol' => $symbol, 'chain' => $chainId]);
     }
 
     /**

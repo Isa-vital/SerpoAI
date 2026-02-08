@@ -27,12 +27,36 @@ class PairAnalyticsService
         Log::info('Analyzing pair', ['pair' => $pair, 'market_type' => $marketType]);
 
         // Route to appropriate analyzer
-        return match ($marketType) {
+        $result = match ($marketType) {
             'crypto' => $this->multiMarket->analyzeCryptoPair($pair),
             'stock' => $this->multiMarket->analyzeStock($pair),
             'forex' => $this->multiMarket->analyzeForexPair($pair),
             default => $this->multiMarket->analyzeCryptoPair($pair),
         };
+
+        // Fallback: if primary source failed (especially for DEX-only tokens or rate limits),
+        // try universal price data which chains Binance → CoinGecko → DexScreener
+        if (isset($result['error']) && in_array($marketType, ['crypto', 'stock'])) {
+            Log::info('Primary analysis failed, trying universal fallback', ['pair' => $pair]);
+
+            $universalData = $this->multiMarket->getUniversalPriceData($pair);
+            if (!isset($universalData['error']) && isset($universalData['price'])) {
+                // Convert universal price data to analysis format
+                return [
+                    'market' => $universalData['market_type'] ?? $marketType,
+                    'symbol' => $universalData['symbol'] ?? strtoupper($pair),
+                    'price' => $universalData['price'],
+                    'change_24h' => $universalData['change_24h'] ?? 0,
+                    'change_percent' => $universalData['change_24h'] ?? $universalData['change_percent'] ?? 0,
+                    'volume' => $universalData['volume_24h'] ?? 0,
+                    'market_cap' => $universalData['market_cap'] ?? null,
+                    'liquidity' => $universalData['liquidity'] ?? null,
+                    'data_sources' => [$universalData['source'] ?? 'Universal'],
+                ];
+            }
+        }
+
+        return $result;
     }
 
     /**
