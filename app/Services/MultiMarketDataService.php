@@ -754,7 +754,7 @@ class MultiMarketDataService
                     'change' => $quote['change'],
                     'change_percent' => $quote['change_percent'],
                     'volume' => $quote['volume'],
-                    'avg_volume' => $quote['avg_volume'] ?? $quote['volume'],
+                    'avg_volume' => (floatval($quote['avg_volume'] ?? 0) > 0) ? floatval($quote['avg_volume']) : $quote['volume'],
                     'indicators' => $indicators,
                     'market_cap' => $quote['market_cap'] ?? 'N/A',
                     'pe_ratio' => $quote['pe_ratio'] ?? 'N/A',
@@ -1832,14 +1832,15 @@ class MultiMarketDataService
                 Cache::put($cacheKey, 'yes', 3600); // Cache 1 hour
                 return true;
             }
+            // Clean "not found" — safe to cache negative
+            Cache::put($cacheKey, 'no', 600); // 10 minutes
+            return false;
         } catch (\Exception $e) {
-            // Binance unavailable, don't assume crypto
+            // Network/timeout error — do NOT cache negative result
+            // so retries work when connectivity returns
+            Log::debug('Binance crypto probe failed (network)', ['symbol' => $symbol, 'error' => $e->getMessage()]);
+            return false;
         }
-
-        // Not found on Binance — don't cache as non-crypto for long
-        // (stock→crypto fallback in getUniversalPriceData handles DEX tokens)
-        Cache::put($cacheKey, 'no', 600); // 10 minutes
-        return false;
     }
 
     /**

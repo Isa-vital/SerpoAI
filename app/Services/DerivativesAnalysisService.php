@@ -156,18 +156,18 @@ class DerivativesAnalysisService
             try {
                 $stockData = $this->marketData->analyzeStock($symbol);
 
-                // Check if error returned from API
+                // If stock APIs returned an error, throw so getMoneyFlow can try crypto/DEX
                 if (isset($stockData['error'])) {
-                    return [
-                        'symbol' => $symbol,
-                        'market_type' => 'stock',
-                        'error' => $stockData['error'],
-                    ];
+                    throw new \Exception("Stock lookup failed for {$symbol}: " . $stockData['error']);
                 }
 
                 // Simplified institutional flow proxy using volume analysis
                 $volume = floatval($stockData['volume'] ?? 0);
-                $avgVolume = floatval($stockData['avg_volume'] ?? $volume);
+                $avgVolume = floatval($stockData['avg_volume'] ?? 0);
+                // If avg_volume is 0 or missing, use current volume as baseline
+                if ($avgVolume <= 0) {
+                    $avgVolume = $volume;
+                }
                 $volumeRatio = $avgVolume > 0 ? $volume / $avgVolume : 1;
 
                 $priceChange = floatval($stockData['change_percent'] ?? 0);
@@ -200,21 +200,39 @@ class DerivativesAnalysisService
      */
     private function getForexMoneyFlow(string $symbol): array
     {
-        $cacheKey = "money_flow_forex_{$symbol}";
+        // Map commodity aliases to standard trading pairs
+        $commodityMap = [
+            'GOLD' => 'XAUUSD', 'SILVER' => 'XAGUSD', 'OIL' => 'WTOUSD',
+            'CRUDEOIL' => 'WTOUSD', 'BRENT' => 'BCOUSD', 'NATGAS' => 'NGAS',
+            'PLATINUM' => 'XPTUSD', 'PALLADIUM' => 'XPDUSD', 'COPPER' => 'XCUUSD',
+        ];
+        $displaySymbol = strtoupper($symbol);
+        $lookupSymbol = $commodityMap[$displaySymbol] ?? $displaySymbol;
 
-        return Cache::remember($cacheKey, 300, function () use ($symbol) {
+        $cacheKey = "money_flow_forex_{$lookupSymbol}";
+
+        return Cache::remember($cacheKey, 300, function () use ($displaySymbol, $lookupSymbol) {
             try {
-                $forexData = $this->marketData->analyzeForexPair($symbol);
+                $forexData = $this->marketData->analyzeForexPair($lookupSymbol);
+
+                // If API returned an error array, throw so caller gets a clean failure
+                if (isset($forexData['error'])) {
+                    throw new \Exception($forexData['error']);
+                }
 
                 // Forex doesn't have volume, so we use price momentum as proxy
                 $priceChange = floatval($forexData['change_percent'] ?? 0);
                 $volatility = abs($priceChange);
 
+                $direction = 'Neutral';
+                if ($priceChange > 0.01) $direction = 'Bullish';
+                elseif ($priceChange < -0.01) $direction = 'Bearish';
+
                 $flow = [
-                    'symbol' => $symbol,
+                    'symbol' => $displaySymbol,
                     'market_type' => 'forex',
                     'momentum' => [
-                        'direction' => $priceChange > 0 ? 'Bullish' : 'Bearish',
+                        'direction' => $direction,
                         'strength' => $volatility > 1 ? 'Strong' : ($volatility > 0.5 ? 'Moderate' : 'Weak'),
                         'change_percent' => $priceChange,
                     ],
@@ -224,7 +242,7 @@ class DerivativesAnalysisService
 
                 return $flow;
             } catch (\Exception $e) {
-                Log::error('Forex money flow error', ['symbol' => $symbol, 'error' => $e->getMessage()]);
+                Log::error('Forex money flow error', ['symbol' => $displaySymbol, 'error' => $e->getMessage()]);
                 throw $e;
             }
         });
