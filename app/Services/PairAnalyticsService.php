@@ -210,19 +210,37 @@ class PairAnalyticsService
         // Support/Resistance for crypto
         if (isset($analysis['support_resistance'])) {
             $sr = $analysis['support_resistance'];
+            $currentPrice = floatval($analysis['price'] ?? 0);
             $support = $sr['nearest_support'] ?? null;
             $resistance = $sr['nearest_resistance'] ?? null;
 
-            // Fallback: if nearest levels are null, use closest from full arrays
+            // Fallback: if nearest levels are null, find closest to current price
             if (!$support && !empty($sr['support'])) {
-                $support = max($sr['support']); // Highest support level
+                // Find highest support that's BELOW current price
+                $belowPrice = array_filter($sr['support'], fn($s) => $s < $currentPrice);
+                if (!empty($belowPrice)) {
+                    $support = max($belowPrice);
+                } else {
+                    // After massive crash, all historical supports are above price
+                    // Use the lowest support as a reference (closest to current price)
+                    $support = min($sr['support']);
+                }
             }
             if (!$resistance && !empty($sr['resistance'])) {
-                $currentPrice = $analysis['price'] ?? 0;
-                // Find highest resistance (even if below current price, still informative)
-                $allResistance = $sr['resistance'];
-                rsort($allResistance);
-                $resistance = $allResistance[0] ?? null;
+                // Find lowest resistance that's ABOVE current price
+                $abovePrice = array_filter($sr['resistance'], fn($r) => $r > $currentPrice);
+                if (!empty($abovePrice)) {
+                    $resistance = min($abovePrice);
+                } else {
+                    // All resistances below current price — use the highest as reference
+                    $resistance = max($sr['resistance']);
+                }
+            }
+
+            // Sanity check: support must be < resistance, both should relate to price
+            if ($support && $resistance && $support >= $resistance) {
+                // Swap if inverted
+                [$support, $resistance] = [$resistance, $support];
             }
 
             // Only show section if we have at least one level
@@ -274,14 +292,16 @@ class PairAnalyticsService
     private function formatPrice($price): string
     {
         $price = floatval($price);
+        $absPrice = abs($price);
+        $sign = $price < 0 ? '-' : '';
 
         // For very small numbers (< 0.0001), use appropriate decimal places
-        if ($price < 0.0001 && $price > 0) {
-            return rtrim(rtrim(number_format($price, 8, '.', ''), '0'), '.');
+        if ($absPrice < 0.0001 && $absPrice > 0) {
+            return $sign . rtrim(rtrim(number_format($absPrice, 8, '.', ''), '0'), '.');
         }
         // For numbers < 1, show 4 decimal places
-        elseif ($price < 1 && $price > 0) {
-            return rtrim(rtrim(number_format($price, 4, '.', ''), '0'), '.');
+        elseif ($absPrice < 1 && $absPrice > 0) {
+            return $sign . rtrim(rtrim(number_format($absPrice, 4, '.', ''), '0'), '.');
         }
         // For numbers >= 1, show 2 decimal places with thousands separator
         else {
