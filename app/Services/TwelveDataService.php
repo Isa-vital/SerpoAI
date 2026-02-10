@@ -19,7 +19,7 @@ class TwelveDataService
 
     public function __construct()
     {
-        $this->apiKey = config('services.twelve_data.key', '');
+        $this->apiKey = (string) (config('services.twelve_data.key') ?? env('TWELVE_DATA_API_KEY', ''));
     }
 
     /**

@@ -202,9 +202,15 @@ class DerivativesAnalysisService
     {
         // Map commodity aliases to standard trading pairs
         $commodityMap = [
-            'GOLD' => 'XAUUSD', 'SILVER' => 'XAGUSD', 'OIL' => 'WTOUSD',
-            'CRUDEOIL' => 'WTOUSD', 'BRENT' => 'BCOUSD', 'NATGAS' => 'NGAS',
-            'PLATINUM' => 'XPTUSD', 'PALLADIUM' => 'XPDUSD', 'COPPER' => 'XCUUSD',
+            'GOLD' => 'XAUUSD',
+            'SILVER' => 'XAGUSD',
+            'OIL' => 'WTOUSD',
+            'CRUDEOIL' => 'WTOUSD',
+            'BRENT' => 'BCOUSD',
+            'NATGAS' => 'NGAS',
+            'PLATINUM' => 'XPTUSD',
+            'PALLADIUM' => 'XPDUSD',
+            'COPPER' => 'XCUUSD',
         ];
         $displaySymbol = strtoupper($symbol);
         $lookupSymbol = $commodityMap[$displaySymbol] ?? $displaySymbol;
@@ -359,7 +365,7 @@ class DerivativesAnalysisService
 
         // Quick forex pair check (6-char currency pairs)
         if (strlen($upper) === 6 && preg_match('/^[A-Z]{6}$/', $upper)) {
-            $majors = ['USD','EUR','GBP','JPY','AUD','CAD','CHF','NZD','CNY','HKD','SGD','INR','KRW','ZAR','TRY','BRL','MXN','RUB','NOK','SEK','DKK','PLN','CZK','HUF'];
+            $majors = ['USD', 'EUR', 'GBP', 'JPY', 'AUD', 'CAD', 'CHF', 'NZD', 'CNY', 'HKD', 'SGD', 'INR', 'KRW', 'ZAR', 'TRY', 'BRL', 'MXN', 'RUB', 'NOK', 'SEK', 'DKK', 'PLN', 'CZK', 'HUF'];
             $from = substr($upper, 0, 3);
             $to = substr($upper, 3, 3);
             if (in_array($from, $majors) && in_array($to, $majors)) {

@@ -1168,9 +1168,15 @@ class CommandHandler
 
         // Common typo corrections
         $typoCorrections = [
-            'APPL' => 'AAPL', 'GOGL' => 'GOOGL', 'GOOG' => 'GOOGL',
-            'TELA' => 'TSLA', 'BITCOIN' => 'BTC', 'ETHEREUM' => 'ETH',
-            'ETHERIUM' => 'ETH', 'SOLONA' => 'SOL', 'DODGECOIN' => 'DOGE',
+            'APPL' => 'AAPL',
+            'GOGL' => 'GOOGL',
+            'GOOG' => 'GOOGL',
+            'TELA' => 'TSLA',
+            'BITCOIN' => 'BTC',
+            'ETHEREUM' => 'ETH',
+            'ETHERIUM' => 'ETH',
+            'SOLONA' => 'SOL',
+            'DODGECOIN' => 'DOGE',
         ];
         if (isset($typoCorrections[$symbol])) {
             $corrected = $typoCorrections[$symbol];
@@ -3491,7 +3497,7 @@ class CommandHandler
     private function formatMoneyFlow(array $flow): string
     {
         $message = "💰 *MONEY FLOW MONITOR*\n\n";
-        $displayType = match($flow['market_type']) {
+        $displayType = match ($flow['market_type']) {
             'crypto_dex' => 'DEX Crypto',
             default => $flow['market_type'],
         };
@@ -4315,7 +4321,8 @@ class CommandHandler
                     }
                 } catch (\Exception $e) {
                     Log::debug('DexScreener check for stock-classified symbol failed', [
-                        'symbol' => $displaySymbol, 'error' => $e->getMessage()
+                        'symbol' => $displaySymbol,
+                        'error' => $e->getMessage()
                     ]);
                 }
             }
@@ -4558,10 +4565,16 @@ class CommandHandler
         try {
             // Map DexScreener chainId to GeckoTerminal network name
             $geckoNetworks = [
-                'ton' => 'ton', 'ethereum' => 'eth', 'bsc' => 'bsc',
-                'solana' => 'solana', 'polygon_pos' => 'polygon_pos',
-                'arbitrum' => 'arbitrum', 'avalanche' => 'avax', 'base' => 'base',
-                'optimism' => 'optimism', 'fantom' => 'ftm',
+                'ton' => 'ton',
+                'ethereum' => 'eth',
+                'bsc' => 'bsc',
+                'solana' => 'solana',
+                'polygon_pos' => 'polygon_pos',
+                'arbitrum' => 'arbitrum',
+                'avalanche' => 'avax',
+                'base' => 'base',
+                'optimism' => 'optimism',
+                'fantom' => 'ftm',
             ];
             $geckoNetwork = $geckoNetworks[$chainId] ?? $chainId;
             $geckoUrl = "https://www.geckoterminal.com/{$geckoNetwork}/pools/{$pairAddress}?embed=1&info=0&swaps=0";
