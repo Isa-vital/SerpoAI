@@ -3480,7 +3480,11 @@ class CommandHandler
     private function formatMoneyFlow(array $flow): string
     {
         $message = "💰 *MONEY FLOW MONITOR*\n\n";
-        $message .= "🪙 *{$flow['symbol']}* ({$flow['market_type']})\n";
+        $displayType = match($flow['market_type']) {
+            'crypto_dex' => 'DEX Crypto',
+            default => $flow['market_type'],
+        };
+        $message .= "🪙 *{$flow['symbol']}* ({$displayType})\n";
         $message .= "━━━━━━━━━━━━━━━━━━━━\n\n";
 
         if ($flow['market_type'] === 'crypto') {
@@ -3514,6 +3518,29 @@ class CommandHandler
             $message .= "_💡 {$flow['pressure']['interpretation']}_\n\n";
 
             $message .= "📈 Price Change: " . ($flow['price_change_24h'] > 0 ? '+' : '') . number_format($flow['price_change_24h'], 2) . "%";
+        } elseif ($flow['market_type'] === 'crypto_dex') {
+            $message .= "🔗 Chain: {$flow['chain']} ({$flow['dex']})\n\n";
+
+            $message .= "📊 *DEX Volume*\n";
+            $message .= "Volume 24h: \$" . number_format($flow['volume_24h'], 0) . "\n";
+            $message .= "Liquidity: \$" . number_format($flow['liquidity'], 0) . "\n\n";
+
+            $message .= "🔄 *Exchange Flow*\n";
+            $message .= "Net Flow: " . $flow['flow']['net_flow'] . "\n";
+            $message .= "Magnitude: " . number_format($flow['flow']['magnitude'], 1) . "%\n\n";
+            $message .= "_💡 {$flow['flow']['note']}_\n\n";
+
+            $message .= "⚡ *Volume Pressure*\n";
+            $message .= "Type: {$flow['volume_analysis']['type']}\n";
+            $message .= "Pressure: *{$flow['volume_analysis']['pressure']}*\n\n";
+            $message .= "_💡 {$flow['volume_analysis']['interpretation']}_\n\n";
+
+            $priceStr = $flow['price'] < 0.01
+                ? '$' . rtrim(number_format($flow['price'], 8), '0')
+                : '$' . number_format($flow['price'], 2);
+            $message .= "💰 Price: {$priceStr}\n";
+            $message .= "📈 Change 24h: " . ($flow['price_change_24h'] > 0 ? '+' : '') . number_format($flow['price_change_24h'], 2) . "%\n\n";
+            $message .= "_⚠️ DEX token — no futures or open interest data available._";
         } elseif ($flow['market_type'] === 'forex') {
             $message .= "📊 *Momentum Analysis*\n";
             $message .= "Direction: {$flow['momentum']['direction']}\n";

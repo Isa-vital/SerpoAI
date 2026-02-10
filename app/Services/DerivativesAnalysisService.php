@@ -27,10 +27,16 @@ class DerivativesAnalysisService
 
         if ($marketType === 'crypto') {
             return $this->getCryptoMoneyFlow($symbol);
-        } elseif ($marketType === 'stock') {
-            return $this->getStockMoneyFlow($symbol);
         } elseif ($marketType === 'forex') {
             return $this->getForexMoneyFlow($symbol);
+        } elseif ($marketType === 'stock') {
+            try {
+                return $this->getStockMoneyFlow($symbol);
+            } catch (\Exception $e) {
+                // May be a DEX token misclassified as stock — try crypto/DEX path
+                Log::debug('Stock flow failed, trying crypto/DEX fallback', ['symbol' => $symbol]);
+                return $this->getCryptoMoneyFlow($symbol);
+            }
         }
 
         throw new \Exception("Unable to determine market type for {$symbol}");
@@ -51,8 +57,19 @@ class DerivativesAnalysisService
                 // Get spot market data
                 $spotData = $this->binance->get24hTicker($spotSymbol);
 
+                // If Binance has no data, try DexScreener for DEX tokens
+                if (!$spotData || !isset($spotData['quoteVolume'])) {
+                    return $this->getDexMoneyFlow($symbol);
+                }
+
                 // Get futures data
                 $futuresData = $this->getFuturesStats($spotSymbol);
+
+                // Get Open Interest from dedicated endpoint (not in ticker)
+                $oiData = $this->getOpenInterestData($spotSymbol);
+                $currentPrice = floatval($spotData['lastPrice'] ?? 0);
+                $openInterestContracts = floatval($oiData['openInterest'] ?? 0);
+                $openInterestUsd = $openInterestContracts * $currentPrice;
 
                 // Calculate flow metrics
                 $spotVolume = floatval($spotData['quoteVolume'] ?? 0);
@@ -63,8 +80,8 @@ class DerivativesAnalysisService
                 $spotDominance = $totalVolume > 0 ? ($spotVolume / $totalVolume) * 100 : 0;
                 $futuresDominance = $totalVolume > 0 ? ($futuresVolume / $totalVolume) * 100 : 0;
 
-                // Get exchange flow data (simplified - in production use Glassnode/Nansen APIs)
-                $exchangeFlow = $this->estimateExchangeFlow($spotSymbol, $spotVolume);
+                // Estimate exchange flow from already-fetched spot ticker
+                $exchangeFlow = $this->estimateExchangeFlow($spotSymbol, $spotData);
 
                 return [
                     'symbol' => $symbol,
@@ -78,7 +95,7 @@ class DerivativesAnalysisService
                     'futures' => [
                         'volume_24h' => $futuresVolume,
                         'dominance' => $futuresDominance,
-                        'open_interest' => floatval($futuresData['openInterest'] ?? 0),
+                        'open_interest' => $openInterestUsd,
                     ],
                     'flow' => $exchangeFlow,
                     'total_volume' => $totalVolume,
@@ -89,6 +106,43 @@ class DerivativesAnalysisService
                 throw $e;
             }
         });
+    }
+
+    /**
+     * Get money flow for DEX-only tokens (no futures/OI)
+     */
+    private function getDexMoneyFlow(string $symbol): array
+    {
+        $cleanSymbol = strtoupper(preg_replace('/USDT$/', '', $symbol));
+        $dexData = $this->marketData->getDexScreenerPrice($cleanSymbol);
+
+        if (!$dexData) {
+            throw new \Exception("No market data available for {$symbol}");
+        }
+
+        $volume = floatval($dexData['volume_24h'] ?? 0);
+        $change = floatval($dexData['change_24h'] ?? 0);
+        $price = floatval($dexData['price'] ?? 0);
+        $liquidity = floatval($dexData['liquidity'] ?? 0);
+
+        return [
+            'symbol' => $cleanSymbol,
+            'market_type' => 'crypto_dex',
+            'chain' => $dexData['chain'] ?? 'Unknown',
+            'dex' => $dexData['dex'] ?? 'DEX',
+            'price' => $price,
+            'price_change_24h' => $change,
+            'volume_24h' => $volume,
+            'liquidity' => $liquidity,
+            'flow' => [
+                'net_flow' => $change >= 0 ? 'Inflow' : 'Outflow',
+                'magnitude' => round(abs($change), 1),
+                'volume_usd' => round($volume, 0),
+                'note' => "DEX token on {$dexData['chain']} — estimated from volume & price direction",
+            ],
+            'volume_analysis' => $this->estimateVolumePressure($change, $volume > 0 ? 1.0 : 0),
+            'timestamp' => now()->toIso8601String(),
+        ];
     }
 
     /**
@@ -350,38 +404,61 @@ class DerivativesAnalysisService
         return ['avg_8h' => 0, 'avg_24h' => 0, 'rates' => []];
     }
 
-    private function estimateExchangeFlow(string $symbol, float $volume): array
+    /**
+     * Estimate exchange flow from spot ticker data.
+     * Uses cached rolling average volume for meaningful comparison.
+     *
+     * @param string $symbol Already-normalized symbol (e.g., "BTCUSDT")
+     * @param array  $spotTicker The already-fetched Binance 24h ticker data
+     */
+    private function estimateExchangeFlow(string $symbol, array $spotTicker): array
     {
-        // Use Binance 24h ticker to compare current vs historical volume
         try {
-            $ticker = $this->binance->get24hTicker($symbol . 'USDT');
-            if ($ticker && isset($ticker['volume']) && isset($ticker['quoteVolume'])) {
-                $currentVolume = floatval($ticker['quoteVolume']); // USD volume
-                // Compare volume to a baseline (estimate average as 80% of current for simplicity)
-                // In practice, compare to 7-day average if historical data is available
-                $avgVolume = $currentVolume * 0.85; // Conservative estimate
-                $volumeChange = $avgVolume > 0
-                    ? (($currentVolume - $avgVolume) / $avgVolume) * 100
-                    : 0;
+            $currentVolume = floatval($spotTicker['quoteVolume'] ?? 0);
+            $priceChange = floatval($spotTicker['priceChangePercent'] ?? 0);
 
-                // High volume + price up = inflow; High volume + price down = outflow
-                $priceChange = floatval($ticker['priceChangePercent'] ?? 0);
-                $flow = ($priceChange >= 0) ? 'Inflow' : 'Outflow';
-
+            if ($currentVolume <= 0) {
                 return [
-                    'net_flow' => $flow,
-                    'magnitude' => round(abs($volumeChange), 1),
-                    'volume_usd' => round($currentVolume, 0),
-                    'note' => 'Estimated from volume & price direction (Binance spot)',
+                    'net_flow' => 'Unknown',
+                    'magnitude' => 0,
+                    'volume_usd' => 0,
+                    'note' => 'Volume data unavailable — exchange flow cannot be estimated',
                 ];
             }
+
+            // Use cached rolling average for meaningful volume comparison
+            $avgCacheKey = "avg_volume_7d_{$symbol}";
+            $cachedAvg = Cache::get($avgCacheKey);
+
+            if ($cachedAvg && $cachedAvg > 0) {
+                // EMA-style blend: 85% old average + 15% new reading
+                $newAvg = ($cachedAvg * 0.85) + ($currentVolume * 0.15);
+                Cache::put($avgCacheKey, $newAvg, 604800); // 7-day TTL
+                $volumeChange = (($currentVolume - $cachedAvg) / $cachedAvg) * 100;
+            } else {
+                // First observation: seed baseline, use price change as magnitude proxy
+                Cache::put($avgCacheKey, $currentVolume, 604800);
+                $volumeChange = abs($priceChange) * 2; // proxy until we have history
+            }
+
+            $flow = ($priceChange >= 0) ? 'Inflow' : 'Outflow';
+
+            return [
+                'net_flow' => $flow,
+                'magnitude' => round(abs($volumeChange), 1),
+                'volume_usd' => round($currentVolume, 0),
+                'note' => $cachedAvg
+                    ? 'Estimated from volume trend & price direction (Binance spot)'
+                    : 'Baseline set — magnitude will improve on next query',
+            ];
         } catch (\Exception $e) {
             Log::debug('Exchange flow estimation failed', ['symbol' => $symbol, 'error' => $e->getMessage()]);
         }
 
         return [
-            'net_flow' => $volume > 0 ? 'Inflow' : 'Outflow',
+            'net_flow' => 'Unknown',
             'magnitude' => 0,
+            'volume_usd' => 0,
             'note' => 'Volume data unavailable — exchange flow cannot be estimated',
         ];
     }
