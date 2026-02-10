@@ -3612,10 +3612,12 @@ class CommandHandler
         $message .= "_💡 {$analysis['interpretation']}_\n\n";
         $message .= "⚠️ *Squeeze Risk: {$analysis['squeeze_risk']}*\n\n";
 
-        if ($rates['current_rate'] > 0.0001) {
+        // Derive bottom sentiment from the analysis status to avoid contradictions
+        $status = $analysis['status'] ?? 'Balanced';
+        if (str_contains($status, 'Bullish')) {
             $message .= "_Positive funding = Longs pay shorts_\n";
             $message .= "_Market sentiment: Bullish leveraged_";
-        } elseif ($rates['current_rate'] < -0.0001) {
+        } elseif (str_contains($status, 'Bearish')) {
             $message .= "_Negative funding = Shorts pay longs_\n";
             $message .= "_Market sentiment: Bearish leveraged_";
         } else {

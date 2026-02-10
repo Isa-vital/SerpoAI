@@ -367,13 +367,39 @@ class DerivativesAnalysisService
             }
         }
 
-        // 2. Direct Binance Futures check — fast (~200ms for valid or invalid symbols)
-        //    Skips the slow detectMarketType() → isBareConvertibleCrypto() Binance Spot probe
+        // 2. Check against cached list of Binance Futures symbols (no per-symbol API call)
         $normalized = $this->normalizeSymbol($upper, 'USDT');
-        $futuresCheck = $this->getFuturesStats($normalized);
-        if (empty($futuresCheck) || !isset($futuresCheck['lastPrice'])) {
+        $validSymbols = $this->getBinanceFuturesSymbols();
+        if (!in_array($normalized, $validSymbols)) {
             throw new \Exception("{$symbol} is not available on Binance Futures. Funding rates and OI require crypto perpetual contracts (e.g., BTC, ETH, SOL).");
         }
+    }
+
+    /**
+     * Get all valid Binance Futures USDT-M perpetual symbols, cached for 1 hour.
+     */
+    private function getBinanceFuturesSymbols(): array
+    {
+        return Cache::remember('binance_futures_symbols', 3600, function () {
+            try {
+                $response = Http::timeout(5)->get('https://fapi.binance.com/fapi/v1/exchangeInfo');
+                if ($response->successful()) {
+                    $data = $response->json();
+                    $symbols = [];
+                    foreach (($data['symbols'] ?? []) as $s) {
+                        if (($s['contractType'] ?? '') === 'PERPETUAL' && ($s['status'] ?? '') === 'TRADING') {
+                            $symbols[] = $s['symbol'];
+                        }
+                    }
+                    Log::debug('Cached Binance Futures symbols', ['count' => count($symbols)]);
+                    return $symbols;
+                }
+            } catch (\Exception $e) {
+                Log::warning('Failed to fetch Binance Futures symbols', ['error' => $e->getMessage()]);
+            }
+            // Fallback: return empty so validation falls through to generic error
+            return [];
+        });
     }
 
     private function normalizeSymbol(string $symbol, string $quote = 'USDT'): string
