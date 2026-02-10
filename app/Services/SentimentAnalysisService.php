@@ -32,14 +32,71 @@ class SentimentAnalysisService
             // Get market data first
             $sentiment['market_data'] = $this->getMarketData($symbol);
 
-            // Try to get sentiment from CryptoCompare (free tier)
+            // Try to get sentiment from CryptoCompare (free tier) - NEWS sentiment
             $cryptoCompareSentiment = $this->getCryptoCompareSentiment($coin, $symbol);
             if ($cryptoCompareSentiment) {
                 $sentiment = array_merge($sentiment, $cryptoCompareSentiment);
             }
 
+            // Get SOCIAL sentiment from Fear & Greed Index (separate from news)
+            $socialData = $this->getTwitterSentiment($symbol);
+            if ($socialData['score'] !== 50 || !empty($socialData['sources'])) {
+                $sentiment['social_sentiment'] = $socialData['score'];
+                // Recalculate overall score as weighted avg: 40% social + 60% news
+                $sentiment['score'] = round(
+                    ($sentiment['news_sentiment'] * 0.6) + ($socialData['score'] * 0.4),
+                    1
+                );
+                // Re-evaluate label based on new combined score
+                $score = $sentiment['score'];
+                if ($score >= 75) {
+                    $sentiment['label'] = 'Very Bullish';
+                    $sentiment['emoji'] = '🟢🟢';
+                } elseif ($score >= 60) {
+                    $sentiment['label'] = 'Bullish';
+                    $sentiment['emoji'] = '🟢';
+                } elseif ($score <= 25) {
+                    $sentiment['label'] = 'Very Bearish';
+                    $sentiment['emoji'] = '🔴🔴';
+                } elseif ($score <= 40) {
+                    $sentiment['label'] = 'Bearish';
+                    $sentiment['emoji'] = '🔴';
+                } else {
+                    $sentiment['label'] = 'Neutral';
+                    $sentiment['emoji'] = '⚪';
+                }
+            }
+
             // Calculate confidence based on data availability
             $sentiment['confidence'] = $this->calculateConfidence($sentiment);
+
+            // Add market data-based signals (RSI, trend, volume)
+            if ($sentiment['market_data']) {
+                $md = $sentiment['market_data'];
+                if (!isset($sentiment['signals'])) {
+                    $sentiment['signals'] = [];
+                }
+                if (isset($md['rsi']) && $md['rsi'] !== null) {
+                    if ($md['rsi'] > 70) {
+                        $sentiment['signals'][] = 'RSI overbought (' . round($md['rsi'], 1) . ') — correction risk';
+                    } elseif ($md['rsi'] < 30) {
+                        $sentiment['signals'][] = 'RSI oversold (' . round($md['rsi'], 1) . ') — bounce opportunity';
+                    }
+                }
+                if ($md['trend'] === 'Bullish') {
+                    $sentiment['signals'][] = 'Price trending up 24h';
+                } elseif ($md['trend'] === 'Bearish') {
+                    $sentiment['signals'][] = 'Price trending down 24h';
+                }
+            }
+
+            // For stocks with no CryptoCompare data, ensure we have at least basic signals
+            if (empty($sentiment['signals']) && $sentiment['market_data']) {
+                $change = $sentiment['market_data']['price_change_24h'] ?? 0;
+                if (abs($change) < 1) {
+                    $sentiment['signals'][] = 'Low volatility — consolidation phase';
+                }
+            }
 
             // Generate trader insight
             $sentiment['trader_insight'] = $this->generateTraderInsight($sentiment);
@@ -49,10 +106,11 @@ class SentimentAnalysisService
     }
 
     /**
-     * Get market data for the symbol
+     * Get market data for the symbol — tries Binance, then MultiMarket (stocks/DEX)
      */
     private function getMarketData(string $symbol): ?array
     {
+        // Try Binance first (crypto)
         try {
             $binance = app(BinanceAPIService::class);
             $binanceSymbol = str_contains($symbol, 'USDT') ? $symbol : $symbol . 'USDT';
@@ -71,10 +129,29 @@ class SentimentAnalysisService
                     'price_change_24h' => $priceChange,
                     'rsi' => $rsi,
                     'trend' => $priceChange > 2 ? 'Bullish' : ($priceChange < -2 ? 'Bearish' : 'Sideways'),
+                    'source' => 'Binance',
                 ];
             }
         } catch (\Exception $e) {
-            Log::error('Market data fetch error', ['symbol' => $symbol, 'error' => $e->getMessage()]);
+            Log::debug('Binance market data failed for sentiment', ['symbol' => $symbol]);
+        }
+
+        // Fallback: MultiMarket (covers stocks, DEX tokens, forex)
+        try {
+            $multiMarket = app(MultiMarketDataService::class);
+            $universalData = $multiMarket->getUniversalPriceData($symbol);
+            if ($universalData && !isset($universalData['error']) && isset($universalData['price']) && $universalData['price'] > 0) {
+                $priceChange = floatval($universalData['change_24h'] ?? $universalData['change_percent'] ?? $universalData['price_change_24h'] ?? 0);
+                return [
+                    'price' => floatval($universalData['price']),
+                    'price_change_24h' => $priceChange,
+                    'rsi' => null,
+                    'trend' => $priceChange > 2 ? 'Bullish' : ($priceChange < -2 ? 'Bearish' : 'Sideways'),
+                    'source' => $universalData['source'] ?? 'Market Data',
+                ];
+            }
+        } catch (\Exception $e) {
+            Log::debug('MultiMarket data failed for sentiment', ['symbol' => $symbol]);
         }
 
         return null;
@@ -87,13 +164,27 @@ class SentimentAnalysisService
     {
         $score = 0;
 
-        // Check data availability
-        if (!empty($sentiment['sources'])) $score += 40;
-        if ($sentiment['market_data']) $score += 30;
-        if ($sentiment['positive_mentions'] > 0 || $sentiment['negative_mentions'] > 0) $score += 30;
+        // Token-specific news found (not just generic crypto articles)
+        $totalMentions = ($sentiment['positive_mentions'] ?? 0) + ($sentiment['negative_mentions'] ?? 0);
+        if ($totalMentions > 5) {
+            $score += 35;
+        } elseif ($totalMentions > 0) {
+            $score += 20;
+        }
 
-        if ($score >= 70) return 'High';
-        if ($score >= 40) return 'Medium';
+        // Market data (price, RSI etc.)
+        if ($sentiment['market_data']) {
+            $score += 25;
+            if (isset($sentiment['market_data']['rsi']) && $sentiment['market_data']['rsi'] !== null) {
+                $score += 15; // RSI adds confidence
+            }
+        }
+
+        // Social/F&G data
+        if ($sentiment['social_sentiment'] != 50) $score += 20;
+
+        if ($score >= 60) return 'High';
+        if ($score >= 35) return 'Medium';
         return 'Low';
     }
 
@@ -126,17 +217,27 @@ class SentimentAnalysisService
 
     /**
      * Get sentiment from CryptoCompare API (free)
+     * NOTE: CryptoCompare is CRYPTO-only — skip for stocks/forex
      */
     private function getCryptoCompareSentiment(string $coin, string $symbol): ?array
     {
         try {
-            // Use symbol directly for API - CryptoCompare accepts most common symbols
-            // For general crypto news, include major coins
+            // CryptoCompare is a crypto news source — skip for stocks/forex
+            $multiMarket = app(MultiMarketDataService::class);
+            $marketType = $multiMarket->detectMarketType($symbol);
+            if ($marketType !== 'crypto') {
+                Log::debug('Skipping CryptoCompare for non-crypto symbol', ['symbol' => $symbol, 'type' => $marketType]);
+                return null;
+            }
+
+            // Use symbol directly for API
             $categories = strtoupper($symbol);
 
-            // If it's a less common coin, also include BTC/ETH for general market context
-            $majorCoins = ['BTC', 'ETH', 'BNB', 'SOL', 'XRP', 'ADA', 'DOGE', 'MATIC', 'DOT', 'AVAX'];
-            if (!in_array($symbol, $majorCoins)) {
+            // For lesser-known crypto tokens, add BTC,ETH context
+            $binance = app(BinanceAPIService::class);
+            $testSymbol = $symbol . 'USDT';
+            $ticker = $binance->get24hTicker($testSymbol);
+            if (!$ticker) {
                 $categories .= ',BTC,ETH';
             }
 
@@ -161,12 +262,25 @@ class SentimentAnalysisService
 
             $positiveCount = 0;
             $negativeCount = 0;
+            $relevantArticles = 0;
             $sources = [];
+            $symbolLower = strtolower($symbol);
+            $coinLower = strtolower($coin);
 
-            foreach (array_slice($articles, 0, 15) as $article) {
+            foreach (array_slice($articles, 0, 20) as $article) {
                 $title = strtolower($article['title'] ?? '');
                 $body = strtolower($article['body'] ?? '');
                 $text = $title . ' ' . $body;
+
+                // Only count articles that actually mention this symbol/coin
+                $isRelevant = str_contains($title, $symbolLower)
+                    || str_contains($title, $coinLower)
+                    || str_contains($body, $symbolLower);
+
+                if (!$isRelevant) {
+                    continue;
+                }
+                $relevantArticles++;
 
                 foreach ($positiveKeywords as $keyword) {
                     if (str_contains($text, $keyword)) {
@@ -195,7 +309,7 @@ class SentimentAnalysisService
                 $ratio = $positiveCount / $totalMentions;
                 $score = $ratio * 100;
                 $newsSentiment = $score;
-                $socialSentiment = $score; // Using news as proxy for social
+                $socialSentiment = 50; // Social is set separately via Fear & Greed
             } else {
                 $score = 50; // Neutral if no mentions
                 $newsSentiment = 50;
@@ -220,23 +334,25 @@ class SentimentAnalysisService
                 $emoji = '⚪';
             }
 
-            // Generate signals based on mentions
+            // Generate signals based on relevant mentions
             $signals = [];
-            if ($positiveCount > $negativeCount * 2) {
+            if ($positiveCount > $negativeCount * 2 && $positiveCount >= 3) {
                 $signals[] = 'Strong positive news coverage';
-            } elseif ($positiveCount > $negativeCount) {
-                $signals[] = 'Rising positive mentions';
+            } elseif ($positiveCount > $negativeCount && $positiveCount >= 2) {
+                $signals[] = 'Positive news trend';
             }
 
-            if ($negativeCount > $positiveCount * 2) {
-                $signals[] = 'Heavy negative news';
-            } elseif ($negativeCount > $positiveCount) {
-                $signals[] = 'Increasing bearish sentiment';
+            if ($negativeCount > $positiveCount * 2 && $negativeCount >= 3) {
+                $signals[] = 'Heavy negative press';
+            } elseif ($negativeCount > $positiveCount && $negativeCount >= 2) {
+                $signals[] = 'Growing bearish narrative';
             }
 
-            if ($totalMentions > 20) {
+            if ($relevantArticles >= 8) {
                 $signals[] = 'High media attention';
-            } elseif ($totalMentions < 5) {
+            } elseif ($relevantArticles >= 3) {
+                $signals[] = 'Moderate media coverage';
+            } elseif ($relevantArticles <= 1) {
                 $signals[] = 'Low media coverage';
             }
 
@@ -361,11 +477,28 @@ class SentimentAnalysisService
     }
 
     /**
-     * Get Twitter/social sentiment based on market indicators
-     * Uses Fear & Greed Index + volume analysis as a proxy
+     * Get social/market sentiment from Fear & Greed Index
+     * Note: F&G is a global crypto market indicator, not token-specific
      */
     private function getTwitterSentiment(string $symbol = 'BTC'): array
     {
+        // Fear & Greed only applies to crypto market — skip for stocks/forex
+        try {
+            $multiMarket = app(MultiMarketDataService::class);
+            $marketType = $multiMarket->detectMarketType($symbol);
+            if ($marketType !== 'crypto') {
+                return [
+                    'score' => 50,
+                    'label' => 'N/A',
+                    'emoji' => '⚪',
+                    'sources' => [],
+                    'is_stock' => true,
+                ];
+            }
+        } catch (\Exception $e) {
+            // continue with F&G if detection fails
+        }
+
         try {
             // Use Alternative.me Fear & Greed Index (free, no auth)
             $response = Http::timeout(5)->get('https://api.alternative.me/fng/', [

@@ -1157,7 +1157,7 @@ class CommandHandler
     {
         // Get symbol from params or default to BTC
         if (empty($params)) {
-            $this->telegram->sendMessage($chatId, "Please specify a cryptocurrency symbol.\n\nExample: `/sentiment BTC` or `/sentiment ETH`");
+            $this->telegram->sendMessage($chatId, "Please specify a symbol.\n\nExample: `/sentiment BTC` or `/sentiment ETH`\nStocks: `/sentiment AAPL` or `/sentiment TSLA`");
             return;
         }
 
@@ -1166,12 +1166,40 @@ class CommandHandler
         // Remove USDT/BUSD suffix if present
         $symbol = preg_replace('/(USDT|BUSD|USD)$/i', '', $symbol);
 
+        // Common typo corrections
+        $typoCorrections = [
+            'APPL' => 'AAPL', 'GOGL' => 'GOOGL', 'GOOG' => 'GOOGL',
+            'TELA' => 'TSLA', 'BITCOIN' => 'BTC', 'ETHEREUM' => 'ETH',
+            'ETHERIUM' => 'ETH', 'SOLONA' => 'SOL', 'DODGECOIN' => 'DOGE',
+        ];
+        if (isset($typoCorrections[$symbol])) {
+            $corrected = $typoCorrections[$symbol];
+            $this->telegram->sendMessage($chatId, "📝 Did you mean *{$corrected}*? Analyzing...");
+            $symbol = $corrected;
+        }
+
         // Dynamically resolve coin name via CoinGecko search API (cached)
         $coinName = $this->resolveCoinName($symbol);
 
         $this->telegram->sendMessage($chatId, "🔍 Analyzing {$symbol} sentiment...");
 
         $sentiment = $this->sentiment->getCryptoSentiment($coinName, $symbol);
+
+        // Check if we have any meaningful data
+        $hasMarketData = !empty($sentiment['market_data']);
+        $hasNewsData = ($sentiment['positive_mentions'] ?? 0) > 0 || ($sentiment['negative_mentions'] ?? 0) > 0;
+        $hasSocialData = $sentiment['social_sentiment'] != 50;
+
+        if (!$hasMarketData && !$hasNewsData && !$hasSocialData && $sentiment['score'] == 50) {
+            $message = "❌ *No data found for {$symbol}*\n\n";
+            $message .= "This asset is not tracked by our sentiment sources.\n\n";
+            $message .= "*Try:*\n";
+            $message .= "• Major cryptos: BTC, ETH, SOL, BNB, XRP\n";
+            $message .= "• Stocks: AAPL, TSLA, AMZN, GOOGL\n";
+            $message .= "• Use `/analyze {$symbol}` for AI-powered analysis instead";
+            $this->telegram->sendMessage($chatId, $message);
+            return;
+        }
 
         $message = "📊 *{$symbol} SENTIMENT ANALYSIS*\n";
         $message .= "━━━━━━━━━━━━━━━━━━━━\n\n";
@@ -1182,12 +1210,26 @@ class CommandHandler
         // Market Data
         if ($sentiment['market_data']) {
             $md = $sentiment['market_data'];
-            $priceFormatted = $md['price'] < 1 ? number_format($md['price'], 6) : number_format($md['price'], 2);
+            // Use adaptive price formatting
+            if ($md['price'] >= 1) {
+                $priceFormatted = number_format($md['price'], 2);
+            } elseif ($md['price'] >= 0.01) {
+                $priceFormatted = number_format($md['price'], 4);
+            } elseif ($md['price'] >= 0.0001) {
+                $priceFormatted = number_format($md['price'], 6);
+            } else {
+                $priceFormatted = number_format($md['price'], 8);
+            }
             $changeEmoji = $md['price_change_24h'] > 0 ? '🟢' : ($md['price_change_24h'] < 0 ? '🔴' : '⚪');
 
-            $message .= "💰 *Price:* \${$priceFormatted} ({$changeEmoji} " . ($md['price_change_24h'] > 0 ? '+' : '') . "{$md['price_change_24h']}% 24h)\n";
+            $message .= "💰 *Price:* \${$priceFormatted} ({$changeEmoji} " . ($md['price_change_24h'] > 0 ? '+' : '') . number_format($md['price_change_24h'], 3) . "% 24h)\n";
 
-            if (isset($md['rsi'])) {
+            // Show data source
+            if (isset($md['source'])) {
+                $message .= "📡 *Source:* {$md['source']}\n";
+            }
+
+            if (isset($md['rsi']) && $md['rsi'] !== null) {
                 $rsiLabel = $md['rsi'] > 70 ? 'Overbought' : ($md['rsi'] < 30 ? 'Oversold' : 'Neutral');
                 $message .= "📈 *RSI:* " . round($md['rsi'], 1) . " ({$rsiLabel})\n";
             }
@@ -1204,8 +1246,13 @@ class CommandHandler
         $message .= "🧠 *Sentiment Breakdown*\n";
         $socialPercent = round($sentiment['social_sentiment']);
         $newsPercent = round($sentiment['news_sentiment']);
-        $message .= "• Social: {$socialPercent}% " . ($socialPercent > 50 ? 'Positive' : ($socialPercent < 50 ? 'Negative' : 'Neutral')) . "\n";
-        $message .= "• News: {$newsPercent}% " . ($newsPercent > 50 ? 'Positive' : ($newsPercent < 50 ? 'Negative' : 'Neutral')) . "\n\n";
+        // Label social as "Crypto Market" if F&G-based (it's not token-specific)
+        $socialLabel = ($socialPercent > 50 ? 'Positive' : ($socialPercent < 50 ? 'Negative' : 'Neutral'));
+        $newsLabel = ($newsPercent > 50 ? 'Positive' : ($newsPercent < 50 ? 'Negative' : 'Neutral'));
+        if ($hasSocialData) {
+            $message .= "• Crypto Market F&G: {$socialPercent}% {$socialLabel}\n";
+        }
+        $message .= "• News: {$newsPercent}% {$newsLabel}\n\n";
 
         // Signals
         if (!empty($sentiment['signals'])) {
@@ -1223,10 +1270,18 @@ class CommandHandler
         }
 
         $message .= "━━━━━━━━━━━━━━━━━━━━\n";
-        $message .= "📡 *Sources:* CryptoCompare";
-        if ($sentiment['market_data']) {
-            $message .= ", Binance";
+        $message .= "📡 *Sources:*";
+        $sourceList = [];
+        if (($sentiment['positive_mentions'] ?? 0) > 0 || ($sentiment['negative_mentions'] ?? 0) > 0) {
+            $sourceList[] = 'CryptoCompare';
         }
+        if ($sentiment['market_data']) {
+            $sourceList[] = $sentiment['market_data']['source'] ?? 'Market Data';
+        }
+        if ($hasSocialData) {
+            $sourceList[] = 'Fear & Greed Index';
+        }
+        $message .= ' ' . (empty($sourceList) ? 'Limited' : implode(', ', $sourceList));
         $message .= "\n_Updates: 30m_";
 
         $keyboard = [
@@ -4253,6 +4308,29 @@ class CommandHandler
                 $universalData = $this->multiMarket->getUniversalPriceData($dataSymbol);
                 if ($universalData && isset($universalData['price'])) {
                     $marketData = $universalData;
+
+                    // If universal data came from DexScreener and we're in "stock" mode,
+                    // redirect to proper DexScreener chart instead of broken TradingView
+                    $dataSource = $universalData['source'] ?? '';
+                    if ($marketType === 'stock' && str_contains($dataSource, 'DexScreener')) {
+                        $dexCacheKey = "dex_pair_data_{$displaySymbol}";
+                        $dexData = Cache::get($dexCacheKey);
+                        if (!$dexData) {
+                            $dexData = $this->multiMarket->getDexScreenerPrice($displaySymbol);
+                            if ($dexData && isset($dexData['pair_address'])) {
+                                Cache::put($dexCacheKey, $dexData, 300);
+                            }
+                        }
+                        if ($dexData && isset($dexData['pair_address'], $dexData['chain_id'])) {
+                            $this->sendDexScreenerChart($chatId, $displaySymbol, $displayTf, $dexData);
+                            return;
+                        }
+                    }
+
+                    // Override marketType if data says it's crypto (fixes $0.00 formatting)
+                    if (isset($universalData['market_type']) && $universalData['market_type'] !== $marketType) {
+                        $marketType = $universalData['market_type'];
+                    }
                 }
             } catch (\Exception $e) {
                 Log::debug('Universal price fallback failed for chart', ['symbol' => $dataSymbol]);
