@@ -253,6 +253,9 @@ class DerivativesAnalysisService
      */
     public function getOpenInterest(string $symbol): array
     {
+        // Reject non-crypto symbols early
+        $this->validateCryptoFutures($symbol);
+
         $symbol = $this->normalizeSymbol($symbol, 'USDT');
         $cacheKey = "open_interest_{$symbol}";
 
@@ -302,6 +305,9 @@ class DerivativesAnalysisService
      */
     public function getFundingRates(string $symbol): array
     {
+        // Reject non-crypto symbols early
+        $this->validateCryptoFutures($symbol);
+
         $symbol = $this->normalizeSymbol($symbol, 'USDT');
         $cacheKey = "funding_rates_{$symbol}";
 
@@ -331,6 +337,32 @@ class DerivativesAnalysisService
     }
 
     // ===== HELPER METHODS =====
+
+    /**
+     * Validate that a symbol is suitable for crypto futures queries.
+     * Rejects stocks, forex, and DEX-only tokens early with a clear error.
+     */
+    private function validateCryptoFutures(string $symbol): void
+    {
+        $marketType = $this->marketData->detectMarketType($symbol);
+
+        if ($marketType === 'stock') {
+            throw new \Exception("{$symbol} is a stock — funding rates and open interest are only available for crypto futures. Try: /rates BTCUSDT");
+        }
+
+        if ($marketType === 'forex') {
+            throw new \Exception("{$symbol} is a forex/commodity pair — funding rates and open interest are only available for crypto futures. Try: /rates BTCUSDT");
+        }
+
+        // For crypto: check if it's on Binance (DEX-only tokens won't have futures)
+        if ($marketType === 'crypto') {
+            $normalized = $this->normalizeSymbol($symbol, 'USDT');
+            $futuresCheck = $this->getFuturesStats($normalized);
+            if (empty($futuresCheck) || !isset($futuresCheck['lastPrice'])) {
+                throw new \Exception("{$symbol} is not listed on Binance Futures. Funding rates and open interest are only available for crypto perpetual contracts (e.g., BTC, ETH, SOL).");
+            }
+        }
+    }
 
     private function normalizeSymbol(string $symbol, string $quote = 'USDT'): string
     {

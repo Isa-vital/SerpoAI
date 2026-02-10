@@ -3441,7 +3441,12 @@ class CommandHandler
             $keyboard = [
                 'inline_keyboard' => $this->getContextualKeyboard('derivatives')
             ];
-            $this->telegram->sendMessage($chatId, "❌ Error fetching OI for {$symbol}. Make sure it's a valid crypto symbol.", $keyboard);
+            $errorMsg = $e->getMessage();
+            if (str_contains($errorMsg, 'stock') || str_contains($errorMsg, 'forex') || str_contains($errorMsg, 'not listed') || str_contains($errorMsg, 'not available')) {
+                $this->telegram->sendMessage($chatId, "❌ {$errorMsg}", $keyboard);
+            } else {
+                $this->telegram->sendMessage($chatId, "❌ Error fetching OI for {$symbol}. Make sure it's a valid crypto futures symbol.", $keyboard);
+            }
         }
     }
 
@@ -3471,7 +3476,13 @@ class CommandHandler
             $keyboard = [
                 'inline_keyboard' => $this->getContextualKeyboard('derivatives')
             ];
-            $this->telegram->sendMessage($chatId, "❌ Error fetching funding rates for {$symbol}. Make sure it's a valid crypto symbol.", $keyboard);
+            $errorMsg = $e->getMessage();
+            // Show specific validation messages, generic message for other errors
+            if (str_contains($errorMsg, 'stock') || str_contains($errorMsg, 'forex') || str_contains($errorMsg, 'not listed') || str_contains($errorMsg, 'not available')) {
+                $this->telegram->sendMessage($chatId, "❌ {$errorMsg}", $keyboard);
+            } else {
+                $this->telegram->sendMessage($chatId, "❌ Error fetching funding rates for {$symbol}. Make sure it's a valid crypto futures symbol.", $keyboard);
+            }
         }
     }
 
@@ -3601,12 +3612,15 @@ class CommandHandler
         $message .= "_💡 {$analysis['interpretation']}_\n\n";
         $message .= "⚠️ *Squeeze Risk: {$analysis['squeeze_risk']}*\n\n";
 
-        if ($rates['current_rate'] > 0) {
+        if ($rates['current_rate'] > 0.00001) {
             $message .= "_Positive funding = Longs pay shorts_\n";
             $message .= "_Market sentiment: Bullish leveraged_";
-        } else {
+        } elseif ($rates['current_rate'] < -0.00001) {
             $message .= "_Negative funding = Shorts pay longs_\n";
             $message .= "_Market sentiment: Bearish leveraged_";
+        } else {
+            $message .= "_Funding rate near zero = Balanced positioning_\n";
+            $message .= "_Market sentiment: Neutral_";
         }
 
         return $message;
