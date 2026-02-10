@@ -32,19 +32,48 @@ class SentimentAnalysisService
             // Get market data first
             $sentiment['market_data'] = $this->getMarketData($symbol);
 
+            // Determine asset type from market data source (avoids redundant API calls)
+            // If Binance/DexScreener/CoinGecko returned data, it's crypto
+            // If Alpha Vantage/Yahoo Finance/Twelve Data returned data, it's a stock
+            $isCrypto = true; // default to crypto
+            if ($sentiment['market_data']) {
+                $source = $sentiment['market_data']['source'] ?? '';
+                $stockSources = ['Alpha Vantage', 'Yahoo Finance', 'Twelve Data'];
+                foreach ($stockSources as $ss) {
+                    if (str_contains($source, $ss)) {
+                        $isCrypto = false;
+                        break;
+                    }
+                }
+            } else {
+                // No market data — fall back to detectMarketType
+                try {
+                    $multiMarket = app(MultiMarketDataService::class);
+                    $isCrypto = $multiMarket->detectMarketType($symbol) === 'crypto';
+                } catch (\Exception $e) {}
+            }
+
             // Try to get sentiment from CryptoCompare (free tier) - NEWS sentiment
-            $cryptoCompareSentiment = $this->getCryptoCompareSentiment($coin, $symbol);
-            if ($cryptoCompareSentiment) {
-                $sentiment = array_merge($sentiment, $cryptoCompareSentiment);
+            // Only for crypto — CryptoCompare is a crypto news source
+            if ($isCrypto) {
+                $cryptoCompareSentiment = $this->getCryptoCompareSentiment($coin, $symbol);
+                if ($cryptoCompareSentiment) {
+                    $sentiment = array_merge($sentiment, $cryptoCompareSentiment);
+                }
             }
 
             // Get SOCIAL sentiment from Fear & Greed Index (separate from news)
-            $socialData = $this->getTwitterSentiment($symbol);
+            // F&G is a global crypto market indicator — skip for stocks
+            $socialData = $isCrypto ? $this->getTwitterSentimentDirect() : ['score' => 50, 'label' => 'N/A', 'emoji' => '⚪', 'sources' => []];
             if ($socialData['score'] !== 50 || !empty($socialData['sources'])) {
                 $sentiment['social_sentiment'] = $socialData['score'];
-                // Recalculate overall score as weighted avg: 40% social + 60% news
+                // F&G is market-wide, not token-specific — reduce its weight
+                // when we have token-specific news data
+                $hasTokenNews = ($sentiment['positive_mentions'] ?? 0) + ($sentiment['negative_mentions'] ?? 0) > 0;
+                $fgWeight = $hasTokenNews ? 0.2 : 0.35; // lower weight when we have real news
+                $newsWeight = 1 - $fgWeight;
                 $sentiment['score'] = round(
-                    ($sentiment['news_sentiment'] * 0.6) + ($socialData['score'] * 0.4),
+                    ($sentiment['news_sentiment'] * $newsWeight) + ($socialData['score'] * $fgWeight),
                     1
                 );
                 // Re-evaluate label based on new combined score
@@ -70,31 +99,66 @@ class SentimentAnalysisService
             // Calculate confidence based on data availability
             $sentiment['confidence'] = $this->calculateConfidence($sentiment);
 
-            // Add market data-based signals (RSI, trend, volume)
+            // Adjust score based on RSI/market data (technical reality check)
+            // This prevents F&G from completely overriding token-specific technicals
             if ($sentiment['market_data']) {
                 $md = $sentiment['market_data'];
                 if (!isset($sentiment['signals'])) {
                     $sentiment['signals'] = [];
                 }
+
+                // RSI adjustment: strongly overbought/oversold should nudge the score
                 if (isset($md['rsi']) && $md['rsi'] !== null) {
                     if ($md['rsi'] > 70) {
+                        // Overbought = heavy buying momentum — nudge score up
+                        $rsiBoost = min(10, ($md['rsi'] - 70) * 0.5);
+                        $sentiment['score'] = min(100, $sentiment['score'] + $rsiBoost);
                         $sentiment['signals'][] = 'RSI overbought (' . round($md['rsi'], 1) . ') — correction risk';
                     } elseif ($md['rsi'] < 30) {
+                        // Oversold = heavy selling — nudge score down
+                        $rsiDrag = min(10, (30 - $md['rsi']) * 0.5);
+                        $sentiment['score'] = max(0, $sentiment['score'] - $rsiDrag);
                         $sentiment['signals'][] = 'RSI oversold (' . round($md['rsi'], 1) . ') — bounce opportunity';
                     }
                 }
+
+                // Trend-based signals
                 if ($md['trend'] === 'Bullish') {
                     $sentiment['signals'][] = 'Price trending up 24h';
                 } elseif ($md['trend'] === 'Bearish') {
                     $sentiment['signals'][] = 'Price trending down 24h';
                 }
+
+                // Re-evaluate label after RSI adjustment
+                $score = round($sentiment['score'], 1);
+                $sentiment['score'] = $score;
+                if ($score >= 75) {
+                    $sentiment['label'] = 'Very Bullish';
+                    $sentiment['emoji'] = '🟢🟢';
+                } elseif ($score >= 60) {
+                    $sentiment['label'] = 'Bullish';
+                    $sentiment['emoji'] = '🟢';
+                } elseif ($score <= 25) {
+                    $sentiment['label'] = 'Very Bearish';
+                    $sentiment['emoji'] = '🔴🔴';
+                } elseif ($score <= 40) {
+                    $sentiment['label'] = 'Bearish';
+                    $sentiment['emoji'] = '🔴';
+                } else {
+                    $sentiment['label'] = 'Neutral';
+                    $sentiment['emoji'] = '⚪';
+                }
             }
 
-            // For stocks with no CryptoCompare data, ensure we have at least basic signals
+            // For assets with no CryptoCompare/F&G data, ensure we have at least basic signals
             if (empty($sentiment['signals']) && $sentiment['market_data']) {
                 $change = $sentiment['market_data']['price_change_24h'] ?? 0;
-                if (abs($change) < 1) {
+                if (abs($change) < 0.3) {
                     $sentiment['signals'][] = 'Low volatility — consolidation phase';
+                } elseif ($change > 0) {
+                    $sentiment['signals'][] = 'Modest gains today';
+                } else {
+                    $sentiment['signals'][] = 'Slight decline today';
                 }
             }
 
@@ -141,7 +205,7 @@ class SentimentAnalysisService
             $multiMarket = app(MultiMarketDataService::class);
             $universalData = $multiMarket->getUniversalPriceData($symbol);
             if ($universalData && !isset($universalData['error']) && isset($universalData['price']) && $universalData['price'] > 0) {
-                $priceChange = floatval($universalData['change_24h'] ?? $universalData['change_percent'] ?? $universalData['price_change_24h'] ?? 0);
+                $priceChange = floatval($universalData['change_24h'] ?? $universalData['change_pct'] ?? $universalData['change_percent'] ?? $universalData['price_change_24h'] ?? 0);
                 return [
                     'price' => floatval($universalData['price']),
                     'price_change_24h' => $priceChange,
@@ -195,20 +259,29 @@ class SentimentAnalysisService
     {
         $score = $sentiment['score'];
         $marketData = $sentiment['market_data'];
+        $rsi = $marketData['rsi'] ?? null;
+
+        // RSI divergence from sentiment creates unique insights
+        if ($rsi !== null && $rsi > 70 && $score <= 45) {
+            return 'Overbought RSI conflicts with weak sentiment — watch for reversal or sentiment catch-up.';
+        }
+        if ($rsi !== null && $rsi < 30 && $score >= 55) {
+            return 'Oversold RSI with positive sentiment — potential bounce setup developing.';
+        }
 
         if ($score >= 70) {
             if ($marketData && $marketData['trend'] === 'Bullish') {
                 return 'Strong bullish momentum. Consider long positions with tight stops.';
             }
             return 'Positive sentiment, but wait for price confirmation before entering.';
-        } elseif ($score >= 60) {
+        } elseif ($score >= 55) {
             return 'Mild bullish bias. Look for breakout above resistance for entries.';
         } elseif ($score <= 30) {
             if ($marketData && $marketData['trend'] === 'Bearish') {
                 return 'Strong bearish pressure. Avoid longs, consider shorts with caution.';
             }
             return 'Negative sentiment, but watch for oversold bounce opportunities.';
-        } elseif ($score <= 40) {
+        } elseif ($score <= 42) {
             return 'Bearish sentiment. Wait for reversal signals before entering longs.';
         } else {
             return 'Market is indecisive. Wait for clear directional move before trading.';
@@ -222,13 +295,7 @@ class SentimentAnalysisService
     private function getCryptoCompareSentiment(string $coin, string $symbol): ?array
     {
         try {
-            // CryptoCompare is a crypto news source — skip for stocks/forex
-            $multiMarket = app(MultiMarketDataService::class);
-            $marketType = $multiMarket->detectMarketType($symbol);
-            if ($marketType !== 'crypto') {
-                Log::debug('Skipping CryptoCompare for non-crypto symbol', ['symbol' => $symbol, 'type' => $marketType]);
-                return null;
-            }
+            // Caller ensures this is only invoked for crypto assets
 
             // Use symbol directly for API
             $categories = strtoupper($symbol);
@@ -477,27 +544,11 @@ class SentimentAnalysisService
     }
 
     /**
-     * Get social/market sentiment from Fear & Greed Index
-     * Note: F&G is a global crypto market indicator, not token-specific
+     * Get social/market sentiment from Fear & Greed Index directly
+     * Called only for crypto assets (caller handles stock/forex filtering)
      */
-    private function getTwitterSentiment(string $symbol = 'BTC'): array
+    private function getTwitterSentimentDirect(): array
     {
-        // Fear & Greed only applies to crypto market — skip for stocks/forex
-        try {
-            $multiMarket = app(MultiMarketDataService::class);
-            $marketType = $multiMarket->detectMarketType($symbol);
-            if ($marketType !== 'crypto') {
-                return [
-                    'score' => 50,
-                    'label' => 'N/A',
-                    'emoji' => '⚪',
-                    'sources' => [],
-                    'is_stock' => true,
-                ];
-            }
-        } catch (\Exception $e) {
-            // continue with F&G if detection fails
-        }
 
         try {
             // Use Alternative.me Fear & Greed Index (free, no auth)

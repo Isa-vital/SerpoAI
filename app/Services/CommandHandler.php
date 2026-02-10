@@ -1250,7 +1250,9 @@ class CommandHandler
         $socialLabel = ($socialPercent > 50 ? 'Positive' : ($socialPercent < 50 ? 'Negative' : 'Neutral'));
         $newsLabel = ($newsPercent > 50 ? 'Positive' : ($newsPercent < 50 ? 'Negative' : 'Neutral'));
         if ($hasSocialData) {
-            $message .= "• Crypto Market F&G: {$socialPercent}% {$socialLabel}\n";
+            $hasTokenNews = ($sentiment['positive_mentions'] ?? 0) + ($sentiment['negative_mentions'] ?? 0) > 0;
+            $fgWeightLabel = $hasTokenNews ? '20%' : '35%';
+            $message .= "• Crypto Market F&G: {$socialPercent}% {$socialLabel} (weight: {$fgWeightLabel})\n";
         }
         $message .= "• News: {$newsPercent}% {$newsLabel}\n\n";
 
