@@ -344,23 +344,35 @@ class DerivativesAnalysisService
      */
     private function validateCryptoFutures(string $symbol): void
     {
-        $marketType = $this->marketData->detectMarketType($symbol);
+        $upper = strtoupper(str_replace(['/', '-', '_'], '', $symbol));
 
-        if ($marketType === 'stock') {
-            throw new \Exception("{$symbol} is a stock — funding rates and open interest are only available for crypto futures. Try: /rates BTCUSDT");
+        // 1. Quick forex/commodity rejection — no API calls needed
+        $commodityAliases = ['GOLD', 'SILVER', 'OIL', 'CRUDEOIL', 'BRENT', 'NATGAS', 'PLATINUM', 'PALLADIUM', 'COPPER'];
+        if (in_array($upper, $commodityAliases)) {
+            throw new \Exception("{$symbol} is a commodity — funding rates and open interest are only available for crypto futures. Try: /rates BTCUSDT");
         }
 
-        if ($marketType === 'forex') {
-            throw new \Exception("{$symbol} is a forex/commodity pair — funding rates and open interest are only available for crypto futures. Try: /rates BTCUSDT");
+        $commodityPairs = ['XAUUSD', 'XAGUSD', 'XPTUSD', 'XPDUSD', 'XAUEUR', 'XAGEUR', 'BCOUSD', 'WTOUSD', 'NGAS'];
+        if (in_array($upper, $commodityPairs)) {
+            throw new \Exception("{$symbol} is a commodity pair — funding rates and open interest are only available for crypto futures. Try: /rates BTCUSDT");
         }
 
-        // For crypto: check if it's on Binance (DEX-only tokens won't have futures)
-        if ($marketType === 'crypto') {
-            $normalized = $this->normalizeSymbol($symbol, 'USDT');
-            $futuresCheck = $this->getFuturesStats($normalized);
-            if (empty($futuresCheck) || !isset($futuresCheck['lastPrice'])) {
-                throw new \Exception("{$symbol} is not listed on Binance Futures. Funding rates and open interest are only available for crypto perpetual contracts (e.g., BTC, ETH, SOL).");
+        // Quick forex pair check (6-char currency pairs)
+        if (strlen($upper) === 6 && preg_match('/^[A-Z]{6}$/', $upper)) {
+            $majors = ['USD','EUR','GBP','JPY','AUD','CAD','CHF','NZD','CNY','HKD','SGD','INR','KRW','ZAR','TRY','BRL','MXN','RUB','NOK','SEK','DKK','PLN','CZK','HUF'];
+            $from = substr($upper, 0, 3);
+            $to = substr($upper, 3, 3);
+            if (in_array($from, $majors) && in_array($to, $majors)) {
+                throw new \Exception("{$symbol} is a forex pair — funding rates and open interest are only available for crypto futures. Try: /rates BTCUSDT");
             }
+        }
+
+        // 2. Direct Binance Futures check — fast (~200ms for valid or invalid symbols)
+        //    Skips the slow detectMarketType() → isBareConvertibleCrypto() Binance Spot probe
+        $normalized = $this->normalizeSymbol($upper, 'USDT');
+        $futuresCheck = $this->getFuturesStats($normalized);
+        if (empty($futuresCheck) || !isset($futuresCheck['lastPrice'])) {
+            throw new \Exception("{$symbol} is not available on Binance Futures. Funding rates and OI require crypto perpetual contracts (e.g., BTC, ETH, SOL).");
         }
     }
 
