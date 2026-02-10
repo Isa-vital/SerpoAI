@@ -7006,13 +7006,16 @@ class CommandHandler
         $symbol = strtoupper($params[0]);
         $timeframe = strtoupper($params[1] ?? '1D');
 
-        // Detect market type and format symbol
-        $isForex = preg_match('/^[A-Z]{6}$/', $symbol) && !str_contains($symbol, 'USDT');
-        $isStock = !str_contains($symbol, 'USDT') && !str_contains($symbol, 'BTC') && !$isForex && strlen($symbol) <= 5;
-        $isCrypto = !$isForex && !$isStock;
+        // Use proper market type detection (dynamic Binance probe, etc.)
+        $multiMarket = app(\App\Services\MultiMarketDataService::class);
+        $marketType = $multiMarket->detectMarketType($symbol);
+        $isCrypto = ($marketType === 'crypto');
+        $isForex = ($marketType === 'forex');
+        $isStock = ($marketType === 'stock');
 
-        // Only append USDT for crypto pairs
-        if ($isCrypto && !str_contains($symbol, 'USDT') && !str_contains($symbol, 'BTC')) {
+        // For crypto, append USDT if no quote currency
+        $displaySymbol = $symbol;
+        if ($isCrypto && !str_contains($symbol, 'USDT') && !str_contains($symbol, 'BTC') && !str_contains($symbol, 'ETH') && !str_contains($symbol, 'BNB')) {
             $symbol .= 'USDT';
         }
 
@@ -7025,7 +7028,7 @@ class CommandHandler
         ]);
 
         $this->telegram->sendChatAction($chatId, 'typing');
-        $this->telegram->sendMessage($chatId, "📐 Calculating Fibonacci levels for *{$symbol}*...");
+        $this->telegram->sendMessage($chatId, "📐 Calculating Fibonacci levels for *{$displaySymbol}*...");
 
         try {
             // Get historical data
@@ -7050,26 +7053,33 @@ class CommandHandler
             if ($isCrypto) {
                 $binance = app(\App\Services\BinanceAPIService::class);
                 $candles = $binance->getKlines($symbol, $binanceInterval, 100);
+
+                // Binance failed — try DexScreener + GeckoTerminal OHLCV for DEX tokens
+                if (!$candles || count($candles) < 20) {
+                    $candles = $this->getDexTokenCandles($displaySymbol, $timeframe, 100);
+                }
             } elseif ($isForex) {
                 // Use Alpha Vantage for forex
                 $candles = $this->getForexCandles($symbol, $timeframe, 100);
             } else {
-                // Use Polygon.io for stocks
+                // Use Alpha Vantage for stocks
                 $candles = $this->getStockCandles($symbol, $timeframe, 100);
             }
 
             if (!$candles || count($candles) < 20) {
                 Log::error('Fibonacci insufficient data', [
                     'symbol' => $symbol,
+                    'display' => $displaySymbol,
                     'candles_count' => count($candles ?? []),
-                    'is_crypto' => $isCrypto,
-                    'is_forex' => $isForex,
-                    'is_stock' => $isStock,
+                    'market_type' => $marketType,
                     'timeframe' => $timeframe
                 ]);
 
-                $errorMsg = "❌ Insufficient data for Fibonacci calculation";
-                if ($isForex && !config('services.alpha_vantage.key')) {
+                $errorMsg = "❌ Insufficient data for Fibonacci calculation on *{$displaySymbol}*";
+                if ($isCrypto && !str_contains($symbol, 'USDT')) {
+                    $errorMsg .= "\n\nThis token may only be on DEX with limited OHLCV data.";
+                    $errorMsg .= "\nTry `/fibo BTC 1D` or another Binance-listed token.";
+                } elseif ($isForex && !config('services.alpha_vantage.key')) {
                     $errorMsg .= "\n\n⚠️ Alpha Vantage API key required for forex data.";
                 } elseif ($isStock && !config('services.alpha_vantage.key')) {
                     $errorMsg .= "\n\n⚠️ Alpha Vantage API key required for stock data.";
@@ -7126,26 +7136,36 @@ class CommandHandler
             $trendEmoji = $isUptrend ? "📈" : "📉";
             $trendText = $isUptrend ? "Uptrend" : "Downtrend";
 
-            $message = "📐 *FIBONACCI RETRACEMENT - {$symbol}*\n\n";
+            // Adaptive price formatting based on magnitude
+            $fmtPrice = function ($p) {
+                $abs = abs($p);
+                if ($abs >= 1000) return number_format($p, 2);
+                if ($abs >= 1) return number_format($p, 4);
+                if ($abs >= 0.01) return number_format($p, 4);
+                if ($abs >= 0.0001) return number_format($p, 6);
+                return rtrim(rtrim(number_format($p, 8, '.', ''), '0'), '.');
+            };
+
+            $message = "📐 *FIBONACCI RETRACEMENT - {$displaySymbol}*\n\n";
             $message .= "⏰ Timeframe: {$timeframe}\n";
             $message .= "{$trendEmoji} Trend: {$trendText}\n";
-            $message .= "💰 Current Price: \$" . number_format($currentPrice, 4) . "\n\n";
+            $message .= "💰 Current Price: \$" . $fmtPrice($currentPrice) . "\n\n";
 
             $message .= "🎯 *Key Levels*\n";
             $message .= "━━━━━━━━━━━━━━\n";
-            $message .= "0.0 (100%):  \$" . number_format($fib_0, 4) . "\n";
-            $message .= "0.236:       \$" . number_format($fib_236, 4) . "\n";
-            $message .= "0.382:       \$" . number_format($fib_382, 4) . "\n";
-            $message .= "0.500:       \$" . number_format($fib_500, 4) . " 🔸\n";
-            $message .= "0.618:       \$" . number_format($fib_618, 4) . " 🟡 Golden Ratio\n";
-            $message .= "0.786:       \$" . number_format($fib_786, 4) . "\n";
-            $message .= "1.0 (0%):    \$" . number_format($fib_1, 4) . "\n\n";
+            $message .= "0.0 (100%):  \$" . $fmtPrice($fib_0) . "\n";
+            $message .= "0.236:       \$" . $fmtPrice($fib_236) . "\n";
+            $message .= "0.382:       \$" . $fmtPrice($fib_382) . "\n";
+            $message .= "0.500:       \$" . $fmtPrice($fib_500) . " 🔸\n";
+            $message .= "0.618:       \$" . $fmtPrice($fib_618) . " 🟡 Golden Ratio\n";
+            $message .= "0.786:       \$" . $fmtPrice($fib_786) . "\n";
+            $message .= "1.0 (0%):    \$" . $fmtPrice($fib_1) . "\n\n";
 
             $message .= "🚀 *Extension Targets*\n";
             $message .= "━━━━━━━━━━━━━━\n";
-            $message .= "1.272:       \$" . number_format($fib_1272, 4) . "\n";
-            $message .= "1.618:       \$" . number_format($fib_1618, 4) . " 🟡 Golden Ratio\n";
-            $message .= "2.618:       \$" . number_format($fib_2618, 4) . "\n\n";
+            $message .= "1.272:       \$" . $fmtPrice($fib_1272) . "\n";
+            $message .= "1.618:       \$" . $fmtPrice($fib_1618) . " 🟡 Golden Ratio\n";
+            $message .= "2.618:       \$" . $fmtPrice($fib_2618) . "\n\n";
 
             // Identify nearest level
             $levels = [
@@ -7292,6 +7312,139 @@ class CommandHandler
             return array_reverse($candles);
         } catch (\Exception $e) {
             Log::error('Alpha Vantage forex error', ['error' => $e->getMessage(), 'symbol' => $symbol]);
+            return null;
+        }
+    }
+
+    /**
+     * Get OHLCV candles for DEX tokens via DexScreener + GeckoTerminal
+     * Used as fallback when Binance doesn't list the token
+     */
+    private function getDexTokenCandles(string $symbol, string $timeframe, int $limit): ?array
+    {
+        try {
+            // Step 1: Find the pool on DexScreener
+            $multiMarket = app(\App\Services\MultiMarketDataService::class);
+            $dexData = $multiMarket->getDexScreenerPrice($symbol);
+
+            if (!$dexData || !isset($dexData['chain_id']) || !isset($dexData['pair_address'])) {
+                Log::debug('DexScreener pool not found for fibo', ['symbol' => $symbol]);
+                return null;
+            }
+
+            $chainId = $dexData['chain_id'];
+            $poolAddress = $dexData['pair_address'];
+
+            // Map DexScreener chainId to GeckoTerminal network
+            $geckoNetworks = [
+                'ton' => 'ton',
+                'solana' => 'solana',
+                'ethereum' => 'eth',
+                'bsc' => 'bsc',
+                'base' => 'base',
+                'arbitrum' => 'arbitrum',
+                'polygon' => 'polygon_pos',
+                'avalanche' => 'avax',
+                'optimism' => 'optimism',
+                'fantom' => 'ftm',
+                'cronos' => 'cronos',
+                'pulsechain' => 'pulsechain',
+                'sui' => 'sui-network',
+            ];
+            $geckoNetwork = $geckoNetworks[$chainId] ?? $chainId;
+
+            // Map timeframe to GeckoTerminal format
+            $geckoTimeframe = match (strtolower($timeframe)) {
+                '1m' => 'minute',
+                '5m' => 'minute',
+                '15m' => 'minute',
+                '1h' => 'hour',
+                '4h' => 'hour',
+                '1d' => 'day',
+                '1w' => 'day',
+                default => 'day',
+            };
+
+            // GeckoTerminal aggregate periods
+            $geckoAggregate = match (strtolower($timeframe)) {
+                '1m' => 1,
+                '5m' => 5,
+                '15m' => 15,
+                '1h' => 1,
+                '4h' => 4,
+                '1d' => 1,
+                '1w' => 1, // we'll request more daily candles
+                default => 1,
+            };
+
+            // For weekly, request more daily candles to cover the range
+            $requestLimit = strtolower($timeframe) === '1w' ? min($limit * 7, 1000) : min($limit, 1000);
+
+            $url = "https://api.geckoterminal.com/api/v2/networks/{$geckoNetwork}/pools/{$poolAddress}/ohlcv/{$geckoTimeframe}";
+            $response = Http::timeout(10)
+                ->withHeaders(['Accept' => 'application/json'])
+                ->get($url, [
+                    'aggregate' => $geckoAggregate,
+                    'limit' => $requestLimit,
+                    'currency' => 'usd',
+                ]);
+
+            if (!$response->successful()) {
+                Log::debug('GeckoTerminal OHLCV failed', ['status' => $response->status(), 'network' => $geckoNetwork]);
+                return null;
+            }
+
+            $data = $response->json();
+            $ohlcvList = $data['data']['attributes']['ohlcv_list'] ?? [];
+
+            if (empty($ohlcvList)) {
+                Log::debug('GeckoTerminal OHLCV empty', ['symbol' => $symbol, 'network' => $geckoNetwork]);
+                return null;
+            }
+
+            // Convert GeckoTerminal format [timestamp, open, high, low, close, volume] to Binance-like format
+            $candles = [];
+            foreach ($ohlcvList as $ohlcv) {
+                $candles[] = [
+                    $ohlcv[0] * 1000, // timestamp ms
+                    (string) $ohlcv[1], // open
+                    (string) $ohlcv[2], // high
+                    (string) $ohlcv[3], // low
+                    (string) $ohlcv[4], // close
+                    (string) $ohlcv[5], // volume
+                ];
+            }
+
+            // GeckoTerminal returns newest-first, reverse to oldest-first like Binance
+            $candles = array_reverse($candles);
+
+            // For weekly timeframe, aggregate daily candles into weekly
+            if (strtolower($timeframe) === '1w' && count($candles) >= 7) {
+                $weeklyCandles = [];
+                $chunks = array_chunk($candles, 7);
+                foreach ($chunks as $week) {
+                    if (count($week) < 3) continue;
+                    $weeklyCandles[] = [
+                        $week[0][0], // timestamp of first day
+                        $week[0][1], // open of first day
+                        (string) max(array_column($week, 2)), // highest high
+                        (string) min(array_column($week, 3)), // lowest low
+                        end($week)[4], // close of last day
+                        (string) array_sum(array_map(fn($c) => floatval($c[5]), $week)), // total volume
+                    ];
+                }
+                $candles = $weeklyCandles;
+            }
+
+            Log::info('DEX candles via GeckoTerminal', [
+                'symbol' => $symbol,
+                'network' => $geckoNetwork,
+                'count' => count($candles),
+            ]);
+
+            return array_slice($candles, -$limit);
+        } catch (\Exception $e) {
+            Log::error('DEX candle fetch error', ['symbol' => $symbol, 'error' => $e->getMessage()]);
             return null;
         }
     }
