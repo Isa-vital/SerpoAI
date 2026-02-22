@@ -64,11 +64,34 @@ class MultiLanguageService
             return false;
         }
 
-        $user = \App\Models\User::find($userId);
-        if ($user) {
-            $user->update(['language' => $language]);
+        try {
+            $user = \App\Models\User::find($userId);
+            if ($user) {
+                $user->update(['language' => $language]);
+                app()->setLocale($language);
+                \Illuminate\Support\Facades\Log::info("Language changed for user {$userId} to {$language}");
+                return true;
+            }
+        } catch (\Exception $e) {
+            \Illuminate\Support\Facades\Log::error("Failed to set language for user {$userId}: " . $e->getMessage());
+
+            // Fallback: try setting just the locale for this request
             app()->setLocale($language);
-            return true;
+
+            // If column doesn't exist, try adding it dynamically
+            if (str_contains($e->getMessage(), 'language') && str_contains($e->getMessage(), 'Unknown column')) {
+                try {
+                    \Illuminate\Support\Facades\Schema::table('users', function ($table) {
+                        $table->string('language', 5)->default('en');
+                    });
+                    $user = \App\Models\User::find($userId);
+                    $user?->update(['language' => $language]);
+                    \Illuminate\Support\Facades\Log::info("Auto-created language column and set to {$language} for user {$userId}");
+                    return true;
+                } catch (\Exception $e2) {
+                    \Illuminate\Support\Facades\Log::error("Failed to auto-create language column: " . $e2->getMessage());
+                }
+            }
         }
 
         return false;

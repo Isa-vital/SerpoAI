@@ -1468,9 +1468,16 @@ class CommandHandler
         // Handle language selection callbacks
         if (str_starts_with($data, 'lang_')) {
             $langCode = substr($data, 5);
-            if ($this->language->setUserLanguage($user->id, $langCode)) {
-                $langName = $this->language->getLanguageName($langCode);
-                $this->telegram->sendMessage($chatId, __('commands.language.changed', ['language' => $langName]));
+            try {
+                if ($this->language->setUserLanguage($user->id, $langCode)) {
+                    $langName = $this->language->getLanguageName($langCode);
+                    $this->telegram->sendMessage($chatId, __('commands.language.changed', ['language' => $langName]));
+                } else {
+                    $this->telegram->sendMessage($chatId, "❌ Language '{$langCode}' is not supported. Please try again.");
+                }
+            } catch (\Exception $e) {
+                Log::error("Language change failed for user {$user->id}: " . $e->getMessage());
+                $this->telegram->sendMessage($chatId, "❌ Failed to change language. Please try again later.");
             }
             return;
         }
