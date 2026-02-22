@@ -43,8 +43,6 @@ class TelegramWebhookController extends Controller
                     Log::info("Skipping duplicate update {$updateId}");
                     return response()->json(['ok' => true]);
                 }
-                // Mark this update as processed (TTL: 5 minutes)
-                \Illuminate\Support\Facades\Cache::put($cacheKey, true, 300);
             }
 
             Log::info('Telegram webhook received', ['update_id' => $updateId]);
@@ -57,6 +55,12 @@ class TelegramWebhookController extends Controller
             // Handle callback query (inline keyboard buttons)
             if (isset($update['callback_query'])) {
                 $this->handleCallbackQuery($update['callback_query']);
+            }
+
+            // Mark this update as processed AFTER successful handling (TTL: 5 minutes)
+            // This way, if processing fails, Telegram can retry the update
+            if ($updateId) {
+                \Illuminate\Support\Facades\Cache::put("tg_update_{$updateId}", true, 300);
             }
 
             return response()->json(['ok' => true]);
@@ -169,11 +173,30 @@ class TelegramWebhookController extends Controller
         // Set locale for this request based on user's language preference
         $this->language->setLocaleForUser($user);
 
-        // Answer callback query
-        $this->telegram->answerCallbackQuery($callbackQueryId, __('commands.callback.processing'));
+        // Answer callback query (don't let this block the main handler)
+        try {
+            $this->telegram->answerCallbackQuery($callbackQueryId, __('commands.callback.processing'));
+        } catch (\Exception $e) {
+            Log::warning('Failed to answer callback query', ['error' => $e->getMessage()]);
+        }
 
         // Handle callback
-        $this->commandHandler->handleCallback($chatId, $messageId, $data, $user);
+        try {
+            $this->commandHandler->handleCallback($chatId, $messageId, $data, $user);
+        } catch (\Exception $e) {
+            Log::error('Callback handler failed', [
+                'data' => $data,
+                'chat_id' => $chatId,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+            // Try to notify the user
+            try {
+                $this->telegram->sendMessage($chatId, "❌ Something went wrong. Please try again.");
+            } catch (\Exception $e2) {
+                Log::error('Failed to send error message to user', ['error' => $e2->getMessage()]);
+            }
+        }
     }
 
     /**

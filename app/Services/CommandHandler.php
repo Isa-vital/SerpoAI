@@ -1468,16 +1468,24 @@ class CommandHandler
         // Handle language selection callbacks
         if (str_starts_with($data, 'lang_')) {
             $langCode = substr($data, 5);
+            Log::info("Language change requested", ['user_id' => $user->id, 'lang' => $langCode]);
             try {
                 if ($this->language->setUserLanguage($user->id, $langCode)) {
                     $langName = $this->language->getLanguageName($langCode);
-                    $this->telegram->sendMessage($chatId, __('commands.language.changed', ['language' => $langName]));
+                    $message = __('commands.language.changed', ['language' => $langName]);
+                    // Fall back to plain text if translation key is returned as-is
+                    if ($message === 'commands.language.changed') {
+                        $message = "✅ Language changed to {$langName}!";
+                    }
+                    $this->telegram->sendMessage($chatId, $message, [], ['parse_mode' => '']);
                 } else {
-                    $this->telegram->sendMessage($chatId, "❌ Language '{$langCode}' is not supported. Please try again.");
+                    $this->telegram->sendMessage($chatId, "❌ Language '{$langCode}' is not supported. Please try again.", [], ['parse_mode' => '']);
                 }
             } catch (\Exception $e) {
-                Log::error("Language change failed for user {$user->id}: " . $e->getMessage());
-                $this->telegram->sendMessage($chatId, "❌ Failed to change language. Please try again later.");
+                Log::error("Language change failed for user {$user->id}: " . $e->getMessage(), [
+                    'trace' => $e->getTraceAsString(),
+                ]);
+                $this->telegram->sendMessage($chatId, "❌ Failed to change language. Please try again later.", [], ['parse_mode' => '']);
             }
             return;
         }
