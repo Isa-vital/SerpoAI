@@ -182,7 +182,7 @@ MIT License - See LICENSE file
 ## Support
 
 - **Website**: https://serpocoin.io
-- **Telegram**: https://t.me/serpocoin
+- **Telegram**: https://t.me/serpocoinchannel
 - **Documentation**: Coming soon
 
 ## Version
