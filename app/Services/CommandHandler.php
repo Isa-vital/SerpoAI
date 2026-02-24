@@ -6990,58 +6990,74 @@ class CommandHandler
                 $message .= "• BNB — Binance quarterly auto-burn\n";
                 $message .= "• SHIB — Community burns on ETH\n";
                 $message .= "• ETH — EIP-1559 base fee burns\n";
-                $message .= "• LUNC — Tax burns on Terra Classic\n\n";
+                $message .= "• LUNC — Tax burns on Terra Classic\n";
+                $message .= "• PEPE, FLOKI, BONK\n\n";
                 $message .= "Try: `/burn BNB` or `/burn SHIB`";
                 $this->telegram->sendMessage($chatId, $message);
                 return;
             }
 
-            // BNB special case (Binance official data)
-            if (isset($data['total_burned']) && isset($data['last_burn'])) {
+            $type = $data['type'] ?? 'unknown';
+
+            // Supply-based burn data (BNB, tokens with max supply)
+            if ($type === 'supply_burn') {
                 $message .= "📊 *Source:* {$data['source']}\n\n";
 
-                if ($data['total_burned']) {
-                    $totalBurned = is_numeric($data['total_burned'])
-                        ? number_format(floatval($data['total_burned']), 0)
-                        : $data['total_burned'];
-                    $message .= "🔥 *Total Burned:* {$totalBurned} {$symbol}\n";
+                $totalBurned = number_format(floatval($data['total_burned']), 0);
+                $message .= "🔥 *Total Burned:* {$totalBurned} {$symbol}\n";
+
+                if (isset($data['burn_percentage'])) {
+                    $message .= "📉 *Burn Rate:* {$data['burn_percentage']}% of max supply\n";
                 }
-                if ($data['last_burn']) {
-                    $lastBurn = is_numeric($data['last_burn'])
-                        ? number_format(floatval($data['last_burn']), 0)
-                        : $data['last_burn'];
-                    $message .= "📅 *Last Burn:* {$lastBurn} {$symbol}\n";
+                if (isset($data['max_supply'])) {
+                    $message .= "📦 *Max Supply:* " . number_format(floatval($data['max_supply']), 0) . " {$symbol}\n";
                 }
-                if ($data['last_burn_date'] ?? null) {
-                    $message .= "📆 *Last Burn Date:* {$data['last_burn_date']}\n";
-                }
-                if ($data['next_burn_date'] ?? null) {
-                    $message .= "⏰ *Next Burn:* {$data['next_burn_date']}\n";
+                if (isset($data['current_supply'])) {
+                    $message .= "💰 *Current Supply:* " . number_format(floatval($data['current_supply']), 0) . " {$symbol}\n";
                 }
             }
 
-            // Chain explorer data
-            if (isset($data['burn_address'])) {
+            // ETH EIP-1559 burn data
+            elseif ($type === 'eth_eip1559') {
+                $message .= "📊 *Source:* {$data['source']}\n\n";
+
+                if (isset($data['estimated_total_burned']) && $data['estimated_total_burned'] > 0) {
+                    $message .= "🔥 *Est. Total Burned (EIP-1559):* " . number_format(floatval($data['estimated_total_burned']), 0) . " ETH\n";
+                }
+                $message .= "💰 *Current Supply:* " . number_format(floatval($data['total_supply']), 2) . " ETH\n";
+
+                if ($data['is_deflationary']) {
+                    $message .= "📉 *Status:* ✅ Net Deflationary — burns outpacing issuance\n";
+                } else {
+                    $message .= "📈 *Status:* Supply growing, but burns slow growth significantly\n";
+                }
+
+                $message .= "\n💡 Since EIP-1559 (Aug 2021), base fees are burned.\n";
+                $message .= "Post-merge (Sep 2022), reduced issuance makes ETH near-deflationary.";
+            }
+
+            // Chain explorer data (SHIB, PEPE, FLOKI, etc.)
+            elseif ($type === 'chain_explorer') {
                 $burnedRaw = $data['total_burned'] ?? 0;
                 // Convert from wei if very large number
                 $burned = floatval($burnedRaw);
                 if ($burned > 1e15) {
                     $burned = $burned / 1e18; // Convert from wei to tokens
                 }
-                $message .= "📊 *Source:* {$data['source']} ({$data['chain']})\n";
+                $message .= "📊 *Source:* {$data['source']} ({$data['chain']})\n\n";
                 $message .= "🔥 *Burned:* " . number_format($burned, 2) . " {$symbol}\n";
                 $message .= "🔗 *Burn Address:* `{$data['burn_address']}`\n";
             }
 
-            $message .= "\n💡 *About Token Burns:*\n";
+            $message .= "\n\n💡 *About Token Burns:*\n";
             $message .= "• Burns permanently remove tokens from circulation\n";
             $message .= "• Reduces supply = potentially bullish for price\n";
             $message .= "• Verify burns on-chain for transparency";
 
             $this->telegram->sendMessage($chatId, $message);
         } catch (\Exception $e) {
-            Log::error('Burn tracker error', ['error' => $e->getMessage()]);
-            $this->telegram->sendMessage($chatId, "❌ Error fetching burn data. Please try again.");
+            Log::error('Burn tracker error', ['error' => $e->getMessage(), 'symbol' => $symbol]);
+            $this->telegram->sendMessage($chatId, "❌ Error fetching burn data for {$symbol}. Please try again later.");
         }
     }
 
