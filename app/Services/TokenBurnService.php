@@ -389,8 +389,146 @@ class TokenBurnService
     }
 
     /**
+     * Get TON jetton burn data via TONAPI
+     * Checks burn address balance for TON-based tokens
+     */
+    public function getTONBurnData(string $symbol): ?array
+    {
+        try {
+            $cacheKey = "ton_burn:{$symbol}";
+
+            return Cache::remember($cacheKey, 3600, function () use ($symbol) {
+                // Known TON jetton addresses
+                $knownJettons = [
+                    'SERPO' => '0:8f794cca9279de32503551b8af10bc5df2515403fa1a397f66f4f3dce1dea51d',
+                    'NOT' => '0:2f956143c461769579baef2e32cc2d7bc18283f40d20bb03e432cd603ac33ffc',
+                    'DOGS' => '0:afc49cb8786f21c87045b0fd7f4b4512a39a5ebfc4bab226c7a8ca46c07fa722',
+                    'HMSTR' => '0:09bbe8415cc0a5793b0e47ba5a45209d5e6e8f638be8fc9dbba00b46cac40dee',
+                    'CATI' => '0:0657b42e81b2ab7a78e3ec71fb0dd4e35db42e73e78a6e9e54f6be25c7f88054',
+                ];
+
+                $jettonAddress = $knownJettons[strtoupper($symbol)] ?? null;
+
+                // If not known, try to find via TONAPI search
+                if (!$jettonAddress) {
+                    $jettonAddress = $this->lookupTONJetton($symbol);
+                }
+
+                if (!$jettonAddress) {
+                    return null;
+                }
+
+                // Get jetton master info (total supply, metadata)
+                $infoResp = Http::timeout(10)
+                    ->withHeaders(['Accept' => 'application/json'])
+                    ->get("https://tonapi.io/v2/jettons/{$jettonAddress}");
+
+                if (!$infoResp->successful()) {
+                    return null;
+                }
+
+                $info = $infoResp->json();
+                $metadata = $info['metadata'] ?? [];
+                $decimals = intval($metadata['decimals'] ?? 9);
+                $totalSupplyRaw = floatval($info['total_supply'] ?? 0);
+                $totalSupply = $totalSupplyRaw / pow(10, $decimals);
+                $mintable = $info['mintable'] ?? true;
+                $holdersCount = $info['holders_count'] ?? null;
+
+                // Check burn address (0x0000...0000 on TON)
+                $burnAddr = '0:0000000000000000000000000000000000000000000000000000000000000000';
+                $burnResp = Http::timeout(10)
+                    ->withHeaders(['Accept' => 'application/json'])
+                    ->get("https://tonapi.io/v2/accounts/{$burnAddr}/jettons/{$jettonAddress}");
+
+                $totalBurned = 0;
+                if ($burnResp->successful()) {
+                    $burnData = $burnResp->json();
+                    $burnedRaw = floatval($burnData['balance'] ?? 0);
+                    $totalBurned = $burnedRaw / pow(10, $decimals);
+                }
+
+                $burnPercentage = $totalSupply > 0
+                    ? round(($totalBurned / ($totalSupply + $totalBurned)) * 100, 4)
+                    : 0;
+
+                return [
+                    'name' => $metadata['name'] ?? $symbol,
+                    'symbol' => $metadata['symbol'] ?? $symbol,
+                    'total_supply' => $totalSupply,
+                    'total_burned' => $totalBurned,
+                    'burn_percentage' => $burnPercentage,
+                    'mintable' => $mintable,
+                    'holders_count' => $holdersCount,
+                    'decimals' => $decimals,
+                    'source' => 'TON Blockchain (TONAPI)',
+                ];
+            });
+        } catch (\Exception $e) {
+            Log::error('TON burn data error', ['error' => $e->getMessage(), 'symbol' => $symbol]);
+            return null;
+        }
+    }
+
+    /**
+     * Look up a TON jetton address by symbol via TONAPI search
+     */
+    private function lookupTONJetton(string $symbol): ?string
+    {
+        try {
+            $cacheKey = "ton_jetton_addr:{$symbol}";
+
+            return Cache::remember($cacheKey, 86400, function () use ($symbol) {
+                // Try TONAPI account search
+                $resp = Http::timeout(8)
+                    ->withHeaders(['Accept' => 'application/json'])
+                    ->get('https://tonapi.io/v2/accounts/search', ['name' => $symbol]);
+
+                if ($resp->successful()) {
+                    $addresses = $resp->json()['addresses'] ?? [];
+                    foreach ($addresses as $addr) {
+                        $name = strtolower($addr['name'] ?? '');
+                        // Match "SYMBOL · jetton" pattern
+                        if (stripos($name, strtolower($symbol)) !== false && stripos($name, 'jetton') !== false) {
+                            return $addr['address'] ?? null;
+                        }
+                    }
+                }
+
+                // Try STON.fi as fallback
+                $stonResp = Http::timeout(10)->get('https://api.ston.fi/v1/assets');
+                if ($stonResp->successful()) {
+                    $assets = $stonResp->json()['asset_list'] ?? [];
+                    foreach ($assets as $asset) {
+                        if (strtoupper($asset['symbol'] ?? '') === strtoupper($symbol)) {
+                            $friendlyAddr = $asset['contract_address'] ?? null;
+                            if ($friendlyAddr) {
+                                // Need to convert friendly address to raw for TONAPI
+                                // Try TONAPI with friendly address directly
+                                $checkResp = Http::timeout(8)
+                                    ->withHeaders(['Accept' => 'application/json'])
+                                    ->get("https://tonapi.io/v2/jettons/{$friendlyAddr}");
+                                if ($checkResp->successful()) {
+                                    // TONAPI accepts friendly addresses too
+                                    return $friendlyAddr;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                return null;
+            });
+        } catch (\Exception $e) {
+            Log::debug('TON jetton lookup failed', ['symbol' => $symbol, 'error' => $e->getMessage()]);
+            return null;
+        }
+    }
+
+    /**
      * Get supply-based burn data from CoinGecko for any token
      * Calculates burned = max_supply - total_supply (if max_supply exists)
+     * Also returns supply info for display even when no burns detected
      */
     private function getSupplyBurnData(string $symbol): ?array
     {
@@ -410,6 +548,24 @@ class TokenBurnService
                     'BONK' => 'bonk',
                     'DOGE' => 'dogecoin',
                     'XRP' => 'ripple',
+                    'SOL' => 'solana',
+                    'ADA' => 'cardano',
+                    'AVAX' => 'avalanche-2',
+                    'DOT' => 'polkadot',
+                    'MATIC' => 'matic-network',
+                    'LINK' => 'chainlink',
+                    'UNI' => 'uniswap',
+                    'ATOM' => 'cosmos',
+                    'NEAR' => 'near',
+                    'APT' => 'aptos',
+                    'ARB' => 'arbitrum',
+                    'OP' => 'optimism',
+                    'SUI' => 'sui',
+                    'TON' => 'the-open-network',
+                    'TRX' => 'tron',
+                    'CAKE' => 'pancakeswap-token',
+                    'NOT' => 'notcoin',
+                    'DOGS' => 'dogs-2',
                 ];
 
                 $coinId = $coinIdMap[strtoupper($symbol)] ?? null;
@@ -450,6 +606,8 @@ class TokenBurnService
                     'circulating_supply' => $marketData['circulating_supply'] ?? null,
                     'max_supply' => $marketData['max_supply'] ?? null,
                     'name' => $data['name'] ?? $symbol,
+                    'current_price_usd' => $marketData['current_price']['usd'] ?? null,
+                    'market_cap_usd' => $marketData['market_cap']['usd'] ?? null,
                 ];
             });
         } catch (\Exception $e) {
@@ -499,6 +657,26 @@ class TokenBurnService
             }
         }
 
+        // Try TON blockchain (for SERPO, NOT, DOGS, HMSTR, CATI, and any TON jetton)
+        // Only check TON for known TON-native tokens to avoid matching fake clones
+        $knownTONTokens = ['SERPO', 'NOT', 'DOGS', 'HMSTR', 'CATI', 'REDO', 'MAJOR', 'GRAM'];
+        if (in_array($upperSymbol, $knownTONTokens)) {
+            $tonData = $this->getTONBurnData($upperSymbol);
+            if ($tonData && ($tonData['total_burned'] > 0 || $tonData['total_supply'] > 0)) {
+                return [
+                    'source' => $tonData['source'],
+                    'name' => $tonData['name'],
+                    'total_supply' => $tonData['total_supply'],
+                    'total_burned' => $tonData['total_burned'],
+                    'burn_percentage' => $tonData['burn_percentage'],
+                    'mintable' => $tonData['mintable'],
+                    'holders_count' => $tonData['holders_count'],
+                    'type' => 'ton_jetton',
+                    'has_real_data' => true,
+                ];
+            }
+        }
+
         // Try chain explorers (Etherscan V2) - try ETH first for most tokens, then BSC
         $chainsToTry = ['eth', 'bsc'];
 
@@ -522,19 +700,54 @@ class TokenBurnService
             }
         }
 
-        // Final fallback: Check CoinGecko supply data for max_supply vs total_supply
+        // Fallback: Check CoinGecko supply data for max_supply vs total_supply
         $supplyData = $this->getSupplyBurnData($symbol);
-        if ($supplyData && $supplyData['max_supply'] && $supplyData['total_supply']) {
-            $burned = $supplyData['max_supply'] - $supplyData['total_supply'];
-            if ($burned > 0) {
-                $burnPct = ($burned / $supplyData['max_supply']) * 100;
+        if ($supplyData) {
+            // If has max_supply and tokens have been burned
+            if ($supplyData['max_supply'] && $supplyData['total_supply']) {
+                $burned = $supplyData['max_supply'] - $supplyData['total_supply'];
+                if ($burned > 0) {
+                    $burnPct = ($burned / $supplyData['max_supply']) * 100;
+                    return [
+                        'source' => 'CoinGecko Supply Data',
+                        'total_burned' => $burned,
+                        'max_supply' => $supplyData['max_supply'],
+                        'current_supply' => $supplyData['total_supply'],
+                        'burn_percentage' => round($burnPct, 2),
+                        'type' => 'supply_burn',
+                        'has_real_data' => true,
+                    ];
+                }
+            }
+
+            // Even if no burns detected, return supply info so user gets something useful
+            return [
+                'source' => 'CoinGecko',
+                'name' => $supplyData['name'],
+                'total_supply' => $supplyData['total_supply'],
+                'circulating_supply' => $supplyData['circulating_supply'],
+                'max_supply' => $supplyData['max_supply'],
+                'current_price_usd' => $supplyData['current_price_usd'] ?? null,
+                'market_cap_usd' => $supplyData['market_cap_usd'] ?? null,
+                'type' => 'supply_info',
+                'has_real_data' => true,
+            ];
+        }
+
+        // Last resort: Try TON for unknown tokens not found anywhere else
+        // Only accept if it looks legitimate (has meaningful holders count)
+        if (!in_array($upperSymbol, $knownTONTokens)) {
+            $tonData = $this->getTONBurnData($upperSymbol);
+            if ($tonData && $tonData['total_supply'] > 0 && ($tonData['holders_count'] ?? 0) >= 50) {
                 return [
-                    'source' => 'CoinGecko Supply Data',
-                    'total_burned' => $burned,
-                    'max_supply' => $supplyData['max_supply'],
-                    'current_supply' => $supplyData['total_supply'],
-                    'burn_percentage' => round($burnPct, 2),
-                    'type' => 'supply_burn',
+                    'source' => $tonData['source'],
+                    'name' => $tonData['name'],
+                    'total_supply' => $tonData['total_supply'],
+                    'total_burned' => $tonData['total_burned'],
+                    'burn_percentage' => $tonData['burn_percentage'],
+                    'mintable' => $tonData['mintable'],
+                    'holders_count' => $tonData['holders_count'],
+                    'type' => 'ton_jetton',
                     'has_real_data' => true,
                 ];
             }

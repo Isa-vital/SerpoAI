@@ -6981,18 +6981,19 @@ class CommandHandler
             $message = "🔥 *TOKEN BURN TRACKER - {$symbol}*\n\n";
 
             if (!$data['has_real_data']) {
-                $message .= "❌ No burn data found on-chain for {$symbol}.\n\n";
+                $message .= "❌ No burn data found for {$symbol}.\n\n";
                 $message .= "*Possible reasons:*\n";
                 $message .= "• Token may not have a burn mechanism\n";
-                $message .= "• Contract address not in our database\n";
+                $message .= "• Not listed on CoinGecko or known exchanges\n";
                 $message .= "• Burns may go to a non-standard address\n\n";
                 $message .= "*Tokens with burn tracking:*\n";
                 $message .= "• BNB — Binance quarterly auto-burn\n";
                 $message .= "• SHIB — Community burns on ETH\n";
                 $message .= "• ETH — EIP-1559 base fee burns\n";
-                $message .= "• LUNC — Tax burns on Terra Classic\n";
-                $message .= "• PEPE, FLOKI, BONK\n\n";
-                $message .= "Try: `/burn BNB` or `/burn SHIB`";
+                $message .= "• SERPO — TON blockchain burns\n";
+                $message .= "• LUNC, PEPE, FLOKI, BONK\n";
+                $message .= "• DOGE, XRP, SOL — supply info\n\n";
+                $message .= "Try: `/burn BNB` or `/burn SERPO`";
                 $this->telegram->sendMessage($chatId, $message);
                 return;
             }
@@ -7036,6 +7037,28 @@ class CommandHandler
                 $message .= "Post-merge (Sep 2022), reduced issuance makes ETH near-deflationary.";
             }
 
+            // TON jetton burn data (SERPO, NOT, DOGS, etc.)
+            elseif ($type === 'ton_jetton') {
+                $name = $data['name'] ?? $symbol;
+                $message .= "📊 *Source:* {$data['source']}\n\n";
+
+                if ($data['total_burned'] > 0) {
+                    $message .= "🔥 *Total Burned:* " . number_format(floatval($data['total_burned']), 2) . " {$symbol}\n";
+                    $message .= "📉 *Burn Rate:* {$data['burn_percentage']}% of original supply\n";
+                }
+
+                $message .= "💰 *Current Supply:* " . number_format(floatval($data['total_supply']), 0) . " {$symbol}\n";
+
+                if (isset($data['mintable'])) {
+                    $message .= "🔒 *Mintable:* " . ($data['mintable'] ? '⚠️ Yes' : '✅ No (fixed supply)') . "\n";
+                }
+                if (isset($data['holders_count']) && $data['holders_count']) {
+                    $message .= "👥 *Holders:* " . number_format($data['holders_count']) . "\n";
+                }
+
+                $message .= "\n🔗 *Chain:* TON Blockchain";
+            }
+
             // Chain explorer data (SHIB, PEPE, FLOKI, etc.)
             elseif ($type === 'chain_explorer') {
                 $burnedRaw = $data['total_burned'] ?? 0;
@@ -7047,6 +7070,36 @@ class CommandHandler
                 $message .= "📊 *Source:* {$data['source']} ({$data['chain']})\n\n";
                 $message .= "🔥 *Burned:* " . number_format($burned, 2) . " {$symbol}\n";
                 $message .= "🔗 *Burn Address:* `{$data['burn_address']}`\n";
+            }
+
+            // Supply info only (no burn mechanism detected, but supply data available)
+            elseif ($type === 'supply_info') {
+                $name = $data['name'] ?? $symbol;
+                $message .= "📊 *Source:* {$data['source']}\n\n";
+                $message .= "ℹ️ No active burn mechanism detected for {$name}.\n\n";
+                $message .= "*Supply Overview:*\n";
+
+                if (isset($data['total_supply']) && $data['total_supply']) {
+                    $message .= "📦 *Total Supply:* " . number_format(floatval($data['total_supply']), 0) . " {$symbol}\n";
+                }
+                if (isset($data['circulating_supply']) && $data['circulating_supply']) {
+                    $message .= "💰 *Circulating:* " . number_format(floatval($data['circulating_supply']), 0) . " {$symbol}\n";
+                }
+                if (isset($data['max_supply']) && $data['max_supply']) {
+                    $message .= "🔒 *Max Supply:* " . number_format(floatval($data['max_supply']), 0) . " {$symbol}\n";
+                } else {
+                    $message .= "♾️ *Max Supply:* Unlimited (inflationary)\n";
+                }
+                if (isset($data['total_supply']) && isset($data['circulating_supply']) && $data['total_supply'] > 0) {
+                    $circPct = round(($data['circulating_supply'] / $data['total_supply']) * 100, 1);
+                    $message .= "📊 *In Circulation:* {$circPct}%\n";
+                }
+                if (isset($data['current_price_usd']) && $data['current_price_usd']) {
+                    $message .= "💵 *Price:* $" . number_format($data['current_price_usd'], $data['current_price_usd'] < 1 ? 6 : 2) . "\n";
+                }
+                if (isset($data['market_cap_usd']) && $data['market_cap_usd']) {
+                    $message .= "🏦 *Market Cap:* $" . number_format($data['market_cap_usd'], 0) . "\n";
+                }
             }
 
             $message .= "\n\n💡 *About Token Burns:*\n";
