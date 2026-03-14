@@ -1,24 +1,40 @@
-# SerpoAI - Telegram Trading Bot
+# SerpoAI - AI-Powered Crypto Trading Platform
 
-🐍 **SerpoAI** is an AI-powered trading assistant for the Serpocoin ecosystem, providing real-time market analysis, trading signals, and custom alerts via Telegram.
+**SerpoAI** is an AI-powered trading platform for the Serpocoin ecosystem, providing real-time crypto market analysis, adaptive grid bots, trading signals, and custom alerts via Telegram, website, and mobile app.
 
 ## Features
 
-- 📊 **Real-time Price Tracking** - Live SERPO token prices from DexScreener
-- 📈 **Technical Analysis** - RSI, MACD, EMA indicators
-- 🔔 **Custom Alerts** - Set price-based alerts
-- 🤖 **AI-Powered Insights** - Market explanations via OpenAI
-- 💬 **Telegram Interface** - Easy-to-use bot commands
-- 🔄 **n8n Automation** - Scheduled workflows for data collection
+- **Real-time Price Tracking** - Live SERPO token prices from DexScreener
+- **Technical Analysis** - RSI, MACD, EMA, S/R, divergence indicators
+- **Custom Alerts** - Price-based and universal alerts across 40+ commands
+- **AI-Powered Insights** - Market analysis via OpenAI GPT-4o-mini, Google Gemini, and Groq
+- **Crypto Grid Bot** - Adaptive grid trading on Binance, KuCoin, and Bybit
+- **AI Signal Layer** - Trend detection, volatility analysis, grid activation/pause
+- **Collateral Vault** - SERPO deposits to guarantee performance fees on CEX trades
+- **DEX Trading** - On-chain trades on STON.fi/DeDust with automatic fee deduction
+- **Subscription System** - Monthly SERPO-based subscription via smart contract
+- **Referral System** - 50% subscription / 3% trading profit sharing
+- **Whale Alert Tracking** - Real-time blockchain monitoring via TonAPI
+- **Token Verification** - Across 20+ chains (Degen Scanner)
+- **Telegram Interface** - Easy-to-use bot with 40+ commands
 
 ## Tech Stack
 
-- **Backend**: PHP Laravel 10+
-- **Database**: MySQL 5.7+
-- **Automation**: n8n workflows
-- **AI**: OpenAI GPT-4
-- **APIs**: DexScreener, CoinGecko
+- **Backend**: PHP Laravel 12 (PHP 8.2+)
+- **Database**: PostgreSQL (primary) / MySQL 5.7+
+- **Cache**: Redis
+- **AI**: OpenAI GPT-4o-mini, Google Gemini, Groq
+- **Grid Bot**: Python 3.12+ (pandas, NumPy, TA-Lib, PyTorch/TensorFlow)
+- **Backtesting**: Backtrader, vectorbt
+- **Real-Time**: WebSocket streams (Python asyncio, FastAPI)
+- **Smart Contracts**: Tact (TON blockchain)
+- **Blockchain**: TonWeb, ton-core, TonAPI v2
+- **Wallet**: TON Connect 2.0 (Tonkeeper, MyTonWallet, OpenMask)
+- **Frontend**: React / Next.js
+- **Crypto APIs**: Binance, KuCoin, Bybit, DexScreener, CoinGecko
+- **DEX**: STON.fi, DeDust
 - **Messaging**: Telegram Bot API
+- **Deployment**: Docker, Nginx + PHP-FPM
 
 ## Installation
 
@@ -140,23 +156,44 @@ app/
 
 ## Development Roadmap
 
-### Phase 1: Foundation ✅
+### Phase 1: Foundation
 - [x] Laravel setup
 - [x] Database migrations
 - [x] Telegram bot integration
-- [x] Basic commands
+- [x] Basic commands (40+)
 
-### Phase 2: Market Data (Current)
+### Phase 2: Market Data & AI
 - [x] DexScreener integration
 - [x] Price tracking
-- [ ] Technical indicators
-- [ ] n8n workflows
+- [x] Technical indicators (RSI, MACD, EMA, S/R, divergence)
+- [x] OpenAI / Gemini / Groq integration
+- [x] Whale alert tracking
+- [x] Token verification (20+ chains)
 
-### Phase 3: Advanced Features
-- [ ] OpenAI integration
-- [ ] Sentiment analysis
-- [ ] Portfolio tracking
-- [ ] Chart generation
+### Phase 3: Smart Contracts (Weeks 1–2)
+- [ ] Subscription smart contract (Tact on TON)
+- [ ] Fee distribution contract
+- [ ] Vault contract
+- [ ] Collateral vault contract
+- [ ] Testnet deployment + testing
+
+### Phase 4: Backend + Frontend (Weeks 3–4)
+- [ ] Backend services, DB migrations, API endpoints
+- [ ] Telegram bot commands (/subscribe, /referral, /collateral, /grid)
+- [ ] TON Connect wallet integration
+- [ ] Subscription & referral dashboards
+
+### Phase 5: Crypto Grid Bot (Weeks 5–7)
+- [ ] Exchange connectors (Binance, KuCoin, Bybit)
+- [ ] Adaptive Grid Engine (ATR-based spacing)
+- [ ] AI Signal Layer (trend/volatility detection)
+- [ ] Risk management & backtesting engine
+- [ ] Grid bot monitoring dashboard
+
+### Phase 6: Testing + Launch (Weeks 8–9)
+- [ ] End-to-end testing
+- [ ] Mainnet deployment
+- [ ] Grid bot production launch
 
 ## n8n Workflows
 
@@ -187,7 +224,7 @@ MIT License - See LICENSE file
 
 ## Version
 
-**1.0.0-beta** - Initial Release
+**3.0.0** - Smart Contract & Crypto Grid Bot System
 
 ---
 
