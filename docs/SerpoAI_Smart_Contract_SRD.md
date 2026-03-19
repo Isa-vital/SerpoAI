@@ -1,12 +1,12 @@
 # Project Scope & Requirements Document
 
-## Serpo AI — Smart Contract & Grid Bot System
+## Serpo AI — Web Platform, Smart Contracts & Grid Bot System
 
 | Field | Detail |
 |---|---|
-| **Document Title** | Project Scope & Requirements Document — Serpo AI Smart Contract & Grid Bot System |
-| **Version** | 3.0 |
-| **Date** | March 13, 2026 |
+| **Document Title** | Project Scope & Requirements Document — Serpo AI Web Platform, Smart Contracts & Grid Bot System |
+| **Version** | 4.0 |
+| **Date** | March 19, 2026 |
 | **Developer** | Isaac Mukonyezi — Tech Market Ug |
 | **Client** | Serpocoin Project |
 | **Status** | For Agreement |
@@ -20,6 +20,7 @@
 | 1.0 | March 12, 2026 | SerpoAI Team | Initial technical SRD |
 | 2.0 | March 13, 2026 | SerpoAI Team | Expanded with Collateral Vault and Grid Bot |
 | 3.0 | March 13, 2026 | Isaac Mukonyezi | Restructured as stakeholder scope document |
+| 4.0 | March 19, 2026 | Isaac Mukonyezi | Added full web platform redesign, updated tech stack (Inertia.js + React), revised timeline and cost |
 
 ---
 
@@ -29,7 +30,7 @@
 2. [Project Scope](#2-project-scope)
 3. [Deliverables](#3-deliverables)
 4. [Smart Contract Overview](#4-smart-contract-overview)
-5. [Crypto Grid Bot Overview](#5-crypto-grid-bot-overview)
+5. [Multi-Market Grid Bot Overview](#5-multi-market-grid-bot-overview)
 6. [How It Works — User Journey](#6-how-it-works--user-journey)
 7. [Technical Approach](#7-technical-approach)
 8. [Timeline](#8-timeline)
@@ -46,7 +47,7 @@
 
 ### 1.1 Purpose
 
-This document defines the project scope, deliverables, timeline, and cost for developing a smart contract system and crypto grid bot for the Serpo AI platform. It serves as a mutual agreement between the developer and the client on what will be built, what will not be built, and the terms of engagement.
+This document defines the project scope, deliverables, timeline, and cost for developing a full web platform redesign, a smart contract system, and a multi-market grid bot (crypto, forex, stocks) for the Serpo AI platform. It serves as a mutual agreement between the developer and the client on what will be built, what will not be built, and the terms of engagement.
 
 ### 1.2 Background
 
@@ -59,7 +60,7 @@ Serpo AI is a production-deployed AI-powered trading intelligence platform acces
 - Whale alert tracking
 - Portfolio management and custom price alerts
 
-**Currently, all features are free.** This project introduces a SerpoCoin-powered subscription model and automated crypto grid trading to create a sustainable revenue stream and attract users.
+**Currently, all features are free and accessible only via Telegram.** The existing website (ai.serpocoin.io) is a basic static landing page. This project introduces a modern data-driven web platform exposing all 40+ features, a SerpoCoin-powered subscription model, and automated multi-market grid trading (crypto, forex, stocks) to create a sustainable revenue stream and attract users.
 
 ### 1.3 Existing SERPO Token
 
@@ -87,32 +88,38 @@ No new token will be created. All smart contracts in this project integrate with
 - New API endpoints for subscription, referral, collateral, and grid bot operations
 - New Telegram bot commands (`/subscribe`, `/referral`, `/collateral`, `/mystatus`, `/grid`, `/grid_start`, `/grid_stop`, `/backtest`)
 
-**C. Frontend Integration**
+**C. Full Web Platform Redesign**
+- Complete redesign of the web frontend from a static landing page to a modern, data-driven platform (CoinGecko-style, dark theme)
+- All 40+ existing Telegram bot features exposed on the web (market data, technical analysis, signals, whale alerts, portfolio, AI predictions, charts, heatmaps, news, education)
+- 12 main sections: Dashboard, Market Data, Technical Analysis, Derivatives & Flow, Whale Activity, Charts & Visualization, Trading, AI & Predictions, Token Metrics, News & Learning, Copy Trading, Account
+- Telegram Login Widget for authentication (same user identity as bot, no new accounts)
 - TON Connect wallet connection (Tonkeeper, MyTonWallet, OpenMask)
-- Subscription status dashboard
-- Referral dashboard with link sharing and earnings history
-- Grid bot monitoring dashboard with P/L visualization
+- Subscription, referral, collateral, and grid bot dashboards integrated into the web platform
 
-**D. Crypto Grid Bot Engine**
-- Exchange connectors for Binance, KuCoin, and Bybit (REST + WebSocket)
+**D. Backend API Layer**
+- New API controller with ~30 endpoints to serve the web platform
+- All existing services (42) exposed via REST API to the frontend
+- Telegram Login verification middleware
+
+**E. Multi-Market Grid Bot Engine**
+- Crypto exchange connectors: Binance, KuCoin, and Bybit (REST + WebSocket)
+- Forex broker connectors: OANDA (REST API v20), FXCM (REST API), MetaTrader 5 (Python API)
+- Stock broker connectors: Interactive Brokers (REST API + WebSocket), Alpaca (REST API v2 + WebSocket)
 - Adaptive grid engine with ATR-based spacing and dynamic order sizing
 - AI signal layer for trend detection and grid activation/pause
 - Risk management (stop-loss, max exposure, leverage control)
-- Backtesting engine with historical data simulation
+- Backtesting engine with historical data simulation across all 3 markets
 - Real-time monitoring and position tracking
 
 ### 2.2 What Will NOT Be Developed (Out of Scope)
 
 | Item | Reason |
 |------|--------|
-| Forex trading (OANDA, FXCM, MetaTrader 4/5) | Not included in this phase |
-| Stock trading (Interactive Brokers, Alpaca) | Not included in this phase |
 | Mobile app changes | Existing app not modified |
 | New token creation | SERPO token already exists on TON Mainnet |
 | Marketing & user acquisition | Client responsibility |
 | Community management | Client responsibility |
 | Third-party security audit | Recommended but requires separate engagement and budget |
-| UI/UX design work | Developer builds functional interfaces using existing design patterns |
 
 ---
 
@@ -122,22 +129,24 @@ Upon completion, the following will be delivered:
 
 | # | Deliverable | Description |
 |:-:|-------------|-------------|
-| 1 | **Subscription Contract** | Tact smart contract deployed to TON Mainnet — accepts SERPO payment, activates 30-day subscription |
-| 2 | **Fee Distribution Contract** | Tact smart contract — splits 7% trading fee (4% vault, 3% referrer) |
-| 3 | **Vault Contract** | Tact smart contract — accumulates platform revenue, owner-only withdrawal |
-| 4 | **Collateral Vault Contract** | Tact smart contract — manages user collateral deposits for CEX trade fee guarantees |
-| 5 | **Backend Services** | 5 new Laravel services: SubscriptionVerificationService, WalletConnectionService, ReferralTrackingService, CollateralVaultService, GridBotService |
-| 6 | **Database Migrations** | 8+ new database tables integrated with existing user system |
-| 7 | **API Endpoints** | REST APIs for subscription, referral, collateral, and grid bot operations |
-| 8 | **Telegram Bot Commands** | 8 new commands: `/subscribe`, `/referral`, `/collateral`, `/mystatus`, `/grid`, `/grid_start`, `/grid_stop`, `/backtest` |
-| 9 | **TON Connect Integration** | Wallet connection flow for website and Telegram (QR code + deep link) |
-| 10 | **Subscription Dashboard** | Web interface showing subscription status, expiry, and payment history |
-| 11 | **Referral Dashboard** | Web interface showing referral link, referred users, and earnings |
-| 12 | **Crypto Grid Bot Engine** | Trading engine with Binance/KuCoin/Bybit connectors, adaptive grid, AI signals, risk management |
-| 13 | **Grid Bot Monitoring Dashboard** | Web interface showing active grids, P/L, trade history, and grid level visualization |
-| 14 | **Backtesting Engine** | Historical data simulation to validate grid strategies before live trading |
-| 15 | **Testnet Deployment** | All 4 contracts deployed and tested on TON Testnet |
-| 16 | **Mainnet Deployment** | All 4 contracts deployed to TON Mainnet, backend live, grid bot operational |
+| 1 | **Full Web Platform** | Complete redesign of ai.serpocoin.io — 12 sections, 25 pages, all 40+ features accessible on the web with modern dark-theme UI (CoinGecko-style) |
+| 2 | **API Controller Layer** | ~30 REST API endpoints serving the web platform, backed by existing 42 services |
+| 3 | **Telegram Login Integration** | Web authentication via Telegram Login Widget — same user identity as Telegram bot |
+| 4 | **Subscription Contract** | Tact smart contract deployed to TON Mainnet — accepts SERPO payment, activates 30-day subscription |
+| 5 | **Fee Distribution Contract** | Tact smart contract — splits 7% trading fee (4% vault, 3% referrer) |
+| 6 | **Vault Contract** | Tact smart contract — accumulates platform revenue, owner-only withdrawal |
+| 7 | **Collateral Vault Contract** | Tact smart contract — manages user collateral deposits for CEX trade fee guarantees |
+| 8 | **Backend Services** | 5 new Laravel services: SubscriptionVerificationService, WalletConnectionService, ReferralTrackingService, CollateralVaultService, GridBotService |
+| 9 | **Database Migrations** | 8+ new database tables integrated with existing user system |
+| 10 | **Telegram Bot Commands** | 8 new commands: `/subscribe`, `/referral`, `/collateral`, `/mystatus`, `/grid`, `/grid_start`, `/grid_stop`, `/backtest` |
+| 11 | **TON Connect Integration** | Wallet connection flow for website and Telegram (QR code + deep link) |
+| 12 | **Subscription Dashboard** | Web page showing subscription status, expiry, and payment history |
+| 13 | **Referral Dashboard** | Web page showing referral link, referred users, and earnings |
+| 14 | **Multi-Market Grid Bot Engine** | Trading engine with connectors for Binance/KuCoin/Bybit (crypto), OANDA/FXCM/MT5 (forex), Interactive Brokers/Alpaca (stocks) — adaptive grid, AI signals, risk management |
+| 15 | **Grid Bot Monitoring Dashboard** | Web page showing active grids, P/L, trade history, and grid level visualization |
+| 16 | **Backtesting Engine** | Historical data simulation to validate grid strategies before live trading |
+| 17 | **Testnet Deployment** | All 4 contracts deployed and tested on TON Testnet |
+| 18 | **Mainnet Deployment** | All 4 contracts deployed to TON Mainnet, backend live, grid bot operational |
 
 ---
 
@@ -250,19 +259,36 @@ Upon completion, the following will be delivered:
 
 ---
 
-## 5. Crypto Grid Bot Overview
+## 5. Multi-Market Grid Bot Overview
 
 ### 5.1 What Is a Grid Bot?
 
 A grid bot is an automated trading strategy that places buy and sell orders at preset price intervals (a "grid") above and below a set price. The bot profits from price oscillations — buying low and selling high repeatedly as the price moves within the grid range.
 
-### 5.2 Supported Exchanges
+### 5.2 Supported Exchanges & Brokers
+
+**Crypto Exchanges**
 
 | Exchange | Connection | Markets |
-|----------|-----------|---------|
+|----------|-----------|--------|
 | **Binance** | REST API + WebSocket | Spot + Futures |
 | **KuCoin** | REST API + WebSocket | Spot + Futures |
 | **Bybit** | REST API + WebSocket | Spot + Futures |
+
+**Forex Brokers**
+
+| Broker | Connection | Markets |
+|--------|-----------|--------|
+| **OANDA** | REST API v20 | 108+ forex pairs, commodities (XAU, XAG) |
+| **FXCM** | REST API | Forex pairs, practice accounts |
+| **MetaTrader 5** | Python API (MetaTrader5 package) | Forex pairs, commodities |
+
+**Stock Brokers**
+
+| Broker | Connection | Markets |
+|--------|-----------|--------|
+| **Interactive Brokers** | REST API + WebSocket | 103+ global exchanges (US, UK, Europe, Asia) |
+| **Alpaca** | REST API v2 + WebSocket | US equities (NYSE, NASDAQ), fractional shares |
 
 ### 5.3 Key Features
 
@@ -307,31 +333,48 @@ When the grid bot closes a profitable trade:
 ## 6. How It Works — User Journey
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                        USER JOURNEY                          │
-│                                                              │
-│  1. Connect       2. Subscribe      3. Deposit Collateral   │
-│     Wallet     →     with SERPO  →     (for grid trading)   │
-│                                                              │
-│  4. Use AI Tools     5. Start Grid Bot    6. Refer Friends   │
-│     /predict      →    /grid_start     →    Share link       │
-│     /analyze           /backtest           Earn 50% subs     │
-│     /rsi               /grid               Earn 3% fees     │
-│     /scan                                                    │
-│                                                              │
-│  ┌──────────┐   ┌───────────────┐   ┌───────────────────┐   │
-│  │ Tonkeeper│   │ Pay SERPO     │   │ Grid bot trades   │   │
-│  │ Scan QR  │   │ ($10/month)   │   │ automatically on  │   │
-│  │          │   │               │   │ Binance/KuCoin/   │   │
-│  └────┬─────┘   └──────┬────────┘   │ Bybit             │   │
-│       │                │            └───────────────────┘   │
-│       ▼                ▼                                     │
-│  Wallet Address   Smart Contract                             │
-│  = User ID        Processes Payment                          │
-│                   Activates 30-Day Access                     │
-│                   Manages Collateral                          │
-│                   Distributes Fees                            │
-└─────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────┐
+│                          USER JOURNEY                                │
+│                                                                      │
+│  ACCESS VIA WEB                       ACCESS VIA TELEGRAM            │
+│  ┌───────────────────┐                ┌───────────────────┐          │
+│  │ ai.serpocoin.io    │                │ @SerpoAIBot       │          │
+│  │ Log in with        │                │ /start             │          │
+│  │ Telegram Login     │                │                    │          │
+│  └────────┬──────────┘                └─────────┬─────────┘          │
+│           │                                     │                    │
+│           └──────────────┬──────────────────────┘                    │
+│                          ▼                                           │
+│                  Same User Identity                                  │
+│                  (telegram_id)                                       │
+│                          │                                           │
+│  1. Connect       2. Subscribe      3. Deposit Collateral            │
+│     Wallet     →     with SERPO  →     (for grid trading)            │
+│                                                                      │
+│  4. Use AI Tools     5. Start Grid Bot    6. Refer Friends           │
+│     Web: Dashboard →    Web: Grid UI    →    Share link              │
+│     Bot: /predict       Bot: /grid_start     Earn 50% subs          │
+│     Bot: /analyze       Bot: /backtest       Earn 3% fees           │
+│     Bot: /rsi           Bot: /grid                                   │
+│     Bot: /scan                                                       │
+│                                                                      │
+│  ┌──────────┐   ┌───────────────┐   ┌───────────────────┐            │
+│  │ Tonkeeper│   │ Pay SERPO     │   │ Grid bot trades   │            │
+│  │ Scan QR  │   │ ($10/month)   │   │ on 8 connectors:  │            │
+│  │          │   │               │   │ Crypto: Binance,  │            │
+│  └────┬─────┘   └──────┬────────┘   │  KuCoin, Bybit    │            │
+│       │                │            │ Forex: OANDA,     │            │
+│       │                │            │  FXCM, MT5        │            │
+│       │                │            │ Stocks: IB,       │            │
+│       │                │            │  Alpaca           │            │
+│       │                │            └───────────────────┘            │
+│       ▼                ▼                                             │
+│  Wallet Address   Smart Contract                                     │
+│  = User ID        Processes Payment                                  │
+│                   Activates 30-Day Access                             │
+│                   Manages Collateral                                  │
+│                   Distributes Fees                                    │
+└──────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -344,10 +387,12 @@ When the grid bot closes a profitable trade:
 | **Backend** | Laravel 12 (PHP 8.2+) | Existing application — extended, not rebuilt |
 | **Database** | PostgreSQL / MySQL | Existing database — new tables added via migrations |
 | **Grid Bot Engine** | Python 3.12+ | pandas, NumPy, TA-Lib for analysis; asyncio for real-time execution |
-| **Exchange Connections** | REST API + WebSocket | Real-time price feeds and order management |
+| **Crypto APIs** | Binance, KuCoin, Bybit | REST + WebSocket — spot and futures |
+| **Forex APIs** | OANDA v20, FXCM REST, MT5 Python | REST + streaming — 108+ forex pairs, commodities |
+| **Stock APIs** | Interactive Brokers, Alpaca v2 | REST + WebSocket — US and global equities |
 | **Wallet Integration** | TON Connect 2.0 | Supports Tonkeeper, MyTonWallet, OpenMask |
 | **Blockchain Data** | TonAPI v2 | Subscription verification, transaction monitoring |
-| **Frontend** | React / Next.js | Web dashboards for subscription, referral, grid bot monitoring |
+| **Frontend** | Inertia.js 2.0 + React 19 | Integrated with Laravel — no separate API server needed; Tailwind CSS 4.0 + Vite 7.0 |
 | **Telegram** | Telegram Bot API | Existing bot — new commands added |
 | **Hosting** | Existing VPS (ai.serpocoin.io) | No new infrastructure required |
 
@@ -357,21 +402,23 @@ When the grid bot closes a profitable trade:
 
 ## 8. Timeline
 
-**Estimated duration:** 8–10 weeks (working 5 hours/day)
+**Estimated duration:** 14–16 weeks (working 5 hours/day)
 
 | Phase | Week(s) | Deliverables |
 |-------|:-------:|-------------|
-| **Smart Contracts** | 1–2 | All 4 contracts developed in Tact, unit tested, deployed to TON Testnet |
-| **Backend Integration** | 3 | Laravel services, database migrations, API endpoints, Telegram bot commands |
-| **Frontend & Wallet** | 4 | TON Connect integration, subscription dashboard, referral dashboard |
-| **Grid Bot Engine** | 5–6 | Exchange connectors (Binance, KuCoin, Bybit), adaptive grid engine, AI signal layer |
-| **Grid Bot Completion** | 7 | Risk management, backtesting engine, monitoring dashboard |
-| **Testing** | 8 | End-to-end testing across all components, bug fixes |
-| **Launch** | 9 | Mainnet deployment, grid bot production launch, soft launch monitoring |
+| **Web Platform Redesign** | 1–3 | Full web platform — 12 sections, 25 pages, Inertia.js + React, Telegram Login, ~30 API endpoints |
+| **Smart Contracts** | 4–5 | All 4 contracts developed in Tact, unit tested, deployed to TON Testnet |
+| **Backend Integration** | 6 | Laravel services, database migrations, API endpoints, Telegram bot commands |
+| **Frontend New Features** | 7 | TON Connect integration, subscription dashboard, referral dashboard on web |
+| **Crypto Grid Bot** | 8–9 | Crypto exchange connectors (Binance, KuCoin, Bybit), adaptive grid engine, AI signal layer |
+| **Forex & Stock Connectors** | 10–11 | Forex connectors (OANDA, FXCM, MT5), stock connectors (Interactive Brokers, Alpaca), market-specific adapters |
+| **Grid Bot Completion** | 12 | Risk management, backtesting engine (all 3 markets), monitoring dashboard |
+| **Testing** | 13 | End-to-end testing across all components and all 3 markets, bug fixes |
+| **Launch** | 14 | Mainnet deployment, grid bot production launch, soft launch monitoring |
 
-**Week 10** is reserved as a buffer for unexpected issues.
+**Weeks 15–16** are reserved as a buffer for unexpected issues.
 
-> **Note:** Timeline assumes client provides timely access to server, codebase, and API keys. Delays in client-side dependencies will extend the timeline accordingly.
+> **Note:** Timeline assumes client provides timely access to server, codebase, API keys, and broker accounts (OANDA demo, Alpaca paper trading). Delays in client-side dependencies will extend the timeline accordingly.
 
 ---
 
@@ -381,14 +428,14 @@ When the grid bot closes a profitable trade:
 
 | Item | Amount |
 |------|--------|
-| **Total Project Cost** | **1,500,000 UGX** |
+| **Total Project Cost** | **2,750,000 UGX** |
 
 ### 9.2 Payment Schedule
 
 | Payment | Amount | When |
 |---------|--------|------|
-| **Payment 1 (40%)** | **600,000 UGX** | Before work begins |
-| **Payment 2 (60%)** | **900,000 UGX** | After successful launch (see Acceptance Criteria in Section 10) |
+| **Payment 1 (40%)** | **1,100,000 UGX** | Before work begins |
+| **Payment 2 (60%)** | **1,650,000 UGX** | After successful launch (see Acceptance Criteria in Section 10) |
 
 ### 9.3 What's Included
 
@@ -401,7 +448,8 @@ When the grid bot closes a profitable trade:
 
 - Third-party security audit (separate engagement, estimated $2,000–$10,000 USD)
 - Ongoing hosting costs (client's existing server used)
-- Exchange API subscription fees (if applicable)
+- Exchange/broker API subscription fees (if applicable)
+- Forex broker account fees (OANDA, FXCM) and stock broker fees (Interactive Brokers)
 - TON blockchain gas fees for contract deployment (~2–5 TON, ~$10–$25)
 - Any work outside the scope defined in Section 2
 
@@ -413,16 +461,22 @@ When the grid bot closes a profitable trade:
 
 | # | Criterion | How It's Verified |
 |:-:|-----------|-------------------|
-| 1 | All 4 smart contracts are deployed to TON Mainnet | Contract addresses provided, verified on-chain |
-| 2 | Subscription flow works end-to-end: user pays SERPO → subscription activates for 30 days | Live test with real SERPO payment |
-| 3 | Referral system works: shared link → referrer earns 50% of subscription payment | Balance verification |
-| 4 | Fee Distribution splits correctly: 4% vault, 3% referrer | On-chain transaction verification |
-| 5 | Collateral deposit and withdrawal works | Live test with real SERPO |
-| 6 | All 8 new Telegram bot commands respond correctly | Manual testing of each command |
-| 7 | TON Connect wallet connection works on website | Connect using Tonkeeper or MyTonWallet |
-| 8 | Grid bot starts, executes trades, and stops on Binance | Live test on Binance (can use testnet or small amount) |
-| 9 | Grid bot monitoring dashboard shows P/L and active grid status | Visual verification |
-| 10 | Backtesting engine returns simulation results | Run backtest command and verify output |
+| 1 | Web platform loads at ai.serpocoin.io — all 12 sections accessible | Navigate every section in browser |
+| 2 | Telegram Login works — user clicks "Log in with Telegram", lands on authenticated dashboard | Live test |
+| 3 | Market data loads on web — prices, charts, whale alerts render correctly | Visual verification |
+| 4 | All 40+ existing bot features are accessible on web (same data, same user) | Cross-check web vs. Telegram |
+| 5 | All 4 smart contracts are deployed to TON Mainnet | Contract addresses provided, verified on-chain |
+| 6 | Subscription flow works end-to-end: user pays SERPO → subscription activates for 30 days | Live test with real SERPO payment |
+| 7 | Referral system works: shared link → referrer earns 50% of subscription payment | Balance verification |
+| 8 | Fee Distribution splits correctly: 4% vault, 3% referrer | On-chain transaction verification |
+| 9 | Collateral deposit and withdrawal works | Live test with real SERPO |
+| 10 | All 8 new Telegram bot commands respond correctly | Manual testing of each command |
+| 11 | TON Connect wallet connection works on website | Connect using Tonkeeper or MyTonWallet |
+| 12 | Grid bot starts, executes trades, and stops on Binance (crypto) | Live test on Binance (can use testnet or small amount) |
+| 13 | Grid bot starts, executes trades, and stops on OANDA (forex) | Live test on OANDA demo/practice account |
+| 14 | Grid bot starts, executes trades, and stops on Alpaca (stocks) | Live test on Alpaca paper trading account |
+| 15 | Grid bot monitoring dashboard shows P/L and active grid status across all 3 markets | Visual verification |
+| 16 | Backtesting engine returns simulation results for crypto, forex, and stocks | Run backtest command and verify output |
 
 ---
 
@@ -434,11 +488,13 @@ When the grid bot closes a profitable trade:
 | 2 | SERPO token has sufficient liquidity on DeDust or STON.fi for price discovery | Client |
 | 3 | Client provides access to existing server and Laravel codebase | Client |
 | 4 | Client provides TON API key for blockchain queries | Client |
-| 5 | Client provides exchange API keys for grid bot testing (Binance at minimum) | Client |
-| 6 | Client handles marketing, user acquisition, and community management | Client |
-| 7 | Client provides timely feedback during development (within 48 hours) | Client |
-| 8 | Users have access to TON-compatible wallets (Tonkeeper, MyTonWallet) | Users |
-| 9 | Existing Serpo AI bot and website remain operational during development | Client |
+| 5 | Client provides exchange API keys for crypto grid bot testing (Binance at minimum) | Client |
+| 6 | Client provides OANDA demo/practice account for forex grid bot testing | Client |
+| 7 | Client provides Alpaca paper trading account for stock grid bot testing | Client |
+| 8 | Client handles marketing, user acquisition, and community management | Client |
+| 9 | Client provides timely feedback during development (within 48 hours) | Client |
+| 10 | Users have access to TON-compatible wallets (Tonkeeper, MyTonWallet) | Users |
+| 11 | Existing Serpo AI bot and website remain operational during development | Client |
 
 ---
 
@@ -450,9 +506,11 @@ When the grid bot closes a profitable trade:
 | 2 | SERPO token has insufficient DEX liquidity | Medium — subscription pricing unreliable | Client to ensure liquidity before launch |
 | 3 | TON network congestion delays transactions | Low — temporary user inconvenience | Retry logic and cached subscription status |
 | 4 | Grid bot incurs trading losses | Medium — user dissatisfaction | AI signal layer pauses in trending markets; stop-loss protection; paper trading mode available |
-| 5 | Exchange API changes break grid bot connectors | Medium — requires maintenance | API version pinning; abstraction layer for easy updates |
-| 6 | No users adopt the platform after launch | High — no revenue generated | This is a marketing/product risk, not a development risk. Developer is not responsible for user acquisition |
-| 7 | Client delays providing access or feedback | Medium — extends timeline | Timeline will be extended day-for-day for client-caused delays |
+| 5 | Exchange/broker API changes break grid bot connectors | Medium — requires maintenance | API version pinning; abstraction layer for easy updates |
+| 6 | Forex/stock broker regulatory restrictions limit access in certain regions | Medium — some connectors may not work for all users | Document supported regions; OANDA and Alpaca have broad availability |
+| 7 | MetaTrader 5 or Interactive Brokers API complexity causes delays | Medium — could extend forex/stock connector development | Use well-documented Python libraries (MetaTrader5 package, ib_insync); allocate buffer weeks |
+| 8 | No users adopt the platform after launch | High — no revenue generated | This is a marketing/product risk, not a development risk. Developer is not responsible for user acquisition |
+| 9 | Client delays providing access or feedback | Medium — extends timeline | Timeline will be extended day-for-day for client-caused delays |
 
 ---
 
@@ -466,13 +524,12 @@ When the grid bot closes a profitable trade:
 - Bug fixes for delivered features
 - Minor adjustments to deployed contracts (parameter changes only — not logic changes)
 - Backend/frontend bug fixes
-- Grid bot connector fixes if an exchange API changes during the support period
+- Grid bot connector fixes if an exchange or broker API changes during the support period
 
 **NOT included during free support:**
 - New features or functionality not listed in Section 3
-- New exchange connectors beyond Binance, KuCoin, Bybit
-- Forex or stock market integrations
-- Design or UX redesign
+- New exchange/broker connectors beyond the 8 delivered (Binance, KuCoin, Bybit, OANDA, FXCM, MT5, Interactive Brokers, Alpaca)
+- Design or UX changes beyond the delivered web platform
 - Performance optimization beyond original specifications
 
 ### 13.2 After Free Support Period

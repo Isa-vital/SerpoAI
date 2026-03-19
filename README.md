@@ -1,14 +1,16 @@
-# SerpoAI - AI-Powered Crypto Trading Platform
+# SerpoAI - AI-Powered Multi-Market Trading Platform
 
-**SerpoAI** is an AI-powered trading platform for the Serpocoin ecosystem, providing real-time crypto market analysis, adaptive grid bots, trading signals, and custom alerts via Telegram, website, and mobile app.
+**SerpoAI** is an AI-powered trading platform for the Serpocoin ecosystem, featuring a full web platform (CoinGecko-style), real-time market analysis across crypto, forex, and stocks, adaptive multi-market grid bots, trading signals, and custom alerts via Telegram and web.
 
 ## Features
 
+- **Full Web Platform** - Modern dark-theme UI at ai.serpocoin.io — 12 sections, 25 pages, all 40+ features on web (CoinGecko-style)
+- **Telegram Login** - Web authentication via Telegram Login Widget — same user identity as Telegram bot
 - **Real-time Price Tracking** - Live SERPO token prices from DexScreener
 - **Technical Analysis** - RSI, MACD, EMA, S/R, divergence indicators
 - **Custom Alerts** - Price-based and universal alerts across 40+ commands
 - **AI-Powered Insights** - Market analysis via OpenAI GPT-4o-mini, Google Gemini, and Groq
-- **Crypto Grid Bot** - Adaptive grid trading on Binance, KuCoin, and Bybit
+- **Multi-Market Grid Bot** - Adaptive grid trading on Binance, KuCoin, Bybit (crypto), OANDA, FXCM, MT5 (forex), Interactive Brokers, Alpaca (stocks)
 - **AI Signal Layer** - Trend detection, volatility analysis, grid activation/pause
 - **Collateral Vault** - SERPO deposits to guarantee performance fees on CEX trades
 - **DEX Trading** - On-chain trades on STON.fi/DeDust with automatic fee deduction
@@ -30,8 +32,12 @@
 - **Smart Contracts**: Tact (TON blockchain)
 - **Blockchain**: TonWeb, ton-core, TonAPI v2
 - **Wallet**: TON Connect 2.0 (Tonkeeper, MyTonWallet, OpenMask)
-- **Frontend**: React / Next.js
+- **Frontend**: Inertia.js 2.0 + React 19 (integrated with Laravel)
+- **Styling**: Tailwind CSS 4.0 + Vite 7.0
+- **Charts**: Lightweight Charts (TradingView), Recharts
 - **Crypto APIs**: Binance, KuCoin, Bybit, DexScreener, CoinGecko
+- **Forex APIs**: OANDA v20, FXCM REST, MetaTrader 5 Python
+- **Stock APIs**: Interactive Brokers, Alpaca v2
 - **DEX**: STON.fi, DeDust
 - **Messaging**: Telegram Bot API
 - **Deployment**: Docker, Nginx + PHP-FPM
@@ -170,30 +176,44 @@ app/
 - [x] Whale alert tracking
 - [x] Token verification (20+ chains)
 
-### Phase 3: Smart Contracts (Weeks 1–2)
+### Phase 3: Web Platform Redesign (Weeks 1–3)
+- [ ] Inertia.js + React setup, Telegram Login integration
+- [ ] 12 web sections: Dashboard, Price Tracking, Portfolio, Alerts, AI Analysis, Charts, Whale Tracker, Token Verify, Signals, Research, Settings, Admin
+- [ ] ~30 API controller endpoints backed by 42 existing services
+
+### Phase 4: Smart Contracts (Weeks 4–5)
 - [ ] Subscription smart contract (Tact on TON)
 - [ ] Fee distribution contract
 - [ ] Vault contract
 - [ ] Collateral vault contract
 - [ ] Testnet deployment + testing
 
-### Phase 4: Backend + Frontend (Weeks 3–4)
+### Phase 5: Backend + Frontend New Features (Weeks 6–7)
 - [ ] Backend services, DB migrations, API endpoints
 - [ ] Telegram bot commands (/subscribe, /referral, /collateral, /grid)
 - [ ] TON Connect wallet integration
-- [ ] Subscription & referral dashboards
+- [ ] Subscription & referral dashboards on web
 
-### Phase 5: Crypto Grid Bot (Weeks 5–7)
-- [ ] Exchange connectors (Binance, KuCoin, Bybit)
+### Phase 6: Crypto Grid Bot (Weeks 8–9)
+- [ ] Crypto exchange connectors (Binance, KuCoin, Bybit)
 - [ ] Adaptive Grid Engine (ATR-based spacing)
 - [ ] AI Signal Layer (trend/volatility detection)
-- [ ] Risk management & backtesting engine
+
+### Phase 7: Forex & Stock Connectors (Weeks 10–11)
+- [ ] Forex connectors (OANDA, FXCM, MetaTrader 5)
+- [ ] Stock connectors (Interactive Brokers, Alpaca)
+- [ ] Multi-market adapter layer
+
+### Phase 8: Grid Bot Completion (Week 12)
+- [ ] Risk management & backtesting engine (all 3 markets)
 - [ ] Grid bot monitoring dashboard
 
-### Phase 6: Testing + Launch (Weeks 8–9)
-- [ ] End-to-end testing
+### Phase 9: Testing + Launch (Weeks 13–14)
+- [ ] End-to-end testing across all markets
 - [ ] Mainnet deployment
 - [ ] Grid bot production launch
+
+**Weeks 15–16** are reserved as buffer.
 
 ## n8n Workflows
 
@@ -224,7 +244,7 @@ MIT License - See LICENSE file
 
 ## Version
 
-**3.0.0** - Smart Contract & Crypto Grid Bot System
+**4.0.0** - Web Platform, Smart Contracts & Multi-Market Grid Bot System
 
 ---
 
