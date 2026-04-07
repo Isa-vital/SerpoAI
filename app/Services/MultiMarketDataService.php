@@ -1473,6 +1473,8 @@ class MultiMarketDataService
                         if (!isset($cryptoResult['error'])) {
                             return $cryptoResult;
                         }
+                        // Return the crypto error (more helpful) instead of the stock error
+                        return $cryptoResult;
                     }
                     return $result;
                 }
@@ -1567,6 +1569,16 @@ class MultiMarketDataService
                 }
             } catch (\Exception $e) {
                 Log::debug('DexScreener price fallback failed', ['symbol' => $baseAsset]);
+            }
+
+            // Fallback 4: GeckoTerminal — covers STON.fi (TON), Raydium, PancakeSwap, etc.
+            try {
+                $geckoResult = $this->getGeckoTerminalPrice($baseAsset);
+                if ($geckoResult) {
+                    return $geckoResult;
+                }
+            } catch (\Exception $e) {
+                Log::debug('GeckoTerminal price fallback failed', ['symbol' => $baseAsset]);
             }
 
             return ['error' => "❌ {$baseAsset} not found on exchanges (Binance, CoinGecko, or DEXs).\n\nThis token may be:\n• Too new or very low liquidity\n• Misspelled\n\nTry the full pair: `/price {$baseAsset}USDT`"];
@@ -1955,6 +1967,89 @@ class MultiMarketDataService
             ];
         } catch (\Exception $e) {
             Log::debug('DexScreener search failed', ['symbol' => $symbol, 'error' => $e->getMessage()]);
+            return null;
+        }
+    }
+
+    /**
+     * Get price data from GeckoTerminal for DEX-only tokens not on DexScreener
+     * Covers STON.fi (TON), Raydium, PancakeSwap, Uniswap pools, etc.
+     */
+    public function getGeckoTerminalPrice(string $symbol): ?array
+    {
+        try {
+            $response = Http::timeout(8)->withHeaders(['Accept' => 'application/json'])
+                ->withUserAgent('SerpoAI/2.0')
+                ->get('https://api.geckoterminal.com/api/v2/search/pools', [
+                    'query' => $symbol,
+                ]);
+
+            if (!$response->successful()) {
+                return null;
+            }
+
+            $pools = $response->json()['data'] ?? [];
+
+            if (empty($pools)) {
+                return null;
+            }
+
+            // Filter pools where the base token symbol matches
+            $matchingPools = array_filter($pools, function ($pool) use ($symbol) {
+                $name = $pool['attributes']['name'] ?? '';
+                // Pool name format: "TOKEN / QUOTE" — check base token
+                $parts = explode('/', $name);
+                $baseSymbol = strtoupper(trim($parts[0] ?? ''));
+                return $baseSymbol === strtoupper($symbol);
+            });
+
+            if (empty($matchingPools)) {
+                return null;
+            }
+
+            // Sort by reserve (liquidity) descending
+            usort($matchingPools, function ($a, $b) {
+                $liqA = floatval($a['attributes']['reserve_in_usd'] ?? 0);
+                $liqB = floatval($b['attributes']['reserve_in_usd'] ?? 0);
+                return $liqB <=> $liqA;
+            });
+
+            $best = $matchingPools[0]['attributes'];
+            $price = floatval($best['base_token_price_usd'] ?? 0);
+
+            if ($price <= 0) {
+                return null;
+            }
+
+            // Extract chain from pool ID (format: "ton_ADDRESS", "solana_ADDRESS", etc.)
+            $poolId = $matchingPools[0]['id'] ?? '';
+            $network = str_contains($poolId, '_') ? explode('_', $poolId, 2)[0] : 'unknown';
+            $dexId = $matchingPools[0]['relationships']['dex']['data']['id'] ?? '';
+            $chainName = ucfirst(str_replace('-', ' ', $network));
+            $dexName = $dexId ? ucfirst(str_replace('-', ' ', explode('-', $dexId)[0])) : '';
+            $sourceLabel = $dexName ? "{$dexName} ({$chainName})" : "GeckoTerminal ({$chainName})";
+            $poolName = $best['name'] ?? '';
+            $change24h = floatval($best['price_change_percentage']['h24'] ?? 0);
+            $volume24h = floatval($best['volume_usd']['h24'] ?? 0);
+            $fdv = floatval($best['fdv_usd'] ?? 0);
+            $marketCap = floatval($best['market_cap_usd'] ?? 0);
+            $liquidity = floatval($best['reserve_in_usd'] ?? 0);
+
+            return [
+                'symbol' => strtoupper($symbol),
+                'market_type' => 'crypto',
+                'source' => $sourceLabel,
+                'price' => $price,
+                'change_24h' => $change24h,
+                'volume_24h' => $volume24h,
+                'market_cap' => ($marketCap > 0 ? $marketCap : ($fdv > 0 ? $fdv : null)),
+                'liquidity' => $liquidity,
+                'chain' => $chainName,
+                'pool_name' => $poolName,
+                'updated_at' => gmdate('Y-m-d H:i') . ' UTC',
+            ];
+        } catch (\Exception $e) {
+            Log::debug('GeckoTerminal search failed', ['symbol' => $symbol, 'error' => $e->getMessage()]);
             return null;
         }
     }
