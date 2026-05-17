@@ -1110,47 +1110,116 @@ class MultiMarketDataService
     {
         return Cache::remember('stock_movers', 900, function () {
             try {
-                // Broad watchlist across sectors for real market representation
+                // Expanded watchlist (~80 names) across sectors, ETFs, and trending tickers
                 $watchlist = [
-                    // Tech
+                    // Mega-cap Tech
                     'AAPL',
                     'MSFT',
                     'NVDA',
                     'GOOGL',
+                    'GOOG',
                     'AMZN',
                     'META',
                     'TSLA',
-                    // Finance
+                    'NFLX',
+                    'ADBE',
+                    // Semis
+                    'AMD',
+                    'INTC',
+                    'AVGO',
+                    'QCOM',
+                    'TXN',
+                    'MU',
+                    'AMAT',
+                    'ASML',
+                    'TSM',
+                    'ARM',
+                    // Finance / Banks
                     'JPM',
                     'BAC',
+                    'WFC',
                     'GS',
+                    'MS',
+                    'C',
                     'V',
                     'MA',
+                    'AXP',
+                    'BRK.B',
                     // Healthcare
                     'UNH',
                     'JNJ',
                     'PFE',
                     'ABBV',
+                    'LLY',
+                    'MRK',
+                    'TMO',
+                    'ABT',
                     // Consumer
                     'WMT',
+                    'COST',
                     'KO',
+                    'PEP',
                     'MCD',
+                    'SBUX',
                     'NKE',
                     'DIS',
+                    'HD',
+                    'LOW',
                     // Energy & Industrial
                     'XOM',
                     'CVX',
+                    'COP',
+                    'OXY',
                     'CAT',
                     'BA',
-                    // ETFs
+                    'GE',
+                    'DE',
+                    // Telecom / Media
+                    'T',
+                    'VZ',
+                    'CMCSA',
+                    // ETFs (broad + sector)
                     'SPY',
                     'QQQ',
                     'IWM',
-                    // Popular/Trending
-                    'AMD',
-                    'PLTR',
+                    'DIA',
+                    'VTI',
+                    'XLF',
+                    'XLK',
+                    'XLE',
+                    'XLV',
+                    'GLD',
+                    'SLV',
+                    // Crypto-adjacent / Fintech
                     'COIN',
                     'SQ',
+                    'PYPL',
+                    'HOOD',
+                    'MSTR',
+                    'MARA',
+                    'RIOT',
+                    'CLSK',
+                    // High-volume / Retail favorites
+                    'PLTR',
+                    'SOFI',
+                    'NIO',
+                    'LCID',
+                    'RIVN',
+                    'F',
+                    'GM',
+                    'UBER',
+                    'LYFT',
+                    'SHOP',
+                    // AI / Cloud / SaaS
+                    'CRM',
+                    'ORCL',
+                    'NOW',
+                    'SNOW',
+                    'DDOG',
+                    'CRWD',
+                    'NET',
+                    'PANW',
+                    'ZS',
                 ];
 
                 $gainers = [];
@@ -1311,6 +1380,49 @@ class MultiMarketDataService
             }
         } catch (\Exception $e) {
             Log::error('Forex fallback API failed', ['pair' => $pair]);
+        }
+
+        // Fallback 3: Yahoo Finance for commodities (XAU/XAG/XPT/XPD/Oil) and major pairs
+        try {
+            $yahooMap = [
+                'XAUUSD' => 'GC=F',   // Gold futures
+                'XAGUSD' => 'SI=F',   // Silver futures
+                'XPTUSD' => 'PL=F',   // Platinum futures
+                'XPDUSD' => 'PA=F',   // Palladium futures
+                'BCOUSD' => 'BZ=F',   // Brent crude
+                'WTIUSD' => 'CL=F',   // WTI crude
+                'NGASUSD' => 'NG=F',  // Natural gas
+            ];
+            $yahooSym = $yahooMap[strtoupper($pair)] ?? (strtoupper($pair) . '=X');
+
+            $response = Http::timeout(5)
+                ->withHeaders(['User-Agent' => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'])
+                ->get("https://query1.finance.yahoo.com/v8/finance/chart/{$yahooSym}", [
+                    'interval' => '1d',
+                    'range' => '5d',
+                ]);
+
+            if ($response->successful()) {
+                $data = $response->json();
+                $result = $data['chart']['result'][0] ?? null;
+                if ($result) {
+                    $meta = $result['meta'] ?? [];
+                    $price = floatval($meta['regularMarketPrice'] ?? 0);
+                    $prevClose = floatval($meta['chartPreviousClose'] ?? $meta['previousClose'] ?? $price);
+                    if ($price > 0) {
+                        $change = $price - $prevClose;
+                        $changePercent = $prevClose > 0 ? ($change / $prevClose) * 100 : 0;
+                        return [
+                            'pair' => $pair,
+                            'price' => $price,
+                            'change' => round($change, 4),
+                            'change_percent' => round($changePercent, 2),
+                        ];
+                    }
+                }
+            }
+        } catch (\Exception $e) {
+            Log::warning('Yahoo Finance forex fallback failed', ['pair' => $pair, 'error' => $e->getMessage()]);
         }
 
         return ['error' => "Unable to fetch {$pair} data. Verify pair format (e.g., EURUSD, GBPJPY, XAUUSD)"];

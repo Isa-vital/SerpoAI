@@ -5,10 +5,14 @@ namespace App\Services;
 class EducationService
 {
     /**
-     * Get learning topics
+     * Get learning topics (menu) or content for a specific topic number
      */
-    public function getLearnTopics(): string
+    public function getLearnTopics(?int $topic = null): string
     {
+        if ($topic !== null) {
+            return $this->getTopicContent($topic);
+        }
+
         $message = "📚 *LEARNING CENTER*\n\n";
 
         $message .= "Choose a topic to learn:\n\n";
@@ -41,6 +45,110 @@ class EducationService
         $message .= "Example: `/learn 1`";
 
         return $message;
+    }
+
+    /**
+     * Get full content for a specific topic number (1-5)
+     */
+    private function getTopicContent(int $topic): string
+    {
+        $topics = [
+            1 => "📊 *TRADING BASICS*\n━━━━━━━━━━━━━━━━━━━━\n\n" .
+                "*Market vs Limit Orders*\n" .
+                "• *Market Order:* Buy/sell immediately at current market price. Fast but slippage risk.\n" .
+                "• *Limit Order:* Buy/sell only at your target price. Better control, may not fill.\n\n" .
+                "*Reading Candlesticks*\n" .
+                "🟢 Green candle = close > open (bullish)\n" .
+                "🔴 Red candle = close < open (bearish)\n" .
+                "• Body = open→close range\n" .
+                "• Wicks = high/low extremes\n\n" .
+                "*Support & Resistance*\n" .
+                "• *Support:* Price floor where buyers step in\n" .
+                "• *Resistance:* Price ceiling where sellers dominate\n" .
+                "• Breakouts above resistance often become new support\n\n" .
+                "💡 Try: `/sr BTCUSDT` to see live levels",
+
+            2 => "📈 *TECHNICAL INDICATORS*\n━━━━━━━━━━━━━━━━━━━━\n\n" .
+                "*RSI (Relative Strength Index)*\n" .
+                "• Range 0-100\n" .
+                "• >70 = overbought (potential reversal down)\n" .
+                "• <30 = oversold (potential reversal up)\n\n" .
+                "*MACD*\n" .
+                "• Trend-following momentum indicator\n" .
+                "• Bullish crossover = MACD crosses above signal\n" .
+                "• Bearish crossover = MACD crosses below\n\n" .
+                "*Moving Averages (MA)*\n" .
+                "• SMA = simple average of N periods\n" .
+                "• EMA = weights recent prices more\n" .
+                "• Golden cross (50 over 200) = bullish\n" .
+                "• Death cross (50 under 200) = bearish\n\n" .
+                "*Bollinger Bands & ATR*\n" .
+                "• Bands measure volatility around a moving average\n" .
+                "• ATR (Average True Range) = volatility size\n\n" .
+                "💡 Try: `/rsi BTCUSDT`, `/analyze ETHUSDT`",
+
+            3 => "⚡ *FUTURES TRADING*\n━━━━━━━━━━━━━━━━━━━━\n\n" .
+                "*Leverage & Margin*\n" .
+                "• Leverage multiplies your buying power (e.g., 10x = $1000 controls $10,000)\n" .
+                "• Margin = capital you put down\n" .
+                "• Higher leverage = higher liquidation risk\n\n" .
+                "*Funding Rates*\n" .
+                "• Periodic payment between longs and shorts\n" .
+                "• Positive funding: longs pay shorts (bullish sentiment)\n" .
+                "• Negative funding: shorts pay longs (bearish sentiment)\n" .
+                "• Extreme funding often precedes reversals\n\n" .
+                "*Long vs Short*\n" .
+                "• *Long:* profit when price rises\n" .
+                "• *Short:* profit when price falls\n\n" .
+                "*Open Interest (OI)*\n" .
+                "• Total open contracts in the market\n" .
+                "• Rising OI + rising price = strong trend\n" .
+                "• Falling OI = positions closing\n\n" .
+                "💡 Try: `/oi BTCUSDT`, `/rates`, `/liquidation`",
+
+            4 => "🛡️ *RISK MANAGEMENT*\n━━━━━━━━━━━━━━━━━━━━\n\n" .
+                "*The 1-2% Rule*\n" .
+                "Never risk more than 1-2% of your portfolio on a single trade.\n\n" .
+                "*Position Sizing Formula*\n" .
+                "Position Size = (Account × Risk%) / (Entry - Stop Loss)\n\n" .
+                "Example: \$10,000 × 1% = \$100 risk\n" .
+                "If stop is 5% away → position size = \$2,000\n\n" .
+                "*Stop-Loss Strategies*\n" .
+                "• Fixed % stop (e.g., -3%)\n" .
+                "• ATR-based stop (volatility-adjusted)\n" .
+                "• Support/resistance stop (below key level)\n" .
+                "• Trailing stop (locks in profits)\n\n" .
+                "*Portfolio Diversification*\n" .
+                "• Don't go all-in on one asset\n" .
+                "• Mix volatility profiles (BTC + alts + stables)\n" .
+                "• Consider correlations — alts often move with BTC\n\n" .
+                "💡 *Golden rule:* Capital preservation > profit maximization",
+
+            5 => "🔗 *ON-CHAIN ANALYSIS*\n━━━━━━━━━━━━━━━━━━━━\n\n" .
+                "*Whale Tracking*\n" .
+                "• Large holders moving funds can signal market direction\n" .
+                "• Exchange inflows from whales = potential sell pressure\n" .
+                "• Exchange outflows = accumulation / holding\n\n" .
+                "*Key Token Metrics*\n" .
+                "• *Market Cap* = circulating supply × price\n" .
+                "• *FDV* (Fully Diluted Valuation) = total supply × price\n" .
+                "• *Volume/MCap ratio* — high = active trading\n" .
+                "• *Holders* — distribution matters more than count\n\n" .
+                "*Exchange Flows*\n" .
+                "• Net inflow to exchanges → bearish (people selling)\n" .
+                "• Net outflow from exchanges → bullish (people HODLing)\n\n" .
+                "*Smart Money Indicators*\n" .
+                "• Top wallet accumulation\n" .
+                "• Stablecoin supply growth (dry powder)\n" .
+                "• Miner reserves (BTC) — falling = sell pressure\n\n" .
+                "💡 Try: `/whale`, `/trends`, `/heatmap`",
+        ];
+
+        if (!isset($topics[$topic])) {
+            return "❌ Invalid topic number. Use `/learn` to see the menu (topics 1-5).";
+        }
+
+        return $topics[$topic] . "\n\n━━━━━━━━━━━━━━━━━━━━\nType `/learn` for the menu.";
     }
 
     /**

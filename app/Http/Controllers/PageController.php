@@ -62,48 +62,9 @@ class PageController extends Controller
 
     public function prices(MultiMarketDataService $multiMarket, HeatmapService $heatmap)
     {
-        $cryptoData = [];
-        $stockData = [];
-        $forexData = [];
-        $serpoData = null;
-
-        try {
-            $cryptoData = $multiMarket->getCryptoData();
-        } catch (\Throwable $e) {
-            \Log::warning('Prices: Crypto fetch failed', ['error' => $e->getMessage()]);
-            // Fallback to heatmap
-            try {
-                $heatmapData = $heatmap->generateHeatmap('all');
-                $cryptoData = ['spot_markets' => $heatmapData['coins'] ?? [], 'total_pairs' => $heatmapData['total_coins'] ?? 0];
-            } catch (\Throwable $e2) {
-                \Log::warning('Prices: Heatmap fallback also failed', ['error' => $e2->getMessage()]);
-            }
-        }
-
-        try {
-            $stockData = $multiMarket->getStockData();
-        } catch (\Throwable $e) {
-            \Log::warning('Prices: Stock fetch failed', ['error' => $e->getMessage()]);
-        }
-
-        try {
-            $forexData = $multiMarket->getForexData();
-        } catch (\Throwable $e) {
-            \Log::warning('Prices: Forex fetch failed', ['error' => $e->getMessage()]);
-        }
-
-        try {
-            $serpoData = app(MarketDataService::class)->getTokenPriceFromDex();
-        } catch (\Throwable $e) {
-            \Log::warning('Prices: SERPO fetch failed', ['error' => $e->getMessage()]);
-        }
-
-        return Inertia::render('Prices', [
-            'crypto' => $cryptoData,
-            'stocks' => $stockData,
-            'forex' => $forexData,
-            'serpo' => $serpoData,
-        ]);
+        // Markets page fetches data client-side via /api/markets/screener.
+        // Keep Inertia payload tiny.
+        return Inertia::render('Prices');
     }
 
     public function portfolio()
@@ -203,20 +164,8 @@ class PageController extends Controller
 
     public function whales(Request $request, WhaleAlertService $whales)
     {
-        $symbol = $request->get('symbol', 'BTC');
-        $data = [];
-
-        try {
-            $data = $whales->getWhaleAlerts($symbol);
-        } catch (\Throwable $e) {
-            \Log::warning('Whales: fetch failed', ['error' => $e->getMessage()]);
-            $data = ['error' => 'Unable to fetch whale data: ' . $e->getMessage()];
-        }
-
-        return Inertia::render('Whales', [
-            'whaleData' => $data,
-            'symbol' => $symbol,
-        ]);
+        // Whales page polls /api/markets/whales — no preload needed.
+        return Inertia::render('Whales');
     }
 
     public function verify(Request $request)
@@ -304,6 +253,23 @@ class PageController extends Controller
         return Inertia::render('Grid', [
             'status' => 'coming_soon',
         ]);
+    }
+
+    public function screener(Request $request)
+    {
+        return Inertia::render('Screener', [
+            'initialMarket' => $request->string('market', 'crypto')->value(),
+        ]);
+    }
+
+    public function derivatives()
+    {
+        return Inertia::render('Derivatives');
+    }
+
+    public function news()
+    {
+        return Inertia::render('News');
     }
 
     public function settings()

@@ -357,17 +357,23 @@ class RealSentimentService
      */
     public function formatSentimentAnalysis(array $sentiment): string
     {
-        $emoji = $this->getSentimentEmoji($sentiment['overall_score']);
+        $score = $sentiment['overall_score'] ?? 0;
+        $emoji = $this->getSentimentEmoji($score);
+        $overallSentiment = $sentiment['overall_sentiment'] ?? 'Neutral';
+        $totalMentions = $sentiment['total_mentions'] ?? 0;
+        $positiveRatio = $sentiment['positive_ratio'] ?? 0;
+        $negativeRatio = $sentiment['negative_ratio'] ?? 0;
+        $neutralRatio = max(0, 100 - $positiveRatio - $negativeRatio);
 
         $message = "🎭 *REAL-TIME SENTIMENT ANALYSIS*\n\n";
-        $message .= "{$emoji} *Overall Sentiment:* {$sentiment['overall_sentiment']}\n";
-        $message .= "📊 *Sentiment Score:* {$sentiment['overall_score']}/100\n";
-        $message .= "💬 *Total Mentions:* " . number_format($sentiment['total_mentions']) . "\n\n";
+        $message .= "{$emoji} *Overall Sentiment:* {$overallSentiment}\n";
+        $message .= "📊 *Sentiment Score:* {$score}/100\n";
+        $message .= "💬 *Total Mentions:* " . number_format($totalMentions) . "\n\n";
 
         $message .= "📈 *Sentiment Breakdown:*\n";
-        $message .= "🟢 Positive: {$sentiment['positive_ratio']}%\n";
-        $message .= "🔴 Negative: {$sentiment['negative_ratio']}%\n";
-        $message .= "⚪ Neutral: " . (100 - $sentiment['positive_ratio'] - $sentiment['negative_ratio']) . "%\n\n";
+        $message .= "🟢 Positive: {$positiveRatio}%\n";
+        $message .= "🔴 Negative: {$negativeRatio}%\n";
+        $message .= "⚪ Neutral: {$neutralRatio}%\n\n";
 
         if (!empty($sentiment['sources'])) {
             $message .= "🔍 *By Source:*\n";

@@ -2222,7 +2222,11 @@ class CommandHandler
     private function handleLearn(int $chatId, array $params)
     {
         try {
-            $message = $this->education->getLearnTopics();
+            $topic = null;
+            if (!empty($params) && is_numeric($params[0])) {
+                $topic = (int) $params[0];
+            }
+            $message = $this->education->getLearnTopics($topic);
             $keyboard = [
                 'inline_keyboard' => $this->getContextualKeyboard('learn')
             ];
@@ -2390,16 +2394,40 @@ class CommandHandler
 
             // Fallback: use multiMarket for any asset type (stocks, forex, commodities, or crypto fallback)
             if (!$marketData) {
-                $priceData = $this->multiMarket->getCurrentPrice($symbol);
-                if (is_array($priceData) && isset($priceData['price'])) {
-                    $marketData = [
-                        'symbol' => $symbol,
-                        'price' => (float) $priceData['price'],
-                        'price_change_24h' => (float) ($priceData['change_percent'] ?? 0),
-                        'volume_24h' => (float) ($priceData['volume'] ?? 0),
-                        'high_24h' => (float) ($priceData['high'] ?? $priceData['price']),
-                        'low_24h' => (float) ($priceData['low'] ?? $priceData['price']),
-                    ];
+                try {
+                    // Use full analyze methods to get rich price+change data
+                    $analysis = match ($marketType) {
+                        'stock' => $this->multiMarket->analyzeStockPair($symbol),
+                        'forex' => $this->multiMarket->analyzeForexPair($symbol),
+                        default => $this->multiMarket->analyzeCryptoPair($symbol),
+                    };
+                    if (is_array($analysis) && !isset($analysis['error']) && isset($analysis['price'])) {
+                        $marketData = [
+                            'symbol' => $symbol,
+                            'price' => (float) $analysis['price'],
+                            'price_change_24h' => (float) ($analysis['change_percent'] ?? 0),
+                            'volume_24h' => (float) ($analysis['volume'] ?? 0),
+                            'high_24h' => (float) ($analysis['high'] ?? $analysis['price']),
+                            'low_24h' => (float) ($analysis['low'] ?? $analysis['price']),
+                        ];
+                    }
+                } catch (\Exception $e) {
+                    Log::warning('Predict analyze fallback failed', ['symbol' => $symbol, 'error' => $e->getMessage()]);
+                }
+
+                // Last-resort: scalar price only
+                if (!$marketData) {
+                    $price = $this->multiMarket->getCurrentPrice($symbol);
+                    if (is_numeric($price) && $price > 0) {
+                        $marketData = [
+                            'symbol' => $symbol,
+                            'price' => (float) $price,
+                            'price_change_24h' => 0.0,
+                            'volume_24h' => 0.0,
+                            'high_24h' => (float) $price,
+                            'low_24h' => (float) $price,
+                        ];
+                    }
                 }
             }
 
@@ -2469,11 +2497,18 @@ class CommandHandler
 
         try {
             $profile = \App\Models\UserProfile::getOrCreateForUser($user->id);
-            $context = [];
+            $context = [
+                'symbol' => 'BTC',
+                'price' => 0,
+                'price_change_24h' => 0,
+                'volume_24h' => 0,
+            ];
             try {
-                $btcPrice = $this->multiMarket->getCurrentPrice('BTCUSDT');
-                if ($btcPrice) {
-                    $context['price'] = $btcPrice;
+                $btcAnalysis = $this->multiMarket->analyzeCryptoPair('BTCUSDT');
+                if (is_array($btcAnalysis) && !isset($btcAnalysis['error'])) {
+                    $context['price'] = (float) ($btcAnalysis['price'] ?? 0);
+                    $context['price_change_24h'] = (float) ($btcAnalysis['change_percent'] ?? 0);
+                    $context['volume_24h'] = (float) ($btcAnalysis['volume'] ?? 0);
                 }
             } catch (\Exception $e) {
             }
@@ -2928,11 +2963,12 @@ class CommandHandler
         $marketType = $this->multiMarket->detectMarketType($symbol);
 
         if (!$timeframe) {
-            // Default timeframes by market
+            // Sensible per-market defaults: crypto trades 24/7 with finer intraday signals,
+            // forex/stocks have session structure and benefit from larger TFs by default
             $timeframe = match ($marketType) {
-                'crypto' => '1h',
+                'crypto' => '30m',
                 'forex' => '1h',
-                'stock' => '1h',
+                'stock' => '4h',
                 default => '1h'
             };
         }
@@ -3801,9 +3837,18 @@ class CommandHandler
 
         if (isset($marketData['indicators'])) {
             $indicators = $marketData['indicators'];
-            $prompt .= "- RSI: " . ($indicators['rsi'] ?? 'N/A') . "\n";
-            $prompt .= "- Trend: " . ($indicators['trend'] ?? 'N/A') . "\n";
-            $prompt .= "- Volume: " . ($marketData['volume'] ?? 'N/A') . "\n";
+            $rsiRaw = $indicators['rsi'] ?? null;
+            if (is_array($rsiRaw)) {
+                // Multi-timeframe crypto RSI: prefer 4h then 1h
+                $rsiVal = $rsiRaw['4h'] ?? $rsiRaw['1h'] ?? reset($rsiRaw);
+            } else {
+                $rsiVal = $rsiRaw;
+            }
+            $prompt .= "- RSI: " . (is_numeric($rsiVal) ? round((float)$rsiVal, 2) : 'N/A') . "\n";
+            $trend = $indicators['trend'] ?? 'N/A';
+            $prompt .= "- Trend: " . (is_scalar($trend) ? $trend : 'N/A') . "\n";
+            $vol = $marketData['volume'] ?? null;
+            $prompt .= "- Volume: " . (is_numeric($vol) ? number_format((float)$vol, 2) : 'N/A') . "\n";
         }
 
         $prompt .= "\nProvide a concise trading recommendation including:\n";
@@ -4028,15 +4073,13 @@ class CommandHandler
     private function formatPriceAdaptive(float $price, string $marketType): string
     {
         if ($marketType === 'forex') {
-            // Metals: use $ prefix and 2 decimals
-            if ($price >= 100) {
-                return '$' . number_format($price, 2); // Gold: $4,979.80
-            } elseif ($price >= 10) {
-                return '$' . number_format($price, 2); // Silver: $76.90
+            // Metals (XAU, XAG, XPT): always 2 decimals with $ prefix
+            if ($price >= 10) {
+                return '$' . number_format($price, 2); // Gold: $4,562.30, Silver: $76.90
             }
-            // Currency pairs: 4 decimals for most, 2 for JPY pairs
+            // JPY pairs typically >= 50 covered above; small currency rates 4-5dp
             if ($price < 1) {
-                return number_format($price, 5); // Minor pairs
+                return number_format($price, 5); // Minor pairs / cross rates
             }
             return number_format($price, 4); // EURUSD: 1.1820
         }
@@ -4045,19 +4088,19 @@ class CommandHandler
             return '$' . number_format($price, 2);
         }
 
-        // Adaptive crypto formatting
+        // Adaptive crypto formatting — preserve precision proportional to magnitude
         if ($price >= 1000) {
-            return '$' . number_format($price, 0); // BTC: $95,234
+            return '$' . number_format($price, 2); // BTC: $95,234.78
         } elseif ($price >= 10) {
             return '$' . number_format($price, 2); // ETH: $3,456.78
         } elseif ($price >= 1) {
-            return '$' . number_format($price, 3); // BNB: $612.345
+            return '$' . number_format($price, 4); // BNB: $612.3456
         } elseif ($price >= 0.01) {
-            return '$' . number_format($price, 4); // DOGE: $0.0823
+            return '$' . number_format($price, 5); // DOGE: $0.08234
         } elseif ($price >= 0.0001) {
-            return '$' . number_format($price, 6); // SHIB: $0.000032
+            return '$' . number_format($price, 6); // SHIB-tier: $0.000032
         } else {
-            return '$' . number_format($price, 8); // Small caps: $0.00000145
+            return '$' . number_format($price, 8); // Micro-caps: $0.00000145
         }
     }
 
@@ -7346,6 +7389,48 @@ class CommandHandler
      */
     private function getForexCandles(string $symbol, string $timeframe, int $limit): ?array
     {
+        // Tier 1: Twelve Data (supports forex + commodities like XAUUSD)
+        try {
+            $twelve = app(\App\Services\TwelveDataService::class);
+            if ($twelve->isConfigured()) {
+                $intervalMap = [
+                    '1M' => '1min',
+                    '5M' => '5min',
+                    '15M' => '15min',
+                    '30M' => '30min',
+                    '1H' => '1h',
+                    '2H' => '2h',
+                    '4H' => '4h',
+                    '1D' => '1day',
+                    '1W' => '1week',
+                    '1MO' => '1month',
+                ];
+                $tfKey = strtoupper($timeframe);
+                $tdInterval = $intervalMap[$tfKey] ?? '1day';
+                $series = $twelve->getTimeSeries($symbol, 'forex', $tdInterval, max($limit, 100));
+                if (is_array($series) && count($series) >= 20) {
+                    // Twelve Data returns newest-first; reverse to oldest-first and map to OHLCV array
+                    $series = array_reverse($series);
+                    return array_map(function ($c) {
+                        return [
+                            (int) (strtotime($c['datetime'] ?? 'now') * 1000), // open time ms
+                            (string) $c['open'],
+                            (string) $c['high'],
+                            (string) $c['low'],
+                            (string) $c['close'],
+                            (string) ($c['volume'] ?? 0),
+                        ];
+                    }, $series);
+                }
+            }
+        } catch (\Exception $e) {
+            Log::warning('Twelve Data forex candles failed, trying Alpha Vantage', [
+                'symbol' => $symbol,
+                'error' => $e->getMessage()
+            ]);
+        }
+
+        // Tier 2: Alpha Vantage (only true currency pairs; not XAU/XAG)
         try {
             $apiKey = config('services.alpha_vantage.key');
             if (!$apiKey) {

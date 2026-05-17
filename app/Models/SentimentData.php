@@ -54,6 +54,8 @@ class SentimentData extends Model
                 'overall_score' => 0,
                 'overall_sentiment' => 'Neutral',
                 'total_mentions' => 0,
+                'positive_ratio' => 0,
+                'negative_ratio' => 0,
                 'sources' => [],
             ];
         }
