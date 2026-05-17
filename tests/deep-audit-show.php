@@ -10,7 +10,7 @@ $show = function ($c) {
 };
 $mode = $argv[1] ?? 'fail';
 foreach ($r as $c) {
-    if ($mode === 'fail' && in_array($c['verdict'], ['ERROR_MSG','EXCEPTION','NO_DATA','INVALID'], true)) $show($c);
+    if ($mode === 'fail' && in_array($c['verdict'], ['ERROR_MSG', 'EXCEPTION', 'NO_DATA', 'INVALID'], true)) $show($c);
     elseif ($mode === 'dup' && in_array('duplicate_paragraphs', $c['flags'], true)) $show($c);
     elseif ($mode === 'phpwarn' && in_array('php_warning', $c['flags'], true)) $show($c);
     elseif ($mode === 'cat' && $c['category'] === ($argv[2] ?? '')) $show($c);

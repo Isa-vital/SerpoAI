@@ -360,14 +360,28 @@ class RealSentimentService
         $score = $sentiment['overall_score'] ?? 0;
         $emoji = $this->getSentimentEmoji($score);
         $overallSentiment = $sentiment['overall_sentiment'] ?? 'Neutral';
-        $totalMentions = $sentiment['total_mentions'] ?? 0;
+        $totalMentions = (int) ($sentiment['total_mentions'] ?? 0);
         $positiveRatio = $sentiment['positive_ratio'] ?? 0;
         $negativeRatio = $sentiment['negative_ratio'] ?? 0;
         $neutralRatio = max(0, 100 - $positiveRatio - $negativeRatio);
 
+        // Honest no-data branch — never claim "Neutral 100%" when nothing was collected.
+        if ($totalMentions === 0) {
+            $sym = $sentiment['symbol'] ?? 'this asset';
+            $msg  = "🎭 *REAL-TIME SENTIMENT ANALYSIS*\n\n";
+            $msg .= "⚠️ *No social signal collected* for *{$sym}* in the last 24h.\n\n";
+            $msg .= "Possible reasons:\n";
+            $msg .= "• Asset has low social discussion volume\n";
+            $msg .= "• Social API rate-limits in effect\n";
+            $msg .= "• Symbol not tracked by upstream collectors\n\n";
+            $msg .= "💡 Try `/sentiment {$sym}` for general fear/greed metrics, or `/news` for recent headlines.\n\n";
+            $msg .= "_Source: Twitter/Telegram/Reddit collectors · Updated: " . gmdate('H:i') . " UTC · No data available_";
+            return $msg;
+        }
+
         $message = "🎭 *REAL-TIME SENTIMENT ANALYSIS*\n\n";
         $message .= "{$emoji} *Overall Sentiment:* {$overallSentiment}\n";
-        $message .= "📊 *Sentiment Score:* {$score}/100\n";
+        $message .= "📊 *Sentiment Score:* {$score}/100 _(scale: -100 bearish → +100 bullish)_\n";
         $message .= "💬 *Total Mentions:* " . number_format($totalMentions) . "\n\n";
 
         $message .= "📈 *Sentiment Breakdown:*\n";
@@ -383,7 +397,7 @@ class RealSentimentService
             }
         }
 
-        $message .= "\n_Updated in real-time from Twitter, Telegram, and Reddit_";
+        $message .= "\n_Source: Twitter/Telegram/Reddit · Updated: " . gmdate('H:i') . " UTC · Sample: {$totalMentions} mentions_";
 
         return $message;
     }

@@ -24,6 +24,38 @@ class TokenVerificationService
      */
     public function verifyToken(string $input): array
     {
+        $input = trim($input);
+
+        // H4: Strict format gate — reject obviously malformed inputs BEFORE any network calls.
+        $isEvm    = (bool) preg_match('/^0x[a-fA-F0-9]{40}$/', $input);
+        $isTon    = (bool) preg_match('/^(EQ|UQ)[A-Za-z0-9_-]{46}$/', $input);
+        $isSolana = (bool) preg_match('/^[1-9A-HJ-NP-Za-km-z]{32,44}$/', $input);
+        if (!$isEvm && !$isTon && !$isSolana) {
+            return [
+                'error' => "Invalid address format. Expected: EVM (0x… 42 chars), TON (EQ/UQ… 48 chars), or Solana base58 (32–44 chars).",
+                'asset_type' => 'invalid_format',
+                'input' => $input,
+            ];
+        }
+
+        // H3: Burn / null / sentinel addresses — never run a contract verification on these.
+        if ($isEvm) {
+            $lc = strtolower($input);
+            $burnAddrs = [
+                '0x0000000000000000000000000000000000000000',
+                '0x000000000000000000000000000000000000dead',
+                '0x0000000000000000000000000000000000000001',
+            ];
+            if (in_array($lc, $burnAddrs, true) || preg_match('/^0x0{30,}dead$/i', $input) || preg_match('/^0x0{39}1$/', $input)) {
+                return [
+                    'error' => "This is a recognised *burn / null address* — not a token contract. Tokens sent here are permanently destroyed.",
+                    'asset_type' => 'burn_address',
+                    'address' => $input,
+                    'is_burn_address' => true,
+                ];
+            }
+        }
+
         // Detect blockchain and normalize address
         $chain = $this->detectChain($input);
         $address = $this->normalizeAddress($input, $chain);
@@ -1768,11 +1800,20 @@ class TokenVerificationService
             // SOLANA SPL TOKEN CHECKS
             // Check mint authority
             $mintAuth = $data['mint_authority'] ?? null;
+            $isStablecoin = ($data['market_data']['token_type']['is_stablecoin'] ?? false)
+                || in_array(strtoupper($data['symbol'] ?? ''), ['USDC', 'USDT', 'DAI', 'BUSD', 'TUSD', 'USDP', 'FRAX', 'PYUSD'], true);
             if ($mintAuth && !empty($mintAuth)) {
-                $points = 10;
-                $score += $points;
-                $breakdown[] = ['factor' => 'Mint Authority Present', 'points' => $points, 'impact' => 'negative'];
-                $factors[] = 'Supply can be increased';
+                if ($isStablecoin) {
+                    // Legitimate issuer mint authority on stablecoins (e.g. Circle USDC).
+                    // Note but do not heavily penalise — stablecoin asset type already accounted for.
+                    $breakdown[] = ['factor' => 'Mint Authority Active (Issuer-controlled stablecoin)', 'points' => 0, 'impact' => 'neutral'];
+                } else {
+                    // Non-stablecoin with active mint authority: SEVERE — issuer can inflate supply at will.
+                    $points = 50;
+                    $score += $points;
+                    $breakdown[] = ['factor' => 'Active Mint Authority (Unlimited Inflation Risk)', 'points' => $points, 'impact' => 'negative'];
+                    $factors[] = 'Issuer can mint unlimited new tokens';
+                }
             } else {
                 $breakdown[] = ['factor' => 'Mint Authority Revoked', 'points' => 0, 'impact' => 'positive'];
             }

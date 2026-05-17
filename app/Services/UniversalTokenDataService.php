@@ -170,6 +170,32 @@ class UniversalTokenDataService
                 $basePairs = $pairs; // Fallback to all pairs
             }
 
+            // CANONICAL ADDRESS WHITELIST — major bridged tokens have copies on many chains,
+            // but the *original / canonical* deployment lives on a specific chain. If we
+            // recognize the address, restrict pairs to that canonical chain so we don't
+            // mistakenly report a low-liquidity bridged clone (e.g. USDT on PulseChain).
+            static $canonicalChain = [
+                // Ethereum mainnet stablecoins / blue-chip ERC-20s
+                '0xdac17f958d2ee523a2206206994597c13d831ec7' => 'ethereum', // USDT
+                '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48' => 'ethereum', // USDC
+                '0x6b175474e89094c44da98b954eedeac495271d0f' => 'ethereum', // DAI
+                '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2' => 'ethereum', // WETH
+                '0x2260fac5e5542a773aa44fbcfedf7c193bc2c599' => 'ethereum', // WBTC
+                '0x514910771af9ca656af840dff83e8264ecf986ca' => 'ethereum', // LINK
+                '0x1f9840a85d5af5bf1d1762f925bdaddc4201f984' => 'ethereum', // UNI
+                // BSC
+                '0x55d398326f99059ff775485246999027b3197955' => 'bsc',      // USDT (BSC)
+                '0xe9e7cea3dedca5984780bafc599bd69add087d56' => 'bsc',      // BUSD
+            ];
+            $lcAddr = strtolower($address);
+            if (isset($canonicalChain[$lcAddr])) {
+                $forced = $canonicalChain[$lcAddr];
+                $filtered = array_values(array_filter($basePairs, fn($p) => strtolower($p['chainId'] ?? '') === $forced));
+                if (!empty($filtered)) {
+                    $basePairs = $filtered;
+                }
+            }
+
             // Sort by liquidity to get most reliable price
             usort($basePairs, fn($a, $b) => ($b['liquidity']['usd'] ?? 0) <=> ($a['liquidity']['usd'] ?? 0));
             $mainPair = $basePairs[0];

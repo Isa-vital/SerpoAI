@@ -51,6 +51,7 @@ class SentimentData extends Model
 
         if ($data->isEmpty()) {
             return [
+                'symbol' => $symbol,
                 'overall_score' => 0,
                 'overall_sentiment' => 'Neutral',
                 'total_mentions' => 0,
@@ -64,6 +65,7 @@ class SentimentData extends Model
         $totalMentions = $data->sum('mention_count');
 
         return [
+            'symbol' => $symbol,
             'overall_score' => round($avgScore, 2),
             'overall_sentiment' => self::getSentimentLabel($avgScore),
             'total_mentions' => $totalMentions,

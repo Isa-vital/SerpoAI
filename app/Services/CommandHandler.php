@@ -2464,15 +2464,23 @@ class CommandHandler
                 default => '⚪',
             };
 
+            $marketType = $marketType ?? $this->multiMarket->detectMarketType($symbol);
+            $curStr = $this->formatPriceAdaptive($marketData['price'], $marketType);
+            $predStr = $this->formatPriceAdaptive($prediction['predicted_price'], $marketType);
+            $delta = $prediction['predicted_price'] - $marketData['price'];
+            $deltaPct = $marketData['price'] > 0 ? ($delta / $marketData['price']) * 100 : 0;
+            $deltaSign = $delta >= 0 ? '+' : '';
+
             $message = "🔮 *AI MARKET PREDICTION*\n\n";
             $message .= "🪙 *{$symbol}*\n";
             $message .= "⏰ Timeframe: {$prediction['timeframe']}\n\n";
-            $message .= "💰 Current Price: $" . number_format($marketData['price'], 8) . "\n";
-            $message .= "🎯 Predicted Price: $" . number_format($prediction['predicted_price'], 8) . "\n";
+            $message .= "💰 Current Price: {$curStr}\n";
+            $message .= "🎯 Predicted Price: {$predStr} ({$deltaSign}" . number_format($deltaPct, 2) . "%)\n";
             $message .= "{$trendEmoji} Trend: *" . ucfirst($prediction['trend']) . "*\n";
             $message .= "📊 Confidence: {$prediction['confidence']}%\n\n";
             $message .= "🤖 *AI Analysis:*\n_{$prediction['reasoning']}_\n\n";
-            $message .= "_⚠️ Not financial advice. AI predictions for informational purposes only._";
+            $message .= $this->renderFooter('AI prediction', ['source' => 'Binance/Yahoo + OpenAI', 'cache' => null]);
+            $message .= "\n_⚠️ Not financial advice. AI predictions for informational purposes only._";
 
             $keyboard = [
                 'inline_keyboard' => $this->getContextualKeyboard('prediction')
@@ -3849,6 +3857,28 @@ class CommandHandler
             $prompt .= "- Trend: " . (is_scalar($trend) ? $trend : 'N/A') . "\n";
             $vol = $marketData['volume'] ?? null;
             $prompt .= "- Volume: " . (is_numeric($vol) ? number_format((float)$vol, 2) : 'N/A') . "\n";
+
+            // C4 — Pre-resolve indicator/AI conflicts. If RSI is extreme but trend signal
+            // contradicts, surface it explicitly so the model does not double-down on a
+            // counter-trend call (e.g. RSI 17 oversold + AI 'SHORT' was the bug).
+            $trendStr = is_scalar($trend) ? strtolower((string)$trend) : '';
+            $rsiNum = is_numeric($rsiVal) ? (float)$rsiVal : null;
+            $conflicts = [];
+            if ($rsiNum !== null) {
+                if ($rsiNum < 25 && str_contains($trendStr, 'bear')) {
+                    $conflicts[] = "RSI={$rsiNum} (deeply oversold) contradicts a fresh SHORT — historically a high-risk entry. Prefer WAIT-AND-CONFIRM (look for bullish divergence / reclaim of prior low) over chasing further downside.";
+                }
+                if ($rsiNum > 75 && str_contains($trendStr, 'bull')) {
+                    $conflicts[] = "RSI={$rsiNum} (deeply overbought) contradicts a fresh LONG — historically a high-risk entry. Prefer WAIT-AND-CONFIRM (look for bearish divergence / failed breakout) over chasing further upside.";
+                }
+            }
+            if (!empty($conflicts)) {
+                $prompt .= "\n⚠️ INDICATOR CONFLICTS (factor these into the recommendation, do NOT ignore):\n";
+                foreach ($conflicts as $c) {
+                    $prompt .= "- {$c}\n";
+                }
+                $prompt .= "If conflicts exist and you cannot resolve them confidently, recommend NEUTRAL / wait-for-confirmation rather than a directional trade.\n";
+            }
         }
 
         $prompt .= "\nProvide a concise trading recommendation including:\n";
@@ -4102,6 +4132,23 @@ class CommandHandler
         } else {
             return '$' . number_format($price, 8); // Micro-caps: $0.00000145
         }
+    }
+
+    /**
+     * Standard transparency footer appended to outputs lacking source/timestamp.
+     *
+     * @param string $context   Free-form label for what the footer describes
+     * @param array  $opts      ['source'=>string|null, 'cache'=>int|null seconds, 'confidence'=>int|null 0-100, 'ts'=>?int unix]
+     */
+    private function renderFooter(string $context, array $opts = []): string
+    {
+        $parts = [];
+        if (!empty($opts['source'])) $parts[] = "Source: {$opts['source']}";
+        $ts = $opts['ts'] ?? time();
+        $parts[] = 'Updated: ' . gmdate('H:i', $ts) . ' UTC';
+        if (array_key_exists('cache', $opts) && is_int($opts['cache'])) $parts[] = "Cache: {$opts['cache']}s";
+        if (!empty($opts['confidence'])) $parts[] = "Confidence: {$opts['confidence']}%";
+        return "\n_" . implode(' · ', $parts) . "_";
     }
 
     private function formatTrendLeaders(array $trends): string
@@ -5951,7 +5998,39 @@ class CommandHandler
             return;
         }
 
-        $token = implode(' ', $params);
+        $token = trim(implode(' ', $params));
+
+        // H3/H4: Pre-flight address validation BEFORE any stage messages or network calls.
+        $isEvm    = (bool) preg_match('/^0x[a-fA-F0-9]{40}$/', $token);
+        $isTon    = (bool) preg_match('/^(EQ|UQ)[A-Za-z0-9_\-]{46}$/', $token);
+        $isSolana = (bool) preg_match('/^[1-9A-HJ-NP-Za-km-z]{32,44}$/', $token);
+        if (!$isEvm && !$isTon && !$isSolana) {
+            $this->telegram->sendMessage(
+                $chatId,
+                "❌ *Invalid address format*\n\nExpected:\n• EVM `0x…` (42 chars)\n• TON `EQ…` / `UQ…` (48 chars)\n• Solana base58 (32–44 chars)\n\n_Source: format validation · no upstream call made_"
+            );
+            return;
+        }
+        if ($isEvm) {
+            $lc = strtolower($token);
+            $burnAddrs = [
+                '0x0000000000000000000000000000000000000000',
+                '0x000000000000000000000000000000000000dead',
+                '0x0000000000000000000000000000000000000001',
+            ];
+            if (
+                in_array($lc, $burnAddrs, true)
+                || preg_match('/^0x0{30,}dead$/i', $token)
+                || preg_match('/^0xdead0*[a-f0-9]*$/i', $token)
+                || preg_match('/^0x0{39}1$/', $token)
+            ) {
+                $this->telegram->sendMessage(
+                    $chatId,
+                    "🔥 *Burn / null address detected*\n\n`{$token}`\n\nThis is a recognised *burn address* — not a token contract. Tokens sent here are permanently destroyed and cannot be recovered.\n\n_Source: on-chain convention · no contract verification performed_"
+                );
+                return;
+            }
+        }
 
         // Staged loading messages
         $loadingMsg = $this->telegram->sendMessage($chatId, "🔍 *Stage 1/3:* Detecting blockchain...");
@@ -6926,6 +7005,27 @@ class CommandHandler
             $data = $this->tokenUnlocks->getFormattedUnlocks($symbol, $period);
 
             if (!$data['has_real_data']) {
+                // H2: For fully-circulating / community-launched assets, explicitly say
+                // "no scheduled unlocks" instead of presenting a generic "no data" wall.
+                if (in_array($symbol, ['BTC', 'ETH', 'LTC', 'DOGE', 'XMR', 'SOL', 'BNB', 'BCH'], true)) {
+                    $notes = [
+                        'BTC' => 'Bitcoin has no team / VC vesting — supply is governed exclusively by the predictable 10-minute block reward (next halving ≈ Apr 2028).',
+                        'ETH' => 'Post-merge Ethereum issuance is driven by validator rewards (~0.6M ETH/yr) offset by EIP-1559 burn. No team / VC unlock schedule.',
+                        'LTC' => 'Litecoin is fully decentralised PoW — no team vesting. Issuance halves every ~4 years (next halving ≈ Jul 2027).',
+                        'DOGE' => 'Dogecoin has unlimited tail emission (~5B DOGE/yr) and no team vesting.',
+                        'XMR' => 'Monero uses smooth tail emission (0.6 XMR/block forever). No team / VC vesting.',
+                        'SOL' => 'Solana team & investor unlocks fully concluded in Jan 2023. Current issuance is validator rewards only, with disinflationary schedule toward ~1.5% terminal rate.',
+                        'BNB' => 'BNB has no future vesting — opposite: quarterly auto-burn shrinks supply. See /burn BNB.',
+                        'BCH' => 'Bitcoin Cash inherits Bitcoin issuance model — no team vesting.',
+                    ];
+                    $message = "🔓 *TOKEN UNLOCKS — {$symbol}*\n\n";
+                    $message .= "✅ *No scheduled vesting unlocks for {$symbol}.*\n\n";
+                    $message .= "_{$notes[$symbol]}_\n\n";
+                    $message .= "💡 For inflation-rate / emission analysis, use `/analyze {$symbol}` or `/tokenomics {$symbol}`.";
+                    $this->telegram->sendMessage($chatId, $message);
+                    return;
+                }
+
                 $message = "🔓 *TOKEN UNLOCKS - {$symbol}*\n\n";
                 $message .= "❌ No unlock data available for {$symbol}.\n\n";
                 $message .= "*Supported tokens with curated data:*\n";
@@ -7024,6 +7124,32 @@ class CommandHandler
             $message = "🔥 *TOKEN BURN TRACKER - {$symbol}*\n\n";
 
             if (!$data['has_real_data']) {
+                // H1: For well-known burn mechanisms, provide canonical reference data even when
+                // the upstream burn-stats API has no row — refusing to answer "/burn ETH" is incorrect.
+                if (in_array($symbol, ['ETH', 'BNB'], true)) {
+                    if ($symbol === 'ETH') {
+                        $message .= "🔥 *Ethereum — EIP-1559 base-fee burn (LIVE since Aug 5 2021)*\n\n";
+                        $message .= "Every Ethereum transaction permanently destroys a portion of the gas fee (the *base fee*), making ETH structurally deflationary when network demand is high.\n\n";
+                        $message .= "📊 *Mechanism:* base_fee × gas_used → burned each block\n";
+                        $message .= "📈 *Cumulative burn:* >4.7M ETH burned to date (≈$14B+)\n";
+                        $message .= "⚖️  *Net supply:* deflationary above ~15 gwei base fee, inflationary below\n\n";
+                        $message .= "🔗 Live tracker: https://ultrasound.money\n";
+                        $message .= "🔗 EIP-1559 spec: https://eips.ethereum.org/EIPS/eip-1559\n";
+                    } else { // BNB
+                        $message .= "🔥 *BNB — Auto-Burn + Real-Time Gas Burn (LIVE)*\n\n";
+                        $message .= "BNB has TWO active burn mechanisms:\n\n";
+                        $message .= "1️⃣ *Quarterly Auto-Burn* — formula-based burn each quarter, target: reduce supply to 100M (from 200M genesis).\n";
+                        $message .= "2️⃣ *BEP-95 Real-Time Burn* — 10% of every BSC gas fee burned per block (since Nov 2021).\n\n";
+                        $message .= "📉 *Current supply:* ~145M BNB (was 200M at genesis)\n";
+                        $message .= "🎯 *End-state target:* 100M BNB\n\n";
+                        $message .= "🔗 Auto-Burn details: https://www.bnbchain.org/en/bnb-auto-burn\n";
+                        $message .= "🔗 BEP-95 spec: https://github.com/bnb-chain/BEPs/blob/master/BEP95.md\n";
+                    }
+                    $message .= "\n_Source: Protocol whitepaper / on-chain · No upstream API call required for these canonical mechanisms_";
+                    $this->telegram->sendMessage($chatId, $message);
+                    return;
+                }
+
                 $message .= "❌ No burn data found for {$symbol}.\n\n";
                 $message .= "*Possible reasons:*\n";
                 $message .= "• Token may not have a burn mechanism\n";
@@ -7245,8 +7371,12 @@ class CommandHandler
                 // Use Alpha Vantage for forex
                 $candles = $this->getForexCandles($symbol, $timeframe, 100);
             } else {
-                // Use Alpha Vantage for stocks
+                // Use Alpha Vantage for stocks; fall back to Yahoo (via getForexCandles Tier 3) when AV is missing/rate-limited.
                 $candles = $this->getStockCandles($symbol, $timeframe, 100);
+                if (!$candles || count($candles) < 20) {
+                    Log::info('Stock AV insufficient — falling back to Yahoo via getForexCandles', ['symbol' => $symbol]);
+                    $candles = $this->getForexCandles($symbol, $timeframe, 100);
+                }
             }
 
             if (!$candles || count($candles) < 20) {
@@ -7430,113 +7560,211 @@ class CommandHandler
             ]);
         }
 
-        // Tier 2: Alpha Vantage (only true currency pairs; not XAU/XAG)
-        try {
-            $apiKey = config('services.alpha_vantage.key');
-            if (!$apiKey) {
-                Log::warning('Alpha Vantage API key not configured');
-                return null;
-            }
-
-            // Map timeframe to Alpha Vantage intervals
-            // Note: FX_INTRADAY is premium only, use daily/weekly/monthly for free tier
-            $intervalMap = [
-                '1M' => 'daily',
-                '5M' => 'daily',
-                '15M' => 'daily',
-                '30M' => 'daily',
-                '1H' => 'daily',
-                '4H' => 'daily',
-                '1D' => 'daily',
-                '1W' => 'weekly',
-                '1MO' => 'monthly'
-            ];
-
-            $interval = $intervalMap[$timeframe] ?? 'daily';
-            $function = $interval === 'weekly' ? 'FX_WEEKLY' : ($interval === 'monthly' ? 'FX_MONTHLY' : 'FX_DAILY');
-
-            $fromSymbol = substr($symbol, 0, 3);
-            $toSymbol = substr($symbol, 3, 3);
-
-            Log::info('Fetching forex data', [
-                'symbol' => $symbol,
-                'from' => $fromSymbol,
-                'to' => $toSymbol,
-                'function' => $function,
-                'interval' => $interval
-            ]);
-
-            $params = [
-                'function' => $function,
-                'from_symbol' => $fromSymbol,
-                'to_symbol' => $toSymbol,
-                'apikey' => $apiKey,
-                'outputsize' => 'full'
-            ];
-
-            $response = Http::timeout(5)->get('https://www.alphavantage.co/query', $params);
-
-            if (!$response->successful()) {
-                Log::error('Alpha Vantage forex API error', ['status' => $response->status()]);
-                return null;
-            }
-
-            $data = $response->json();
-
-            Log::info('Alpha Vantage response', [
-                'keys' => array_keys($data ?? []),
-                'has_error' => isset($data['Error Message']) || isset($data['Note'])
-            ]);
-
-            // Check for premium endpoint message (starts with "Thank you for using")
-            if (isset($data['Information']) && str_contains($data['Information'], 'premium')) {
-                Log::warning('Alpha Vantage premium endpoint', ['message' => $data['Information']]);
-                return null;
-            }
-
-            if (isset($data['Error Message'])) {
-                Log::error('Alpha Vantage error', ['error' => $data['Error Message']]);
-                return null;
-            }
-
-            if (isset($data['Note'])) {
-                Log::warning('Alpha Vantage rate limit', ['note' => $data['Note']]);
-                return null;
-            }
-
-            // Find the time series key
-            $timeSeriesKey = null;
-            foreach (array_keys($data) as $key) {
-                if (str_contains($key, 'Time Series')) {
-                    $timeSeriesKey = $key;
+        // Tier 2: Alpha Vantage (only true currency pairs; not XAU/XAG).
+        // Wrapped in do/while(false) so any failure path can `break` and fall through to Yahoo.
+        do {
+            try {
+                $apiKey = config('services.alpha_vantage.key');
+                if (!$apiKey) {
+                    Log::warning('Alpha Vantage API key not configured');
                     break;
                 }
+
+                // Map timeframe to Alpha Vantage intervals
+                // Note: FX_INTRADAY is premium only, use daily/weekly/monthly for free tier
+                $intervalMap = [
+                    '1M' => 'daily',
+                    '5M' => 'daily',
+                    '15M' => 'daily',
+                    '30M' => 'daily',
+                    '1H' => 'daily',
+                    '4H' => 'daily',
+                    '1D' => 'daily',
+                    '1W' => 'weekly',
+                    '1MO' => 'monthly'
+                ];
+
+                $interval = $intervalMap[$timeframe] ?? 'daily';
+                $function = $interval === 'weekly' ? 'FX_WEEKLY' : ($interval === 'monthly' ? 'FX_MONTHLY' : 'FX_DAILY');
+
+                $fromSymbol = substr($symbol, 0, 3);
+                $toSymbol = substr($symbol, 3, 3);
+
+                Log::info('Fetching forex data', [
+                    'symbol' => $symbol,
+                    'from' => $fromSymbol,
+                    'to' => $toSymbol,
+                    'function' => $function,
+                    'interval' => $interval
+                ]);
+
+                $params = [
+                    'function' => $function,
+                    'from_symbol' => $fromSymbol,
+                    'to_symbol' => $toSymbol,
+                    'apikey' => $apiKey,
+                    'outputsize' => 'full'
+                ];
+
+                $response = Http::timeout(5)->get('https://www.alphavantage.co/query', $params);
+
+                if (!$response->successful()) {
+                    Log::error('Alpha Vantage forex API error', ['status' => $response->status()]);
+                    break;
+                }
+
+                $data = $response->json();
+
+                Log::info('Alpha Vantage response', [
+                    'keys' => array_keys($data ?? []),
+                    'has_error' => isset($data['Error Message']) || isset($data['Note'])
+                ]);
+
+                // Check for premium endpoint message (starts with "Thank you for using")
+                if (isset($data['Information']) && str_contains($data['Information'], 'premium')) {
+                    Log::warning('Alpha Vantage premium endpoint', ['message' => $data['Information']]);
+                    break;
+                }
+
+                if (isset($data['Error Message'])) {
+                    Log::error('Alpha Vantage error', ['error' => $data['Error Message']]);
+                    break;
+                }
+
+                if (isset($data['Note'])) {
+                    Log::warning('Alpha Vantage rate limit', ['note' => $data['Note']]);
+                    break;
+                }
+
+                // Find the time series key
+                $timeSeriesKey = null;
+                foreach (array_keys($data) as $key) {
+                    if (str_contains($key, 'Time Series')) {
+                        $timeSeriesKey = $key;
+                        break;
+                    }
+                }
+
+                if (!$timeSeriesKey || !isset($data[$timeSeriesKey])) {
+                    Log::error('No time series data found', ['available_keys' => array_keys($data)]);
+                    break;
+                }
+
+                $timeSeries = $data[$timeSeriesKey];
+                $candles = [];
+
+                foreach (array_slice($timeSeries, 0, $limit, true) as $timestamp => $values) {
+                    $candles[] = [
+                        strtotime($timestamp) * 1000,
+                        floatval($values['1. open']),
+                        floatval($values['2. high']),
+                        floatval($values['3. low']),
+                        floatval($values['4. close']),
+                        0
+                    ];
+                }
+
+                Log::info('Forex candles processed', ['count' => count($candles)]);
+
+                return array_reverse($candles);
+            } catch (\Exception $e) {
+                Log::error('Alpha Vantage forex error', ['error' => $e->getMessage(), 'symbol' => $symbol]);
+            }
+        } while (false);
+
+        // Tier 3 (final): Yahoo Finance v8/chart — works for forex, metals, stocks, indices.
+        // No API key required. Used as last-resort OHLCV source for /fibo on non-crypto.
+        try {
+            $up = strtoupper($symbol);
+            // Map common symbols to Yahoo tickers
+            $yahooMap = [
+                'XAUUSD' => 'GC=F',  // Gold futures
+                'XAGUSD' => 'SI=F',  // Silver futures
+                'XPTUSD' => 'PL=F',  // Platinum
+                'XPDUSD' => 'PA=F',  // Palladium
+                'WTIUSD' => 'CL=F',  // WTI crude
+                'BRENTUSD' => 'BZ=F',
+                'NATGAS' => 'NG=F',
+            ];
+            if (isset($yahooMap[$up])) {
+                $ticker = $yahooMap[$up];
+            } elseif (preg_match('/^[A-Z]{6}$/', $up)) {
+                // 6-char forex pair → Yahoo uses EURUSD=X format
+                $ticker = $up . '=X';
+            } else {
+                // Equity / index — try as-is
+                $ticker = $up;
             }
 
-            if (!$timeSeriesKey || !isset($data[$timeSeriesKey])) {
-                Log::error('No time series data found', ['available_keys' => array_keys($data)]);
+            // Map timeframe → (interval, range)
+            $tfMap = [
+                '1M'  => ['1m',  '7d'],
+                '5M'  => ['5m',  '60d'],
+                '15M' => ['15m', '60d'],
+                '30M' => ['30m', '60d'],
+                '1H'  => ['60m', '730d'],
+                '2H'  => ['60m', '730d'],
+                '4H'  => ['1h',  '730d'],
+                '1D'  => ['1d',  '5y'],
+                '1W'  => ['1wk', '10y'],
+                '1MO' => ['1mo', 'max'],
+            ];
+            $tfKey = strtoupper($timeframe);
+            [$interval, $range] = $tfMap[$tfKey] ?? ['1d', '2y'];
+
+            $resp = Http::timeout(8)
+                ->withHeaders(['User-Agent' => 'Mozilla/5.0'])
+                ->get("https://query1.finance.yahoo.com/v8/finance/chart/{$ticker}", [
+                    'interval' => $interval,
+                    'range'    => $range,
+                ]);
+
+            if (!$resp->successful()) {
+                Log::warning('Yahoo forex/fibo fallback failed', ['symbol' => $symbol, 'ticker' => $ticker, 'status' => $resp->status()]);
                 return null;
             }
 
-            $timeSeries = $data[$timeSeriesKey];
-            $candles = [];
+            $body = $resp->json();
+            $result = $body['chart']['result'][0] ?? null;
+            if (!$result) return null;
 
-            foreach (array_slice($timeSeries, 0, $limit, true) as $timestamp => $values) {
+            $timestamps = $result['timestamp'] ?? [];
+            $q = $result['indicators']['quote'][0] ?? [];
+            $opens  = $q['open']  ?? [];
+            $highs  = $q['high']  ?? [];
+            $lows   = $q['low']   ?? [];
+            $closes = $q['close'] ?? [];
+            $vols   = $q['volume'] ?? [];
+
+            $candles = [];
+            $n = count($timestamps);
+            for ($i = 0; $i < $n; $i++) {
+                // Yahoo can return nulls for missing periods; skip those.
+                if ($opens[$i] === null || $closes[$i] === null) continue;
                 $candles[] = [
-                    strtotime($timestamp) * 1000,
-                    floatval($values['1. open']),
-                    floatval($values['2. high']),
-                    floatval($values['3. low']),
-                    floatval($values['4. close']),
-                    0
+                    (int) $timestamps[$i] * 1000,
+                    (float) $opens[$i],
+                    (float) ($highs[$i]  ?? $opens[$i]),
+                    (float) ($lows[$i]   ?? $opens[$i]),
+                    (float) $closes[$i],
+                    (float) ($vols[$i]   ?? 0),
                 ];
             }
 
-            Log::info('Forex candles processed', ['count' => count($candles)]);
+            if (count($candles) < 20) {
+                Log::warning('Yahoo fibo fallback insufficient candles', ['symbol' => $symbol, 'ticker' => $ticker, 'count' => count($candles)]);
+                return null;
+            }
 
-            return array_reverse($candles);
+            // Trim to requested limit (keep most recent)
+            if (count($candles) > $limit) {
+                $candles = array_slice($candles, -$limit);
+            }
+
+            Log::info('Yahoo fibo fallback success', ['symbol' => $symbol, 'ticker' => $ticker, 'count' => count($candles)]);
+            return $candles;
         } catch (\Exception $e) {
-            Log::error('Alpha Vantage forex error', ['error' => $e->getMessage(), 'symbol' => $symbol]);
+            Log::error('Yahoo fibo fallback exception', ['error' => $e->getMessage(), 'symbol' => $symbol]);
             return null;
         }
     }
