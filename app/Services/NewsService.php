@@ -330,10 +330,18 @@ class NewsService
         $message = "📅 *ECONOMIC CALENDAR*\n\n";
 
         // Try to fetch real economic events
-        $events = $this->fetchEconomicEvents();
+        $result = $this->fetchEconomicEvents();
+        $events = $result['events'] ?? [];
+        $source = $result['source'] ?? 'none';
 
         if (!empty($events)) {
-            $message .= "⚠️ *Upcoming High-Impact Events*\n\n";
+            // Honest header per source
+            if ($source === 'holidays') {
+                $message .= "🏦 *Upcoming Market Holidays*\n";
+                $message .= "_(no live economic-events feed configured)_\n\n";
+            } else {
+                $message .= "⚠️ *Upcoming High-Impact Events*\n\n";
+            }
 
             $groupedByDate = [];
             foreach ($events as $event) {
@@ -361,6 +369,15 @@ class NewsService
                 }
                 $message .= "\n";
             }
+
+            // Source attribution
+            $srcLabel = match ($source) {
+                'trading_economics' => 'TradingEconomics API',
+                'forex_factory'     => 'Forex Factory (free weekly XML)',
+                'holidays'          => 'Nager.Date public holidays',
+                default             => $source,
+            };
+            $message .= "_Source: {$srcLabel}_\n\n";
         } else {
             // Fallback: static high-level guidance
             $message .= "⚠️ *Key Recurring Events to Watch*\n\n";
@@ -384,11 +401,12 @@ class NewsService
     }
 
     /**
-     * Fetch economic events from API sources
+     * Fetch economic events from API sources.
+     * Returns ['events' => [...], 'source' => 'trading_economics|forex_factory|holidays|none']
      */
     private function fetchEconomicEvents(): array
     {
-        // Try TradingEconomics calendar API
+        // 1) Try TradingEconomics calendar API (premium)
         $teKey = config('services.trading_economics.key', env('TRADING_ECONOMICS_KEY', ''));
         if (!empty($teKey) && $teKey !== 'your_key_here') {
             try {
@@ -417,20 +435,52 @@ class NewsService
                             'previous' => $item['Previous'] ?? null,
                         ];
                     }
-                    if (!empty($events)) return $events;
+                    if (!empty($events)) return ['events' => $events, 'source' => 'trading_economics'];
                 }
             } catch (\Exception $e) {
                 Log::debug('TradingEconomics calendar failed', ['error' => $e->getMessage()]);
             }
         }
 
-        // Fallback: Try free Nager.Date public holidays API + generate basic events
+        // 2) Free Forex Factory weekly XML (real high/medium impact events)
+        try {
+            $cached = Cache::get('ff_calendar_thisweek');
+            $negativeCache = Cache::get('ff_calendar_negative');
+            if (empty($cached) && !$negativeCache) {
+                $resp = Http::timeout(8)
+                    ->withHeaders([
+                        'User-Agent' => 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 SerpoAI/1.0',
+                        'Accept' => 'application/xml,text/xml,*/*',
+                    ])
+                    ->get('https://nfs.faireconomy.media/ff_calendar_thisweek.xml');
+                $body = $resp->body();
+                // Only accept real XML payloads (avoid 429 HTML pages)
+                if ($resp->successful() && strlen($body) > 500 && str_contains($body, '<weeklyevents>')) {
+                    $cached = $body;
+                    Cache::put('ff_calendar_thisweek', $cached, 1800);
+                } else {
+                    // Negative-cache for 30 min to avoid hammering on 429
+                    Cache::put('ff_calendar_negative', 1, 1800);
+                    Log::debug('ForexFactory non-XML response', ['status' => $resp->status(), 'bytes' => strlen($body)]);
+                }
+            }
+
+            if (!empty($cached)) {
+                $events = $this->parseForexFactoryXml($cached);
+                if (!empty($events)) return ['events' => $events, 'source' => 'forex_factory'];
+            }
+        } catch (\Exception $e) {
+            Log::debug('ForexFactory calendar failed', ['error' => $e->getMessage()]);
+            Cache::put('ff_calendar_negative', 1, 1800);
+        }
+
+        // 3) Fallback: Nager.Date public holidays (clearly labelled as holidays only)
         try {
             $response = Http::timeout(5)->get('https://date.nager.at/api/v3/NextPublicHolidays/US');
             if ($response->successful()) {
                 $holidays = $response->json();
                 $events = [];
-                foreach (array_slice($holidays, 0, 3) as $h) {
+                foreach (array_slice($holidays, 0, 5) as $h) {
                     $events[] = [
                         'date' => date('D, M j', strtotime($h['date'] ?? '')),
                         'time' => 'All Day',
@@ -439,13 +489,59 @@ class NewsService
                         'impact' => 'Medium',
                     ];
                 }
-                return $events;
+                if (!empty($events)) return ['events' => $events, 'source' => 'holidays'];
             }
         } catch (\Exception $e) {
             // Quietly fail
         }
 
-        return [];
+        return ['events' => [], 'source' => 'none'];
+    }
+
+    /**
+     * Parse Forex Factory free weekly calendar XML into normalized event array.
+     * Keeps only High & Medium impact, skips past events.
+     */
+    private function parseForexFactoryXml(string $xml): array
+    {
+        $events = [];
+        try {
+            $prev = libxml_use_internal_errors(true);
+            $doc = simplexml_load_string($xml);
+            libxml_use_internal_errors($prev);
+            if (!$doc) return [];
+
+            $now = time();
+            foreach ($doc->event as $ev) {
+                $impact = (string) ($ev->impact ?? '');
+                if (!in_array(strtolower($impact), ['high', 'medium'], true)) continue;
+
+                $dateStr = trim((string) ($ev->date ?? '')); // MM-DD-YYYY
+                $timeStr = trim((string) ($ev->time ?? '')); // e.g. "10:30pm" or "All Day"
+
+                $isAllDay = $timeStr === '' || stripos($timeStr, 'all day') !== false || stripos($timeStr, 'tentative') !== false;
+                $dt = \DateTime::createFromFormat('m-d-Y', $dateStr);
+                if (!$dt) continue;
+                if (!$isAllDay) {
+                    $t = \DateTime::createFromFormat('g:ia', strtolower(str_replace(' ', '', $timeStr)));
+                    if ($t) $dt->setTime((int) $t->format('H'), (int) $t->format('i'));
+                }
+                $ts = $dt->getTimestamp();
+                if (!$ts || $ts < $now - 3600) continue; // skip past
+
+                $events[] = [
+                    'date'    => date('D, M j', $ts),
+                    'time'    => $isAllDay ? 'All Day' : date('g:i A', $ts),
+                    'title'   => (string) ($ev->title ?? 'Event'),
+                    'country' => (string) ($ev->country ?? ''),
+                    'impact'  => ucfirst(strtolower($impact)),
+                ];
+                if (count($events) >= 25) break;
+            }
+        } catch (\Throwable $e) {
+            Log::debug('FF XML parse failed', ['error' => $e->getMessage()]);
+        }
+        return $events;
     }
 
     /**
@@ -454,15 +550,16 @@ class NewsService
     private function getCountryFlag(string $country): string
     {
         return match (strtolower(trim($country))) {
-            'us', 'united states', 'usa' => '🇺🇸',
-            'eu', 'euro area', 'european union' => '🇪🇺',
-            'uk', 'united kingdom', 'gb' => '🇬🇧',
-            'jp', 'japan' => '🇯🇵',
-            'cn', 'china' => '🇨🇳',
-            'au', 'australia' => '🇦🇺',
-            'ca', 'canada' => '🇨🇦',
-            'ch', 'switzerland' => '🇨🇭',
+            'us', 'usd', 'united states', 'usa' => '🇺🇸',
+            'eu', 'eur', 'euro area', 'european union' => '🇪🇺',
+            'uk', 'gbp', 'united kingdom', 'gb' => '🇬🇧',
+            'jp', 'jpy', 'japan' => '🇯🇵',
+            'cn', 'cny', 'china' => '🇨🇳',
+            'au', 'aud', 'australia' => '🇦🇺',
+            'ca', 'cad', 'canada' => '🇨🇦',
+            'ch', 'chf', 'switzerland' => '🇨🇭',
             'de', 'germany' => '🇩🇪',
+            'nz', 'nzd', 'new zealand' => '🇳🇿',
             default => '🏳️',
         };
     }

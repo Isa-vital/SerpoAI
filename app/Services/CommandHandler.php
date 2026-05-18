@@ -226,6 +226,96 @@ class CommandHandler
 
             default => $this->handleUnknown($chatId, $cmd),
         };
+
+        // Record analysis commands into ScanHistory so the trading-profile
+        // inference engine has a real data feed. Best-effort; never block
+        // a command if logging fails.
+        try {
+            $this->logCommandUsage($user, $cmd, $params);
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::warning('ScanHistory log failed', [
+                'cmd' => $cmd,
+                'error' => $e->getMessage(),
+            ]);
+        }
+    }
+
+    /**
+     * Map a Telegram command + params into a ScanHistory row.
+     * Only logs commands that are meaningful for behaviour inference
+     * (analysis / market lookup / alerts). Pure UI commands are skipped.
+     */
+    private function logCommandUsage(User $user, string $cmd, array $params): void
+    {
+        static $scanTypes = [
+            '/predict'      => 'price_prediction',
+            '/aisentiment'  => 'ai_sentiment',
+            '/sentiment'    => 'sentiment',
+            '/analyze'      => 'analysis',
+            '/chart'        => 'chart',
+            '/supercharts'  => 'chart',
+            '/charts'       => 'chart',
+            '/price'        => 'price_lookup',
+            '/fibo'         => 'fibonacci',
+            '/sr'           => 'support_resistance',
+            '/rsi'          => 'rsi',
+            '/divergence'   => 'divergence',
+            '/cross'        => 'ma_cross',
+            '/trends'       => 'trends',
+            '/orderbook'    => 'orderbook',
+            '/liquidation'  => 'liquidation',
+            '/flow'         => 'money_flow',
+            '/oi'           => 'open_interest',
+            '/rates'        => 'funding_rates',
+            '/unlock'       => 'token_unlock',
+            '/burn'         => 'token_burn',
+            '/verify'       => 'token_verify',
+            '/trader'       => 'trader',
+            '/heatmap'      => 'heatmap',
+            '/whale'        => 'whale_lookup',
+            '/whales'       => 'whale_market',
+            '/scan'         => 'market_scan',
+            '/radar'        => 'market_radar',
+            '/recommend'    => 'recommend',
+            '/signals'      => 'signals',
+            '/backtest'     => 'backtest',
+            '/daily'        => 'report_daily',
+            '/weekly'       => 'report_weekly',
+        ];
+
+        if (!isset($scanTypes[$cmd])) {
+            return;
+        }
+
+        // Extract pair / symbol (first positional arg).
+        $pair = isset($params[0]) ? strtoupper(preg_replace('/[^A-Za-z0-9\/\-_]/', '', $params[0])) : null;
+        if ($pair === '') {
+            $pair = null;
+        }
+
+        // Extract timeframe if present in any remaining arg.
+        $timeframe = null;
+        foreach (array_slice($params, 1) as $p) {
+            $p = strtolower(trim($p));
+            if (preg_match('/^\d+(m|h|d|w|mo|M)$/', $p)) {
+                $timeframe = $p;
+                break;
+            }
+        }
+
+        \App\Models\ScanHistory::logScan(
+            $user->id,
+            $scanTypes[$cmd],
+            $pair,
+            array_filter([
+                'timeframe' => $timeframe,
+                'raw_args'  => $params,
+            ]),
+            []
+        );
+
+        // Invalidate inference cache so /profile reflects the new action immediately.
+        \Illuminate\Support\Facades\Cache::forget("profile_inference:{$user->id}");
     }
 
     /**
@@ -1007,30 +1097,111 @@ class CommandHandler
      */
     private function handleSettings(int $chatId, User $user)
     {
-        $notifStatus = $user->notifications_enabled
-            ? __('commands.settings.notif_enabled')
-            : __('commands.settings.notif_disabled');
+        try {
+            // --- Data ---
+            $notifOn = (bool) ($user->notifications_enabled ?? true);
+            $notifStatus = $notifOn
+                ? __('commands.settings.notif_enabled')
+                : __('commands.settings.notif_disabled');
 
-        $buttons = [
-            [
+            $langCode = $user->language ?? $user->language_code ?? 'en';
+            $langName = $this->language->getLanguageName($langCode);
+
+            // Premium tier
+            $tier = 'free';
+            try {
+                $sub = $user->premiumSubscription;
+                if ($sub && method_exists($sub, 'isActive') ? $sub->isActive() : !empty($sub)) {
+                    $tier = $sub->tier ?? 'free';
+                }
+            } catch (\Throwable $e) {
+                // ignore
+            }
+            $tierBadge = match ($tier) {
+                'vip'  => '👑 VIP',
+                'pro'  => '⭐ PRO',
+                default => '🆓 Free',
+            };
+
+            // Counts
+            $alertCount = 0;
+            $walletCount = 0;
+            $watchlistCount = 0;
+            try {
+                $alertCount    = (int) $user->alerts()->where('is_active', true)->count();
+            } catch (\Throwable $e) {
+            }
+            try {
+                $walletCount   = (int) $user->wallets()->count();
+            } catch (\Throwable $e) {
+            }
+            try {
+                $watchlistCount = (int) $user->watchlist()->count();
+            } catch (\Throwable $e) {
+            }
+
+            $joined = optional($user->created_at)->format('M j, Y') ?? 'unknown';
+            $lastSeen = optional($user->last_interaction_at ?? $user->updated_at)->diffForHumans() ?? '—';
+            $username = $user->username ? '@' . $user->username : ($user->first_name ?? 'User');
+
+            $botName = config('serpoai.bot.name', 'SerpoAI');
+            $botVer  = config('serpoai.bot.version', '2.0.0');
+
+            // --- Message ---
+            $message  = "⚙️ *Settings*\n\n";
+
+            $message .= "👤 *Account*\n";
+            $message .= "• User: {$username}\n";
+            $message .= "• Telegram ID: `{$user->telegram_id}`\n";
+            $message .= "• Joined: {$joined}\n";
+            $message .= "• Last active: {$lastSeen}\n\n";
+
+            $message .= "💎 *Plan*\n";
+            $message .= "• Tier: {$tierBadge}\n";
+            if ($tier === 'free') {
+                $message .= "• _Upgrade with /premium for unlimited alerts, AI access, and whale tracking._\n";
+            }
+            $message .= "\n";
+
+            $message .= "🔔 *Notifications:* {$notifStatus}\n";
+            $message .= "🌐 *Language:* {$langName}\n\n";
+
+            $message .= "📊 *Your Activity*\n";
+            $message .= "• Active alerts: {$alertCount}\n";
+            $message .= "• Tracked wallets: {$walletCount}\n";
+            $message .= "• Watchlist: {$watchlistCount}\n\n";
+
+            $message .= "🤖 *Bot*\n";
+            $message .= "• {$botName} v{$botVer}\n";
+
+            // --- Buttons ---
+            $buttons = [
                 [
-                    'text' => $user->notifications_enabled ? __('buttons.disable_notif') : __('buttons.enable_notif'),
-                    'callback_data' => 'settings_toggle_notif'
+                    [
+                        'text' => $notifOn ? __('buttons.disable_notif') : __('buttons.enable_notif'),
+                        'callback_data' => 'settings_toggle_notif'
+                    ],
+                    ['text' => __('buttons.change_language'), 'callback_data' => '/language'],
                 ],
-            ],
-            [
-                ['text' => __('buttons.change_language'), 'callback_data' => '/language'],
-            ],
-            [
-                ['text' => __('buttons.my_profile'), 'callback_data' => '/profile'],
-                ['text' => __('buttons.premium'), 'callback_data' => '/premium'],
-            ],
-        ];
+                [
+                    ['text' => __('buttons.my_profile'), 'callback_data' => '/profile'],
+                    ['text' => __('buttons.premium'), 'callback_data' => '/premium'],
+                ],
+                [
+                    ['text' => '🔔 My Alerts', 'callback_data' => '/myalerts'],
+                    ['text' => '👛 Wallets',  'callback_data' => '/wallet'],
+                ],
+                [
+                    ['text' => 'ℹ️ About', 'callback_data' => '/about'],
+                    ['text' => '❓ Help',  'callback_data' => '/help'],
+                ],
+            ];
 
-        $message = __('commands.settings.title') . "\n\n";
-        $message .= __('commands.settings.notifications', ['status' => $notifStatus]) . "\n";
-
-        $this->telegram->sendInlineKeyboard($chatId, $message, $buttons);
+            $this->telegram->sendInlineKeyboard($chatId, $message, $buttons);
+        } catch (\Throwable $e) {
+            Log::error('Settings command error', ['error' => $e->getMessage()]);
+            $this->telegram->sendMessage($chatId, "⚙️ *Settings*\n\n❌ Unable to load settings right now.");
+        }
     }
 
     /**
@@ -2593,63 +2764,112 @@ class CommandHandler
     }
 
     /**
-     * Handle /daily - Daily market summary
+     * Handle /daily - Daily market summary (live BTC OHLCV from Binance)
      */
     private function handleDailyReport(int $chatId)
     {
         try {
-            $report = \App\Models\AnalyticsReport::getLatestReport('BTC', 'daily');
+            $this->telegram->sendChatAction($chatId, 'typing');
 
-            if (!$report) {
-                // Generate new report
-                $report = $this->analytics->generateDailySummary('BTC');
-                if (!$report) {
-                    $this->telegram->sendMessage($chatId, "⏳ Not enough data for daily report yet. Check back later!");
-                    return;
-                }
+            // Pull last 24x 1h candles = trailing 24h
+            $klines = $this->binance->getKlines('BTCUSDT', '1h', 24);
+            if (empty($klines) || count($klines) < 2) {
+                $this->telegram->sendMessage($chatId, "⚠️ Live market data temporarily unavailable. Try again in a moment.");
+                return;
             }
 
-            $message = $this->analytics->formatDailySummary($report);
-            $keyboard = [
-                'inline_keyboard' => $this->getContextualKeyboard('reports')
-            ];
+            $open  = (float) $klines[0][1];
+            $close = (float) end($klines)[4];
+            $high  = 0.0;
+            $low = PHP_FLOAT_MAX;
+            $vol = 0.0;
+            $trades = 0;
+            foreach ($klines as $k) {
+                $high   = max($high, (float) $k[2]);
+                $low    = min($low,  (float) $k[3]);
+                $vol   += (float) $k[7]; // quote-asset volume (USDT)
+                $trades += (int)   $k[8];
+            }
+            $change = $open > 0 ? (($close - $open) / $open) * 100 : 0;
+            $emoji  = $change >= 0 ? '📈' : '📉';
+            $color  = $change >= 0 ? '🟢' : '🔴';
+            $fmtP   = fn($p) => '$' . number_format($p, 2);
+
+            $message  = "📊 *DAILY MARKET SUMMARY — BTC*\n";
+            $message .= "📅 " . now()->format('M d, Y') . " (last 24h)\n\n";
+            $message .= "💰 *Price Action:*\n";
+            $message .= "Open: {$fmtP($open)}\n";
+            $message .= "Close: {$fmtP($close)}\n";
+            $message .= "High: {$fmtP($high)}\n";
+            $message .= "Low: {$fmtP($low)}\n";
+            $message .= "{$color} Change: *" . number_format($change, 2) . "%* {$emoji}\n\n";
+            $message .= "📊 *Trading Activity (Binance spot):*\n";
+            $message .= "Volume: $" . number_format($vol, 0) . "\n";
+            $message .= "Trades: " . number_format($trades) . "\n\n";
+            $message .= "_Source: Binance klines · BTCUSDT 1h × 24_\n\n";
+            $message .= "#DailyReport #BTC";
+
+            $keyboard = ['inline_keyboard' => $this->getContextualKeyboard('reports')];
             $this->telegram->sendMessage($chatId, $message, $keyboard);
         } catch (\Exception $e) {
             Log::error('Daily report error', ['error' => $e->getMessage()]);
-            $keyboard = [
-                'inline_keyboard' => $this->getContextualKeyboard('reports')
-            ];
-            $this->telegram->sendMessage($chatId, "❌ Error loading daily report.", $keyboard);
+            $this->telegram->sendMessage($chatId, "❌ Error loading daily report.");
         }
     }
 
     /**
-     * Handle /weekly - Weekly market summary
+     * Handle /weekly - Weekly market summary (live BTC OHLCV from Binance)
      */
     private function handleWeeklyReport(int $chatId)
     {
         try {
-            $report = \App\Models\AnalyticsReport::getLatestReport('BTC', 'weekly');
+            $this->telegram->sendChatAction($chatId, 'typing');
 
-            if (!$report) {
-                $report = $this->analytics->generateWeeklySummary('BTC');
-                if (!$report) {
-                    $this->telegram->sendMessage($chatId, "⏳ Not enough data for weekly report yet.");
-                    return;
-                }
+            // 7 daily candles
+            $klines = $this->binance->getKlines('BTCUSDT', '1d', 7);
+            if (empty($klines) || count($klines) < 2) {
+                $this->telegram->sendMessage($chatId, "⚠️ Live market data temporarily unavailable. Try again in a moment.");
+                return;
             }
 
-            $message = $this->analytics->formatWeeklySummary($report);
-            $keyboard = [
-                'inline_keyboard' => $this->getContextualKeyboard('reports')
-            ];
+            $open  = (float) $klines[0][1];
+            $close = (float) end($klines)[4];
+            $high  = 0.0;
+            $low = PHP_FLOAT_MAX;
+            $vol = 0.0;
+            $trades = 0;
+            foreach ($klines as $k) {
+                $high   = max($high, (float) $k[2]);
+                $low    = min($low,  (float) $k[3]);
+                $vol   += (float) $k[7];
+                $trades += (int)   $k[8];
+            }
+            $change = $open > 0 ? (($close - $open) / $open) * 100 : 0;
+            $emoji  = $change >= 0 ? '🚀' : '📉';
+            $fmtP   = fn($p) => '$' . number_format($p, 2);
+
+            $weekStart = (int) ($klines[0][0] / 1000);
+            $weekEnd   = (int) (end($klines)[6] / 1000);
+
+            $message  = "📈 *WEEKLY MARKET SUMMARY — BTC*\n";
+            $message .= "📅 " . date('M j', $weekStart) . " – " . date('M j, Y', $weekEnd) . "\n\n";
+            $message .= "💰 *Weekly Performance:*\n";
+            $message .= "Opening: {$fmtP($open)}\n";
+            $message .= "Closing: {$fmtP($close)}\n";
+            $message .= "Weekly High: {$fmtP($high)}\n";
+            $message .= "Weekly Low: {$fmtP($low)}\n";
+            $message .= "{$emoji} *Weekly Change: " . number_format($change, 2) . "%*\n\n";
+            $message .= "📊 *Activity Summary (Binance spot):*\n";
+            $message .= "Total Volume: $" . number_format($vol, 0) . "\n";
+            $message .= "Total Trades: " . number_format($trades) . "\n\n";
+            $message .= "_Source: Binance klines · BTCUSDT 1d × 7_\n\n";
+            $message .= "#WeeklyReport #BTC";
+
+            $keyboard = ['inline_keyboard' => $this->getContextualKeyboard('reports')];
             $this->telegram->sendMessage($chatId, $message, $keyboard);
         } catch (\Exception $e) {
             Log::error('Weekly report error', ['error' => $e->getMessage()]);
-            $keyboard = [
-                'inline_keyboard' => $this->getContextualKeyboard('reports')
-            ];
-            $this->telegram->sendMessage($chatId, "❌ Error loading weekly report.", $keyboard);
+            $this->telegram->sendMessage($chatId, "❌ Error loading weekly report.");
         }
     }
 
@@ -2712,44 +2932,99 @@ class CommandHandler
     }
 
     /**
-     * Handle /whales - Recent whale transactions
+     * Handle /whales - Live whale activity from Binance order book + liquidations
      */
     private function handleWhales(int $chatId)
     {
         try {
-            $whales = \App\Models\TransactionAlert::getWhaleTransactions('BTC', 24);
+            $this->telegram->sendChatAction($chatId, 'typing');
 
-            if ($whales->isEmpty()) {
-                $this->telegram->sendMessage($chatId, "🐋 No whale activity detected in the last 24 hours.");
+            $alerts = $this->whaleAlert->getWhaleAlerts('BTC');
+            if (!empty($alerts['error'])) {
+                $this->telegram->sendMessage($chatId, "❌ Whale data unavailable: " . $alerts['error']);
                 return;
             }
 
-            $message = "🐋 *WHALE ACTIVITY (24h)*\n\n";
+            $lo = $alerts['large_orders'] ?? [];
+            $lc = $alerts['liquidation_clusters'] ?? [];
+            $vs = $alerts['volume_spikes'] ?? [];
 
-            foreach ($whales->take(10) as $whale) {
-                $typeEmoji = match ($whale->type) {
-                    'buy' => '🟢',
-                    'sell' => '🔴',
-                    'liquidity_add' => '💧',
-                    'liquidity_remove' => '🚰',
-                    default => '↔️',
-                };
+            $message  = "🐋 *WHALE ACTIVITY — BTCUSDT*\n";
+            $message .= "⏰ " . now()->format('H:i') . " UTC · _live order book_\n\n";
 
-                $message .= "{$typeEmoji} *" . strtoupper($whale->type) . "*\n";
-                $message .= "Amount: " . number_format($whale->amount, 0) . " {$whale->coin_symbol}\n";
-                $message .= "Value: $" . number_format($whale->amount_usd, 0) . "\n";
-                $message .= "Time: " . $whale->transaction_time->diffForHumans() . "\n\n";
+            // Large resting orders
+            if (!empty($lo) && empty($lo['error'])) {
+                $emoji = $lo['emoji'] ?? '⚖️';
+                $pressure = $lo['pressure'] ?? 'Balanced';
+                $bidV = $lo['total_bid_value'] ?? 0;
+                $askV = $lo['total_ask_value'] ?? 0;
+                $message .= "{$emoji} *Order-Book Pressure: {$pressure}*\n";
+                $message .= "🟢 Big bids: $" . number_format($bidV, 0) . "\n";
+                $message .= "🔴 Big asks: $" . number_format($askV, 0) . "\n";
+                $message .= "_(threshold: $" . number_format($lo['threshold'] ?? 100000, 0) . " per order)_\n\n";
+
+                $bids = $lo['large_bids'] ?? [];
+                if (!empty($bids)) {
+                    $message .= "*Top buy walls:*\n";
+                    foreach (array_slice($bids, 0, 3) as $b) {
+                        $message .= sprintf(
+                            "🟢 $%s · %s BTC · $%s (%s%% below)\n",
+                            number_format($b['price'], 2),
+                            number_format($b['quantity'], 3),
+                            number_format($b['value'], 0),
+                            number_format($b['distance_from_price'], 2)
+                        );
+                    }
+                    $message .= "\n";
+                }
+                $asks = $lo['large_asks'] ?? [];
+                if (!empty($asks)) {
+                    $message .= "*Top sell walls:*\n";
+                    foreach (array_slice($asks, 0, 3) as $a) {
+                        $message .= sprintf(
+                            "🔴 $%s · %s BTC · $%s (%s%% above)\n",
+                            number_format($a['price'], 2),
+                            number_format($a['quantity'], 3),
+                            number_format($a['value'], 0),
+                            number_format($a['distance_from_price'], 2)
+                        );
+                    }
+                    $message .= "\n";
+                }
             }
 
-            $keyboard = [
-                'inline_keyboard' => $this->getContextualKeyboard('whales')
-            ];
+            // Liquidation clusters
+            if (!empty($lc) && empty($lc['error']) && !empty($lc['top_clusters'] ?? $lc)) {
+                $clusters = $lc['top_clusters'] ?? (isset($lc[0]) ? $lc : []);
+                if (!empty($clusters)) {
+                    $message .= "💥 *Recent Liquidation Clusters:*\n";
+                    foreach (array_slice($clusters, 0, 3) as $c) {
+                        $message .= sprintf(
+                            "• $%s · %d liqs · $%s value\n",
+                            number_format($c['price_level'] ?? 0, 2),
+                            $c['count'] ?? 0,
+                            number_format($c['total_value'] ?? 0, 0)
+                        );
+                    }
+                    $message .= "\n";
+                }
+            }
+
+            // Volume spikes
+            if (!empty($vs) && empty($vs['error'])) {
+                $spike = $vs['spike_detected'] ?? false;
+                if ($spike) {
+                    $message .= "⚡ *Volume spike detected* (" . ($vs['multiplier'] ?? '?') . "× avg)\n\n";
+                }
+            }
+
+            $message .= "_Source: Binance spot order book + futures liquidations_";
+
+            $keyboard = ['inline_keyboard' => $this->getContextualKeyboard('whales')];
             $this->telegram->sendMessage($chatId, $message, $keyboard);
         } catch (\Exception $e) {
             Log::error('Whales command error', ['error' => $e->getMessage()]);
-            $keyboard = [
-                'inline_keyboard' => $this->getContextualKeyboard('whales')
-            ];
+            $keyboard = ['inline_keyboard' => $this->getContextualKeyboard('whales')];
             $this->telegram->sendMessage($chatId, "❌ Error loading whale activity.", $keyboard);
         }
     }
