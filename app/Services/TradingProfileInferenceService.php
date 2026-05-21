@@ -324,4 +324,16 @@ class TradingProfileInferenceService
         }
         // Pair format like BTC/USDT or BTC-USDT.
         if (preg_match('#^([A-Z0-9]+)[/\-_]#', $pair, $m)) {
-            retu
+            return $m[1];
+        }
+        return $pair;
+    }
+
+    /**
+     * Invalidate the cached inference after the user performs a new action.
+     */
+    public function invalidate(int $userId): void
+    {
+        Cache::forget("profile_inference:{$userId}");
+    }
+}

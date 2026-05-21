@@ -138,7 +138,7 @@ class CommandHandler
             // NEW: AI-Powered Features
             '/aisentiment' => $this->handleAISentiment($chatId, $params),
             '/predict' => $this->handlePredict($chatId, $params),
-            '/recommend' => $this->handleRecommend($chatId, $user),
+            '/recommend' => $this->handleRecommend($chatId, $user, $params),
             '/query' => $this->handleNaturalQuery($chatId, $params),
 
             // NEW: ELITE FEATURES
@@ -2667,59 +2667,186 @@ class CommandHandler
     }
 
     /**
-     * Handle /recommend - Personalized trading recommendations
+     * Handle /recommend - Personalized trading recommendation.
+     *
+     * Honest version: uses inferred trading profile (not hardcoded defaults),
+     * accepts a symbol parameter, enriches the LLM with structure (S/R) and
+     * indicator data (RSI), forces structured output, and stamps a transparent
+     * source/timestamp footer. Aborts with a clear error if market data is
+     * unavailable instead of fabricating a recommendation.
      */
-    private function handleRecommend(int $chatId, User $user)
+    private function handleRecommend(int $chatId, User $user, array $params = [])
     {
         $this->telegram->sendChatAction($chatId, 'typing');
-        $this->telegram->sendMessage($chatId, "🎯 Generating personalized recommendation...");
+
+        // Symbol parsing (default BTC, with explicit note in output).
+        $rawSymbol = isset($params[0]) ? strtoupper(preg_replace('/[^A-Za-z0-9]/', '', $params[0])) : 'BTC';
+        if ($rawSymbol === '') {
+            $rawSymbol = 'BTC';
+        }
+        $pair       = str_ends_with($rawSymbol, 'USDT') ? $rawSymbol : $rawSymbol . 'USDT';
+        $isDefault  = !isset($params[0]);
+
+        // Loader message we will edit in place.
+        $loader = $this->telegram->sendMessage(
+            $chatId,
+            "🎯 Generating personalized recommendation for {$rawSymbol}..."
+        );
+        $loaderMsgId = $loader['result']['message_id'] ?? null;
+
+        $editOrSend = function (string $text, array $keyboard) use ($chatId, $loaderMsgId) {
+            if ($loaderMsgId) {
+                $opts = [];
+                if (!empty($keyboard)) {
+                    $opts['reply_markup'] = json_encode($keyboard);
+                }
+                $this->telegram->editMessageText($chatId, $loaderMsgId, $text, $opts);
+            } else {
+                $this->telegram->sendMessage($chatId, $text, $keyboard);
+            }
+        };
+        $errorKeyboard = ['inline_keyboard' => $this->getContextualKeyboard('signals')];
 
         try {
-            $profile = \App\Models\UserProfile::getOrCreateForUser($user->id);
-            $context = [
-                'symbol' => 'BTC',
-                'price' => 0,
-                'price_change_24h' => 0,
-                'volume_24h' => 0,
-            ];
+            // 1. Inferred user profile (no hardcoded defaults).
+            $inference = (new \App\Services\TradingProfileInferenceService())->infer($user->id);
+            $profile   = \App\Models\UserProfile::getOrCreateForUser($user->id);
+            $watchlist = $profile->watchlist ?? [];
+            $favorites = $profile->favorite_pairs ?? [];
+
+            // 2. Live market data — abort honestly if unavailable.
+            $analysis = null;
             try {
-                $btcAnalysis = $this->multiMarket->analyzeCryptoPair('BTCUSDT');
-                if (is_array($btcAnalysis) && !isset($btcAnalysis['error'])) {
-                    $context['price'] = (float) ($btcAnalysis['price'] ?? 0);
-                    $context['price_change_24h'] = (float) ($btcAnalysis['change_percent'] ?? 0);
-                    $context['volume_24h'] = (float) ($btcAnalysis['volume'] ?? 0);
-                }
-            } catch (\Exception $e) {
+                $analysis = $this->multiMarket->analyzeCryptoPair($pair);
+            } catch (\Throwable $e) {
+                Log::warning('Recommend: market fetch failed', ['pair' => $pair, 'err' => $e->getMessage()]);
             }
-            $sentimentData = \App\Models\SentimentData::getAggregatedSentiment('BTC');
+            if (!is_array($analysis) || isset($analysis['error']) || empty($analysis['price'])) {
+                $editOrSend(
+                    "⚠️ Cannot generate a recommendation for *{$rawSymbol}*: live market data is unavailable right now.\n\n"
+                        . "Try `/price {$rawSymbol}` first to confirm the symbol, or try again in a few minutes.",
+                    $errorKeyboard
+                );
+                return;
+            }
 
-            $recommendation = $this->openai->generatePersonalizedRecommendation(
-                [
-                    'risk_level' => $profile->risk_level,
-                    'trading_style' => $profile->trading_style,
+            $price        = (float) $analysis['price'];
+            $change24h    = (float) ($analysis['change_percent'] ?? 0);
+            $volume24h    = (float) ($analysis['volume'] ?? 0);
+            $fetchedAt    = now()->format('Y-m-d H:i') . ' UTC';
+
+            // 3. Structure (S/R) — optional, degrade gracefully.
+            $structure = [];
+            try {
+                $sr = $this->technical->getSmartSupportResistance($pair);
+                if (is_array($sr) && !isset($sr['error'])) {
+                    $structure = [
+                        'nearest_support'    => isset($sr['nearest_support']['price'])
+                            ? $this->formatPrice((float)$sr['nearest_support']['price'], 'crypto') : null,
+                        'nearest_resistance' => isset($sr['nearest_resistance']['price'])
+                            ? $this->formatPrice((float)$sr['nearest_resistance']['price'], 'crypto') : null,
+                        'confluent' => array_map(
+                            fn($l) => $this->formatPrice((float)$l['price'], 'crypto') . ' (' . $l['confluence'] . 'TF)',
+                            array_slice($sr['confluent_levels'] ?? [], 0, 3)
+                        ),
+                    ];
+                }
+            } catch (\Throwable $e) {
+                Log::debug('Recommend: SR unavailable', ['err' => $e->getMessage()]);
+            }
+
+            // 4. Indicators — RSI(14) on 1h.
+            $indicators = [];
+            try {
+                $klines = $this->binance->getKlines($pair, '1h', 200);
+                if (!empty($klines)) {
+                    $rsi = $this->binance->calculateRSI($klines, 14);
+                    if ($rsi > 0) {
+                        $indicators['rsi_1h'] = round($rsi, 1) . ' ('
+                            . ($rsi >= 70 ? 'overbought' : ($rsi <= 30 ? 'oversold' : 'neutral')) . ')';
+                    }
+                }
+            } catch (\Throwable $e) {
+                Log::debug('Recommend: RSI unavailable', ['err' => $e->getMessage()]);
+            }
+
+            // 5. Sentiment — optional.
+            $sentimentLabel = null;
+            try {
+                $sent = \App\Models\SentimentData::getAggregatedSentiment(rtrim($pair, 'USDT'));
+                if (is_array($sent) && !empty($sent['overall_sentiment'])) {
+                    $sentimentLabel = $sent['overall_sentiment'];
+                    if (isset($sent['score'])) {
+                        $indicators['sentiment'] = $sentimentLabel . ' (' . round((float) $sent['score'], 2) . ')';
+                    } else {
+                        $indicators['sentiment'] = $sentimentLabel;
+                    }
+                }
+            } catch (\Throwable $e) {
+                // ignore
+            }
+
+            // 6. Build LLM context and call structured generator.
+            $ai = $this->openai->generateStructuredRecommendation([
+                'user' => [
+                    'risk_level'    => $inference['risk_level'],
+                    'trading_style' => $inference['trading_style'],
+                    'confidence'    => $inference['confidence'],
                 ],
-                $context,
-                $sentimentData
-            );
+                'market' => [
+                    'symbol'     => $pair,
+                    'price'      => $this->formatPrice($price, 'crypto'),
+                    'change_24h' => round($change24h, 2),
+                    'volume_24h' => round($volume24h, 2),
+                    'source'     => 'Binance',
+                    'fetched_at' => $fetchedAt,
+                ],
+                'structure'  => $structure,
+                'indicators' => $indicators,
+                'watchlist'  => array_merge($watchlist, $favorites),
+            ]);
 
-            $message = "🎯 *PERSONALIZED RECOMMENDATION*\n\n";
-            $message .= "👤 Your Profile:\n";
-            $message .= "Risk Level: " . ucfirst($profile->risk_level) . "\n";
-            $message .= "Style: " . str_replace('_', ' ', ucfirst($profile->trading_style)) . "\n\n";
-            $message .= "🤖 *AI Recommendation:*\n";
-            $message .= $recommendation . "\n\n";
-            $message .= "_Tailored to your trading profile. Always DYOR!_";
+            if (!$ai) {
+                $editOrSend(
+                    "⚠️ AI recommendation engine is unavailable right now. Live price for *{$rawSymbol}*: \${$this->formatPrice($price, 'crypto')} (Binance, {$fetchedAt}).",
+                    $errorKeyboard
+                );
+                return;
+            }
 
-            $keyboard = [
-                'inline_keyboard' => $this->getContextualKeyboard('signals')
-            ];
-            $this->telegram->sendMessage($chatId, $message, $keyboard);
+            // 7. Render. We display the AI's structured template verbatim and
+            //    attach a transparent footer the model cannot influence.
+            $styleLabel = ucfirst(str_replace('_', ' ', $inference['trading_style']));
+            $riskLabel  = ucfirst($inference['risk_level']);
+            $confPct    = (int) round($inference['confidence'] * 100);
+            $profileTag = $inference['is_learning']
+                ? "_Learning your style — using market-neutral assumptions_"
+                : "Style: *{$styleLabel}* · Risk: *{$riskLabel}* · {$confPct}% confidence 🤖 inferred";
+
+            $msg  = "🎯 *PERSONALIZED RECOMMENDATION — {$rawSymbol}*\n\n";
+            if ($isDefault) {
+                $msg .= "_No symbol provided — defaulting to BTC. Use_ `/recommend ETH` _etc. for other assets._\n\n";
+            }
+            $msg .= "👤 *Your Profile*\n{$profileTag}\n\n";
+            $msg .= "📈 *Market Snapshot*\n";
+            $msg .= "Price: \${$this->formatPrice($price, 'crypto')} · 24h: " . sprintf('%+.2f', $change24h) . "%\n";
+            if (!empty($structure['nearest_support']) || !empty($structure['nearest_resistance'])) {
+                $msg .= "Support: \${$structure['nearest_support']} · Resistance: \${$structure['nearest_resistance']}\n";
+            }
+            if (!empty($indicators['rsi_1h'])) {
+                $msg .= "RSI(1h): {$indicators['rsi_1h']}\n";
+            }
+            if (!empty($indicators['sentiment'])) {
+                $msg .= "Sentiment: {$indicators['sentiment']}\n";
+            }
+            $msg .= "\n🤖 *AI Trade Idea*\n```\n" . trim($ai) . "\n```\n";
+            $msg .= "_Source: Binance spot · {$fetchedAt}. Not financial advice — DYOR._";
+
+            $keyboard = ['inline_keyboard' => $this->getContextualKeyboard('signals')];
+            $editOrSend($msg, $keyboard);
         } catch (\Exception $e) {
-            Log::error('Recommend command error', ['error' => $e->getMessage()]);
-            $keyboard = [
-                'inline_keyboard' => $this->getContextualKeyboard('signals')
-            ];
-            $this->telegram->sendMessage($chatId, "❌ Error generating recommendation. Please try again later.", $keyboard);
+            Log::error('Recommend command error', ['error' => $e->getMessage(), 'trace' => $e->getTraceAsString()]);
+            $editOrSend("❌ Error generating recommendation. Please try again later.", $errorKeyboard);
         }
     }
 

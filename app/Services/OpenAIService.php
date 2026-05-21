@@ -556,6 +556,74 @@ class OpenAIService
     }
 
     /**
+     * Generate a STRUCTURED trade idea with explicit entry/stop/target/RR.
+     *
+     * The LLM is constrained to a fixed plain-text template so the output is
+     * predictable, parseable, and falsifiable. Returns the raw template text
+     * (caller renders it verbatim) or null on failure.
+     */
+    public function generateStructuredRecommendation(array $context): ?string
+    {
+        if (!$this->isConfigured()) {
+            return null;
+        }
+
+        $u = $context['user'] ?? [];
+        $m = $context['market'] ?? [];
+        $s = $context['structure'] ?? [];
+        $i = $context['indicators'] ?? [];
+        $w = $context['watchlist'] ?? [];
+
+        $prompt  = "You are a disciplined trading-desk analyst. Produce a structured trade idea using ONLY the facts supplied below. ";
+        $prompt .= "If the data is insufficient or contradictory, say 'NO TRADE' in the Direction field and explain why in the Reasoning field. ";
+        $prompt .= "Never invent prices — every number must come from the supplied data. Quote prices to the same precision as the current price.\n\n";
+
+        $prompt .= "=== USER ===\n";
+        $prompt .= "Inferred risk level: " . ($u['risk_level'] ?? 'unknown') . "\n";
+        $prompt .= "Inferred trading style: " . ($u['trading_style'] ?? 'unknown') . "\n";
+        $prompt .= "Inference confidence: " . (int) (($u['confidence'] ?? 0) * 100) . "%\n";
+        if (!empty($w)) {
+            $prompt .= "Watchlist: " . implode(', ', array_slice($w, 0, 8)) . "\n";
+        }
+
+        $prompt .= "\n=== MARKET ({$m['symbol']}) ===\n";
+        $prompt .= "Current price: " . $m['price'] . "\n";
+        $prompt .= "24h change: " . $m['change_24h'] . "%\n";
+        $prompt .= "24h volume: " . $m['volume_24h'] . "\n";
+        $prompt .= "Source: " . ($m['source'] ?? 'Binance') . " at " . ($m['fetched_at'] ?? now()->toIso8601String()) . "\n";
+
+        if (!empty($s['nearest_support'])) {
+            $prompt .= "\n=== STRUCTURE ===\n";
+            $prompt .= "Nearest support: " . $s['nearest_support'] . "\n";
+            $prompt .= "Nearest resistance: " . $s['nearest_resistance'] . "\n";
+            if (!empty($s['confluent'])) {
+                $prompt .= "Confluent levels: " . implode(', ', $s['confluent']) . "\n";
+            }
+        }
+
+        if (!empty($i)) {
+            $prompt .= "\n=== INDICATORS ===\n";
+            foreach ($i as $k => $v) {
+                $prompt .= ucfirst(str_replace('_', ' ', $k)) . ": {$v}\n";
+            }
+        }
+
+        $prompt .= "\n=== OUTPUT FORMAT (use this template verbatim, one value per line) ===\n";
+        $prompt .= "Direction: LONG | SHORT | NO TRADE\n";
+        $prompt .= "Timeframe: <e.g. intraday / 4h swing / multi-day>\n";
+        $prompt .= "Entry: <price or zone>\n";
+        $prompt .= "Invalidation: <stop-loss price>\n";
+        $prompt .= "Target: <take-profit price>\n";
+        $prompt .= "Risk/Reward: <e.g. 1:2.5>\n";
+        $prompt .= "Confidence: <Low | Medium | High>\n";
+        $prompt .= "Reasoning: <2-3 sentences citing the specific levels and indicators above>\n";
+        $prompt .= "\nDo not add any commentary outside the template. Do not include 'DYOR' or disclaimers — they are added by the caller.";
+
+        $response = $this->generateCompletion($prompt, 400);
+        return $response ?: null;
+    }
+
+    /**
      * Natural language query processing
      */
     public function processNaturalQuery(string $query, array $availableData = []): string

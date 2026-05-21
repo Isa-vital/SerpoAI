@@ -91,8 +91,12 @@ class UserProfileService
         $p = $profile['profile'];
         $s = $profile['subscription'];
         $i = $profile['inference'] ?? [
-            'style_source' => 'inferred', 'risk_source' => 'inferred',
-            'confidence' => 0.0, 'sample_size' => 0, 'is_learning' => true, 'signals' => [],
+            'style_source' => 'inferred',
+            'risk_source' => 'inferred',
+            'confidence' => 0.0,
+            'sample_size' => 0,
+            'is_learning' => true,
+            'signals' => [],
         ];
 
         $message = "👤 *YOUR TRADING PROFILE*\n\n";

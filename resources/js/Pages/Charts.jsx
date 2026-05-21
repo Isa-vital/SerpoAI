@@ -10,25 +10,88 @@ function getQuery(name, fallback) {
     return u.searchParams.get(name) || fallback;
 }
 
-function toTvSymbol(s) {
-    const sym = String(s || 'BTCUSDT').toUpperCase().trim();
-    // Forex (e.g. EURUSD)
-    if (/^[A-Z]{6}$/.test(sym) && !sym.endsWith('USDT')) return `OANDA:${sym}`;
-    // Equity (e.g. AAPL, SPY)
-    if (/^[A-Z]{1,5}$/.test(sym)) return `NASDAQ:${sym}`;
-    // Crypto default Binance
-    if (sym.endsWith('USDT') || sym.endsWith('BTC') || sym.endsWith('ETH')) return `BINANCE:${sym}`;
-    return `BINANCE:${sym}USDT`;
+// Ask TradingView's public symbol-search API which venues actually carry this
+// symbol. Returns { tvSymbol, exchange, description } or null if no real match.
+async function resolveSymbol(raw) {
+    const text = String(raw || '').toUpperCase().trim();
+    if (!text) return null;
+
+    const candidates = [text];
+    // For bare tickers also try common crypto quote pairings.
+    if (!text.endsWith('USDT') && !text.endsWith('USD') && /^[A-Z]{2,6}$/.test(text)) {
+        candidates.push(`${text}USDT`, `${text}USD`);
+    }
+
+    for (const q of candidates) {
+        try {
+            const res = await fetch(
+                `https://symbol-search.tradingview.com/symbol_search/?text=${encodeURIComponent(q)}&hl=1&exchange=&lang=en&type=&domain=production`,
+                { headers: { 'Accept': 'application/json' } }
+            );
+            if (!res.ok) continue;
+            const list = await res.json();
+            if (!Array.isArray(list) || list.length === 0) continue;
+
+            const stripHtml = (s) => String(s || '').replace(/<[^>]+>/g, '');
+            const exact = list.filter((r) => stripHtml(r.symbol).toUpperCase() === q.toUpperCase());
+            const pool = exact.length ? exact : list;
+            // Prefer crypto/forex over stocks when ambiguous.
+            const ranked = [...pool].sort((a, b) => {
+                const rank = (r) => {
+                    const t = (r.type || '').toLowerCase();
+                    if (t.includes('crypto') || t === 'spot' || t === 'swap') return 0;
+                    if (t.includes('forex')) return 1;
+                    if (t.includes('stock') || t.includes('etf')) return 2;
+                    return 3;
+                };
+                return rank(a) - rank(b);
+            });
+            const top = ranked[0];
+            const exchange = top.exchange || top.prefix || '';
+            const sym = stripHtml(top.symbol || q);
+            if (!exchange) continue;
+            return {
+                tvSymbol: `${exchange}:${sym}`,
+                exchange,
+                description: stripHtml(top.description),
+            };
+        } catch {
+            // network / CORS — fall through to next candidate
+        }
+    }
+    return null;
 }
 
 export default function Charts() {
     const [symbol, setSymbol] = useState(() => getQuery('symbol', 'BTCUSDT'));
     const [interval, setInterval] = useState('60');
     const [input, setInput] = useState(symbol);
+    const [resolved, setResolved] = useState(null); // {tvSymbol, exchange, description} | null
+    const [resolveState, setResolveState] = useState('idle'); // idle | loading | ok | missing
     const containerId = 'tv_chart_container';
     const widgetRef = useRef(null);
 
+    // Resolve symbol against TradingView whenever it changes.
     useEffect(() => {
+        let cancelled = false;
+        setResolveState('loading');
+        setResolved(null);
+        resolveSymbol(symbol).then((r) => {
+            if (cancelled) return;
+            if (r) {
+                setResolved(r);
+                setResolveState('ok');
+            } else {
+                setResolveState('missing');
+            }
+        });
+        return () => { cancelled = true; };
+    }, [symbol]);
+
+    // Mount/refresh the TradingView widget only when we have a verified symbol.
+    useEffect(() => {
+        if (resolveState !== 'ok' || !resolved) return;
+
         let script;
         const mount = () => {
             const el = document.getElementById(containerId);
@@ -36,7 +99,7 @@ export default function Charts() {
             el.innerHTML = '';
             widgetRef.current = new window.TradingView.widget({
                 container_id: containerId,
-                symbol: toTvSymbol(symbol),
+                symbol: resolved.tvSymbol,
                 interval,
                 theme: 'dark',
                 style: '1',
@@ -63,7 +126,7 @@ export default function Charts() {
         return () => {
             try { widgetRef.current = null; } catch {}
         };
-    }, [symbol, interval]);
+    }, [resolved, resolveState, interval]);
 
     const submit = (e) => {
         e.preventDefault();
@@ -72,6 +135,10 @@ export default function Charts() {
         setSymbol(next);
         router.visit(`/charts?symbol=${encodeURIComponent(next)}`, { preserveState: true, preserveScroll: true, replace: true });
     };
+
+    const baseSym = symbol.replace(/USDT$|USD$/, '');
+    const dexUrl = `https://dexscreener.com/search?q=${encodeURIComponent(baseSym)}`;
+    const geckoUrl = `https://www.geckoterminal.com/?q=${encodeURIComponent(baseSym)}`;
 
     return (
         <Layout title="Charts">
@@ -86,6 +153,12 @@ export default function Charts() {
                         className="w-48 rounded-md border border-gray-800 bg-gray-900 px-3 py-1.5 text-sm text-gray-200 placeholder-gray-600 focus:border-emerald-500/50 focus:outline-none"
                     />
                     <button type="submit" className="rounded-md bg-emerald-500/10 px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-emerald-400 hover:bg-emerald-500/20">Load</button>
+                    {resolveState === 'ok' && resolved && (
+                        <span className="hidden text-xs text-gray-500 sm:inline">
+                            → <span className="font-mono text-gray-300">{resolved.tvSymbol}</span>
+                            {resolved.description && <span className="ml-2 text-gray-500">· {resolved.description}</span>}
+                        </span>
+                    )}
                 </form>
                 <div className="flex items-center gap-1 rounded-md border border-gray-800 bg-gray-900 p-1">
                     {TV_INTERVALS.map((iv) => (
@@ -95,7 +168,42 @@ export default function Charts() {
             </div>
 
             <div className="overflow-hidden rounded-xl border border-gray-800 bg-gray-900/40" style={{ height: 'calc(100vh - 240px)', minHeight: 520 }}>
-                <div id={containerId} className="h-full w-full" />
+                {resolveState === 'loading' && (
+                    <div className="flex h-full w-full items-center justify-center text-sm text-gray-400">
+                        Resolving <span className="mx-2 font-mono text-gray-200">{symbol}</span>…
+                    </div>
+                )}
+
+                {resolveState === 'missing' && (
+                    <div className="flex h-full w-full flex-col items-center justify-center gap-4 px-6 text-center">
+                        <div className="text-4xl">🔍</div>
+                        <div className="text-base font-semibold text-gray-200">
+                            <span className="font-mono">{symbol}</span> isn't listed on TradingView
+                        </div>
+                        <p className="max-w-md text-sm text-gray-400">
+                            This is usually a DEX-only or newly launched token. Try one of the on-chain explorers below
+                            — they cover most Solana, Ethereum, BSC and TON liquidity pools.
+                        </p>
+                        <div className="flex flex-wrap items-center justify-center gap-2">
+                            <a href={dexUrl} target="_blank" rel="noopener noreferrer" className="rounded-md bg-emerald-500/10 px-4 py-2 text-sm font-semibold text-emerald-300 hover:bg-emerald-500/20">
+                                Open on DexScreener →
+                            </a>
+                            <a href={geckoUrl} target="_blank" rel="noopener noreferrer" className="rounded-md bg-blue-500/10 px-4 py-2 text-sm font-semibold text-blue-300 hover:bg-blue-500/20">
+                                Open on GeckoTerminal →
+                            </a>
+                            <button
+                                onClick={() => { setInput('BTCUSDT'); setSymbol('BTCUSDT'); router.visit('/charts?symbol=BTCUSDT', { preserveScroll: true, replace: true }); }}
+                                className="rounded-md border border-gray-700 px-4 py-2 text-sm text-gray-300 hover:border-gray-500"
+                            >
+                                Load BTCUSDT instead
+                            </button>
+                        </div>
+                    </div>
+                )}
+
+                {resolveState === 'ok' && (
+                    <div id={containerId} className="h-full w-full" />
+                )}
             </div>
         </Layout>
     );
