@@ -12,19 +12,22 @@ class SignalGeneratorService
     private DerivativesAnalysisService $derivatives;
     private SentimentAnalysisService $sentiment;
     private MultiMarketDataService $marketData;
+    private BinanceAPIService $binance;
 
     public function __construct(
         AIService $ai,
         TechnicalStructureService $technical,
         DerivativesAnalysisService $derivatives,
         SentimentAnalysisService $sentiment,
-        MultiMarketDataService $marketData
+        MultiMarketDataService $marketData,
+        BinanceAPIService $binance
     ) {
         $this->ai = $ai;
         $this->technical = $technical;
         $this->derivatives = $derivatives;
         $this->sentiment = $sentiment;
         $this->marketData = $marketData;
+        $this->binance = $binance;
     }
 
     /**
@@ -82,23 +85,28 @@ class SignalGeneratorService
         ];
 
         try {
-            // 1. RSI Analysis (all markets)
-            $rsi = $this->technical->calculateRSI($symbol);
+            // 1. RSI Analysis (all markets) — getRSIHeatmap returns multi-timeframe weighted RSI
+            $rsi = $this->technical->getRSIHeatmap($symbol);
             if (!isset($rsi['error'])) {
+                $timeframes = [];
+                foreach (($rsi['rsi_data'] ?? []) as $tf => $row) {
+                    $timeframes[$tf] = $row['value'] ?? 0;
+                }
                 $data['indicators']['rsi'] = [
-                    'weighted' => $rsi['weighted_rsi'] ?? 0,
+                    'weighted' => $rsi['overall_rsi'] ?? 0,
                     'overall_status' => $rsi['overall_status'] ?? 'Neutral',
-                    'timeframes' => $rsi['timeframes'] ?? [],
+                    'timeframes' => $timeframes,
                 ];
             }
         } catch (\Exception $e) {
-            Log::warning('RSI fetch failed', ['symbol' => $symbol]);
+            Log::warning('RSI fetch failed', ['symbol' => $symbol, 'error' => $e->getMessage()]);
         }
 
         try {
             // 2. Price & Volume data
             if ($marketType === 'crypto') {
-                $ticker = $this->marketData->getBinanceTicker($symbol);
+                $pair = str_ends_with($symbol, 'USDT') ? $symbol : $symbol . 'USDT';
+                $ticker = $this->binance->get24hTicker($pair) ?? [];
                 $data['price'] = [
                     'current' => floatval($ticker['lastPrice'] ?? 0),
                     'change_24h' => floatval($ticker['priceChangePercent'] ?? 0),
@@ -109,6 +117,14 @@ class SignalGeneratorService
                     'current' => floatval($ticker['volume'] ?? 0),
                     'quote_volume' => floatval($ticker['quoteVolume'] ?? 0),
                 ];
+                // Fallback to universal price data if Binance returned nothing
+                if ($data['price']['current'] <= 0) {
+                    $universal = $this->marketData->getUniversalPriceData($symbol);
+                    if (!isset($universal['error'])) {
+                        $data['price']['current'] = floatval($universal['price'] ?? 0);
+                        $data['price']['change_24h'] = floatval($universal['change_24h'] ?? 0);
+                    }
+                }
             }
         } catch (\Exception $e) {
             Log::warning('Price fetch failed', ['symbol' => $symbol]);
@@ -142,8 +158,10 @@ class SignalGeneratorService
         }
 
         try {
-            // 4. Sentiment Analysis
-            $sentiment = $this->sentiment->analyzeSentiment($symbol);
+            // 4. Sentiment Analysis (crypto only — service is crypto-specific)
+            $sentiment = $marketType === 'crypto'
+                ? $this->sentiment->getCryptoSentiment(strtolower($symbol), $symbol)
+                : ['error' => 'sentiment_unsupported'];
             if (!isset($sentiment['error'])) {
                 $data['sentiment'] = [
                     'score' => $sentiment['overall_score'] ?? 0,
@@ -193,7 +211,12 @@ class SignalGeneratorService
         $prompt = $this->buildAnalysisPrompt($symbol, $marketType, $data);
 
         try {
-            $aiResponse = $this->ai->chat($prompt);
+            $aiResponse = $this->ai->chat($prompt, [
+                'temperature' => 0.15,
+                'max_tokens' => 600,
+                'cache_ttl' => 180,
+                'system' => 'You are a disciplined trading-desk analyst. Use ONLY the numeric indicators in the user message. Never invent prices, RSI values, OI numbers, or sentiment scores. If indicators conflict, recommend HOLD with low confidence. Output MUST follow the SIGNAL/CONFIDENCE/RISK/REASONING/KEY_FACTORS template exactly — plain text, no Markdown.',
+            ]);
 
             // Parse AI response to extract structured signal
             return $this->parseAIResponse($aiResponse);

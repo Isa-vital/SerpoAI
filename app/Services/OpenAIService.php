@@ -55,15 +55,38 @@ class OpenAIService
     }
 
     /**
-     * Generate a completion using available provider
+     * Default system prompt enforcing grounded, hallucination-resistant output.
      */
-    public function generateCompletion(string $prompt, int $maxTokens = 150): ?string
+    public const DEFAULT_SYSTEM = 'You are a professional crypto/stocks/forex analyst inside the SerpoAI trading bot. '
+        . 'Use ONLY the numeric facts, indicators, and context provided in the user message. '
+        . 'If a value is missing, write "data unavailable" — never invent prices, dates, volumes, historical performance, or backtest results. '
+        . 'Be concise, specific, and avoid generic disclaimers. Output plain text (no Markdown headings, no asterisks, no underscores) unless the user message asks for a specific template, in which case follow it exactly.';
+
+    /**
+     * Generate a completion using available provider.
+     *
+     * @param string $prompt    The user message.
+     * @param int    $maxTokens Output cap.
+     * @param array  $options   Optional:
+     *   - system (string)       System prompt. Defaults to DEFAULT_SYSTEM. Pass null to omit.
+     *   - temperature (float)   0.0-1.0. Defaults to 0.3 (analytical).
+     *   - cache_ttl (int)       Cache seconds. 0 disables. Default 900 (15 min).
+     *   - json (bool)           Hint the model to return JSON only.
+     */
+    public function generateCompletion(string $prompt, int $maxTokens = 150, array $options = []): ?string
     {
-        // Check cache first
-        $cacheKey = 'ai_completion_' . md5($prompt);
-        $cached = Cache::get($cacheKey);
-        if ($cached) {
-            return $cached;
+        $system = array_key_exists('system', $options) ? $options['system'] : self::DEFAULT_SYSTEM;
+        $temperature = isset($options['temperature']) ? (float) $options['temperature'] : 0.3;
+        $cacheTtl = array_key_exists('cache_ttl', $options) ? (int) $options['cache_ttl'] : 900;
+        $jsonMode = !empty($options['json']);
+
+        // Cache key includes everything that affects output
+        $cacheKey = 'ai_completion_' . md5(($system ?? '') . '|' . $temperature . '|' . ($jsonMode ? '1' : '0') . '|' . $maxTokens . '|' . $prompt);
+        if ($cacheTtl > 0) {
+            $cached = Cache::get($cacheKey);
+            if ($cached) {
+                return $cached;
+            }
         }
 
         if (!$this->isConfigured()) {
@@ -73,27 +96,24 @@ class OpenAIService
         try {
             $response = null;
 
-            // Try Gemini first
             if ($this->geminiClient) {
-                $response = $this->generateWithGemini($prompt, $maxTokens);
+                $response = $this->generateWithGemini($prompt, $maxTokens, $system, $temperature, $jsonMode);
             }
 
-            // Fallback to Groq if Gemini fails
             $groqKey = env('GROQ_API_KEY');
             if (!$response && $groqKey && $groqKey !== 'your_groq_api_key_here') {
-                $response = $this->generateWithGroq($prompt, $maxTokens);
+                $response = $this->generateWithGroq($prompt, $maxTokens, $system, $temperature, $jsonMode);
             }
 
-            // Final fallback to OpenAI
             if (!$response && $this->client) {
                 Log::info('Falling back to OpenAI after Gemini/Groq failed');
-                $response = $this->generateWithOpenAI($prompt, $maxTokens);
+                $response = $this->generateWithOpenAI($prompt, $maxTokens, $system, $temperature, $jsonMode);
             } elseif (!$response && !$this->client) {
                 Log::warning('All AI providers failed and OpenAI not initialized');
             }
 
-            if ($response) {
-                Cache::put($cacheKey, $response, 86400); // 24h cache
+            if ($response && $cacheTtl > 0) {
+                Cache::put($cacheKey, $response, $cacheTtl);
             }
 
             return $response;
@@ -106,14 +126,19 @@ class OpenAIService
     /**
      * Generate with Google Gemini
      */
-    private function generateWithGemini(string $prompt, int $maxTokens): ?string
+    private function generateWithGemini(string $prompt, int $maxTokens, ?string $system = null, float $temperature = 0.3, bool $jsonMode = false): ?string
     {
         try {
-            Log::info('Attempting Gemini generation', ['max_tokens' => $maxTokens]);
-            // Use gemini-2.5-flash (stable, latest, free tier)
+            // Gemini has no separate system role — prepend as instruction block
+            $finalPrompt = $system ? "SYSTEM INSTRUCTIONS:\n{$system}\n\nUSER:\n{$prompt}" : $prompt;
+            if ($jsonMode) {
+                $finalPrompt .= "\n\nReturn ONLY valid JSON, no Markdown, no commentary.";
+            }
+
+            Log::info('Attempting Gemini generation', ['max_tokens' => $maxTokens, 'temperature' => $temperature]);
             $response = $this->geminiClient
                 ->generativeModel(model: 'gemini-2.5-flash')
-                ->generateContent($prompt);
+                ->generateContent($finalPrompt);
 
             $text = $response->text() ?? null;
             if ($text) {
@@ -131,23 +156,32 @@ class OpenAIService
     /**
      * Generate with Groq (free, fast)
      */
-    private function generateWithGroq(string $prompt, int $maxTokens): ?string
+    private function generateWithGroq(string $prompt, int $maxTokens, ?string $system = null, float $temperature = 0.3, bool $jsonMode = false): ?string
     {
         try {
-            Log::info('Attempting Groq generation', ['max_tokens' => $maxTokens]);
-            $response = Http::timeout(30) // Increased timeout for longer responses
+            Log::info('Attempting Groq generation', ['max_tokens' => $maxTokens, 'temperature' => $temperature]);
+            $messages = [];
+            if ($system) {
+                $messages[] = ['role' => 'system', 'content' => $system];
+            }
+            $messages[] = ['role' => 'user', 'content' => $prompt];
+
+            $payload = [
+                'model' => 'llama-3.3-70b-versatile',
+                'messages' => $messages,
+                'max_tokens' => $maxTokens,
+                'temperature' => $temperature,
+            ];
+            if ($jsonMode) {
+                $payload['response_format'] = ['type' => 'json_object'];
+            }
+
+            $response = Http::timeout(30)
                 ->withHeaders([
                     'Authorization' => 'Bearer ' . env('GROQ_API_KEY'),
                     'Content-Type' => 'application/json',
                 ])
-                ->post('https://api.groq.com/openai/v1/chat/completions', [
-                    'model' => 'llama-3.3-70b-versatile',
-                    'messages' => [
-                        ['role' => 'user', 'content' => $prompt]
-                    ],
-                    'max_tokens' => $maxTokens,
-                    'temperature' => 0.7,
-                ]);
+                ->post('https://api.groq.com/openai/v1/chat/completions', $payload);
 
             if ($response->successful()) {
                 $data = $response->json();
@@ -155,10 +189,8 @@ class OpenAIService
                 return $data['choices'][0]['message']['content'] ?? null;
             }
 
-            // Check if rate limited
             if ($response->status() === 429) {
                 Log::warning('Groq rate limit hit', ['retry_after' => $response->header('Retry-After')]);
-                // Don't return null, let it fall through to next provider
                 return null;
             }
 
@@ -176,18 +208,27 @@ class OpenAIService
     /**
      * Generate with OpenAI
      */
-    private function generateWithOpenAI(string $prompt, int $maxTokens): ?string
+    private function generateWithOpenAI(string $prompt, int $maxTokens, ?string $system = null, float $temperature = 0.3, bool $jsonMode = false): ?string
     {
         try {
-            Log::info('Attempting OpenAI generation');
-            $response = $this->client->chat()->create([
+            Log::info('Attempting OpenAI generation', ['temperature' => $temperature]);
+            $messages = [];
+            if ($system) {
+                $messages[] = ['role' => 'system', 'content' => $system];
+            }
+            $messages[] = ['role' => 'user', 'content' => $prompt];
+
+            $payload = [
                 'model' => $this->model,
-                'messages' => [
-                    ['role' => 'user', 'content' => $prompt]
-                ],
+                'messages' => $messages,
                 'max_tokens' => $maxTokens,
-                'temperature' => 0.7,
-            ]);
+                'temperature' => $temperature,
+            ];
+            if ($jsonMode) {
+                $payload['response_format'] = ['type' => 'json_object'];
+            }
+
+            $response = $this->client->chat()->create($payload);
 
             Log::info('OpenAI generation successful');
             return $response->choices[0]->message->content ?? null;

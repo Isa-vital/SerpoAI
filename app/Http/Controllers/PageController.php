@@ -132,8 +132,19 @@ class PageController extends Controller
         }
 
         try {
-            $analysis = $ai->generateCompletion("Analyze the following crypto/market query and provide insights: {$query}");
             $sentimentData = $sentiment->getCryptoSentiment('bitcoin', 'BTC');
+
+            $sentLine = isset($sentimentData['overall_score'])
+                ? "BTC market sentiment score: {$sentimentData['overall_score']}/100 ({$sentimentData['classification']})"
+                : 'BTC market sentiment: data unavailable';
+
+            $prompt = "USER QUERY:\n{$query}\n\nCONTEXT (use ONLY these facts; do not invent prices):\n- {$sentLine}\n\nAnswer the query in 3-5 sentences. If the query asks about a specific price, level, or asset not listed above, say the live data is not in context.";
+
+            $analysis = $ai->generateCompletion(
+                $prompt,
+                400,
+                ['temperature' => 0.3, 'cache_ttl' => 300]
+            );
 
             return back()->with('result', [
                 'analysis' => $analysis,
@@ -206,10 +217,29 @@ class PageController extends Controller
 
     public function generateSignal(Request $request, SignalGeneratorService $signals)
     {
-        $symbol = $request->input('symbol', 'BTC');
+        $symbol = strtoupper(trim($request->input('symbol', 'BTC')));
 
         try {
             $result = $signals->generateSignal($symbol);
+
+            // Persist non-error results so /signals shows history.
+            if (!isset($result['error']) && !empty($result['signal'])) {
+                try {
+                    \App\Models\Signal::create([
+                        'coin_symbol' => $result['symbol'] ?? $symbol,
+                        'signal_type' => $result['signal'],
+                        'indicator' => 'AI Composite',
+                        'confidence' => (float) ($result['confidence'] ?? 0),
+                        'price_at_signal' => (float) ($result['price'] ?? 0),
+                        'reasoning' => (string) ($result['reasoning'] ?? ''),
+                        'technical_data' => $result['indicators'] ?? [],
+                        'is_sent' => false,
+                    ]);
+                } catch (\Throwable $e) {
+                    \Log::warning('Signal persist failed', ['error' => $e->getMessage()]);
+                }
+            }
+
             return back()->with('signal', $result);
         } catch (\Throwable $e) {
             \Log::error('Signal generation failed', ['error' => $e->getMessage()]);

@@ -14,6 +14,20 @@ import { useEffect, useMemo, useState } from 'react';
 
 const SESSION_PREFIX = 'fbchart:';
 
+// Map TradingView interval codes to a window the public APIs can serve.
+// CoinGecko `days` auto-picks granularity (1=5m, 2-90=hourly, >90=daily).
+// GeckoTerminal: timeframe is 'minute'|'hour'|'day' with aggregate + limit.
+const TF_MAP = {
+    '1':   { label: '1D',  cgDays: 1,   gt: { tf: 'minute', aggregate: 1,  limit: 300 } },
+    '5':   { label: '1D',  cgDays: 1,   gt: { tf: 'minute', aggregate: 5,  limit: 288 } },
+    '15':  { label: '1D',  cgDays: 1,   gt: { tf: 'minute', aggregate: 15, limit: 96  } },
+    '60':  { label: '7D',  cgDays: 7,   gt: { tf: 'hour',   aggregate: 1,  limit: 168 } },
+    '240': { label: '30D', cgDays: 30,  gt: { tf: 'hour',   aggregate: 4,  limit: 180 } },
+    'D':   { label: '90D', cgDays: 90,  gt: { tf: 'day',    aggregate: 1,  limit: 90  } },
+    'W':   { label: '1Y',  cgDays: 365, gt: { tf: 'day',    aggregate: 7,  limit: 52  } },
+};
+function tfConf(iv) { return TF_MAP[iv] || TF_MAP['60']; }
+
 function cacheGet(key) {
     try {
         const raw = sessionStorage.getItem(SESSION_PREFIX + key);
@@ -34,8 +48,10 @@ async function getJSON(url, signal) {
 }
 
 // ---------- CoinGecko path -------------------------------------------------
-async function tryCoinGecko(symbol, signal) {
-    const cached = cacheGet('cg:' + symbol);
+async function tryCoinGecko(symbol, interval, signal) {
+    const conf = tfConf(interval);
+    const ckey = `cg:${symbol}:${interval}`;
+    const cached = cacheGet(ckey);
     if (cached) return cached;
 
     const sym = symbol.replace(/USDT$|USD$/, '');
@@ -51,12 +67,13 @@ async function tryCoinGecko(symbol, signal) {
 
     try {
         const [chart, info] = await Promise.all([
-            getJSON(`https://api.coingecko.com/api/v3/coins/${id}/market_chart?vs_currency=usd&days=7`, signal),
+            getJSON(`https://api.coingecko.com/api/v3/coins/${id}/market_chart?vs_currency=usd&days=${conf.cgDays}`, signal),
             getJSON(`https://api.coingecko.com/api/v3/coins/${id}?localization=false&tickers=false&community_data=false&developer_data=false&sparkline=false`, signal),
         ]);
         if (!chart.prices || chart.prices.length < 2) return null;
         const result = {
             source: 'CoinGecko',
+            timeframe: conf.label,
             name: info.name,
             symbol: (info.symbol || sym).toUpperCase(),
             image: info.image?.small,
@@ -68,7 +85,7 @@ async function tryCoinGecko(symbol, signal) {
             volume24h: info.market_data?.total_volume?.usd ?? null,
             series: chart.prices.map(([ts, p]) => ({ t: ts, p })),
         };
-        cacheSet('cg:' + symbol, result);
+        cacheSet(ckey, result);
         return result;
     } catch { return null; }
 }
@@ -84,8 +101,10 @@ function chainToGeckoNetwork(chainId) {
     return map[chainId] || chainId;
 }
 
-async function tryDexScreener(symbol, signal) {
-    const cached = cacheGet('dex:' + symbol);
+async function tryDexScreener(symbol, interval, signal) {
+    const conf = tfConf(interval);
+    const ckey = `dex:${symbol}:${interval}`;
+    const cached = cacheGet(ckey);
     if (cached) return cached;
 
     const sym = symbol.replace(/USDT$|USD$/, '');
@@ -105,7 +124,7 @@ async function tryDexScreener(symbol, signal) {
     try {
         const network = chainToGeckoNetwork(top.chainId);
         const ohlc = await getJSON(
-            `https://api.geckoterminal.com/api/v2/networks/${network}/pools/${top.pairAddress}/ohlcv/hour?aggregate=1&limit=168`, // 7 days hourly
+            `https://api.geckoterminal.com/api/v2/networks/${network}/pools/${top.pairAddress}/ohlcv/${conf.gt.tf}?aggregate=${conf.gt.aggregate}&limit=${conf.gt.limit}`,
             signal
         );
         const list = ohlc?.data?.attributes?.ohlcv_list || [];
@@ -115,6 +134,7 @@ async function tryDexScreener(symbol, signal) {
 
     const result = {
         source: 'DexScreener',
+        timeframe: conf.label,
         name: top.baseToken?.name || sym,
         symbol: (top.baseToken?.symbol || sym).toUpperCase(),
         image: top.info?.imageUrl,
@@ -127,7 +147,7 @@ async function tryDexScreener(symbol, signal) {
         liquidity: top.liquidity?.usd || null,
         series,
     };
-    cacheSet('dex:' + symbol, result);
+    cacheSet(ckey, result);
     return result;
 }
 
@@ -238,25 +258,25 @@ function LineChart({ series, change24h }) {
 }
 
 // ---------- Main exported component ---------------------------------------
-export default function FallbackChart({ symbol }) {
+export default function FallbackChart({ symbol, interval = '60' }) {
     const [state, setState] = useState({ status: 'loading', data: null });
 
     useEffect(() => {
         const ac = new AbortController();
         setState({ status: 'loading', data: null });
         (async () => {
-            const cg = await tryCoinGecko(symbol, ac.signal);
+            const cg = await tryCoinGecko(symbol, interval, ac.signal);
             if (ac.signal.aborted) return;
             if (cg) { setState({ status: 'ok', data: cg }); return; }
 
-            const dex = await tryDexScreener(symbol, ac.signal);
+            const dex = await tryDexScreener(symbol, interval, ac.signal);
             if (ac.signal.aborted) return;
             if (dex) { setState({ status: 'ok', data: dex }); return; }
 
             setState({ status: 'missing', data: null });
         })().catch(() => { if (!ac.signal.aborted) setState({ status: 'missing', data: null }); });
         return () => ac.abort();
-    }, [symbol]);
+    }, [symbol, interval]);
 
     if (state.status === 'loading') {
         return (
@@ -299,7 +319,7 @@ export default function FallbackChart({ symbol }) {
                 {d.image && <img src={d.image} alt="" className="h-8 w-8 rounded-full" />}
                 <div>
                     <div className="text-sm font-bold text-white">{d.name} <span className="text-gray-500">· {d.symbol}</span></div>
-                    <div className="text-[10px] uppercase tracking-wider text-gray-500">{d.source} · 7d</div>
+                    <div className="text-[10px] uppercase tracking-wider text-gray-500">{d.source} · {d.timeframe || '7D'}</div>
                 </div>
                 <div className="ml-auto flex flex-wrap items-baseline gap-4 text-right">
                     <div>

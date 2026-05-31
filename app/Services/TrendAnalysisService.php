@@ -286,9 +286,13 @@ class TrendAnalysisService
                 }
             }
 
-            $prompt = "Based on this market data, provide a brief 2-3 sentence insight about the current trending market conditions and what it might indicate:\n\n{$context}";
+            $prompt = "DATA:\n{$context}\nUsing ONLY the data above, write a 2-3 sentence insight on current trending conditions. Do not invent specific prices or assets that are not listed.";
 
-            $insight = $this->openai->generateCompletion($prompt, 100);
+            $insight = $this->openai->generateCompletion(
+                $prompt,
+                120,
+                ['temperature' => 0.4, 'cache_ttl' => 600]
+            );
             return $insight ?? "Market showing mixed trends across multiple timeframes.";
         } catch (\Exception $e) {
             Log::warning('Trend insights generation failed', ['error' => $e->getMessage()]);

@@ -1,18 +1,27 @@
 import Layout from '@/Layouts/Layout';
-import { Head, router, useForm, usePage } from '@inertiajs/react';
+import { Head, router, usePage } from '@inertiajs/react';
 import { useState } from 'react';
 
 export default function Signals({ recentSignals, symbol }) {
     const { flash } = usePage().props;
     const [currentSymbol, setCurrentSymbol] = useState(symbol || 'BTC');
-    const { post, processing } = useForm({});
+    const [loading, setLoading] = useState(false);
+    const [localError, setLocalError] = useState(null);
 
     const handleGenerate = (e) => {
         e.preventDefault();
-        router.post('/signals/generate', { symbol: currentSymbol }, { preserveState: true });
+        if (!currentSymbol.trim()) return;
+        setLocalError(null);
+        router.post('/signals/generate', { symbol: currentSymbol.trim().toUpperCase() }, {
+            preserveScroll: true,
+            onStart: () => setLoading(true),
+            onError: (errs) => setLocalError(Object.values(errs)[0] || 'Request failed'),
+            onFinish: () => setLoading(false),
+        });
     };
 
     const liveSignal = flash?.signal;
+    const flashError = flash?.error || localError || (liveSignal && liveSignal.error ? (liveSignal.details || liveSignal.error) : null);
 
     return (
         <Layout title="Signals">
@@ -31,13 +40,29 @@ export default function Signals({ recentSignals, symbol }) {
                     />
                     <button
                         type="submit"
-                        disabled={processing}
-                        className="rounded-xl bg-rose-600 px-6 py-3 text-sm font-medium text-white hover:bg-rose-500 disabled:opacity-50"
+                        disabled={loading}
+                        className="flex items-center gap-2 rounded-xl bg-rose-600 px-6 py-3 text-sm font-medium text-white hover:bg-rose-500 disabled:cursor-not-allowed disabled:opacity-50"
                     >
-                        {processing ? 'Generating...' : 'Generate Signal'}
+                        {loading && (
+                            <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
+                                <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" className="opacity-25" />
+                                <path d="M4 12a8 8 0 018-8" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
+                            </svg>
+                        )}
+                        {loading ? 'Analyzing…' : 'Generate Signal'}
                     </button>
                 </div>
+                <p className="mt-2 text-xs text-gray-500">
+                    Combines RSI across timeframes, open interest, money flow, Fear &amp; Greed, and news sentiment.
+                </p>
             </form>
+
+            {/* Error banner */}
+            {flashError && (
+                <div className="mb-6 rounded-xl border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-300">
+                    <strong className="font-semibold">Couldn't generate signal:</strong> {String(flashError)}
+                </div>
+            )}
 
             {/* Live Signal Result */}
             {liveSignal && !liveSignal.error && (

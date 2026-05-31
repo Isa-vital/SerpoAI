@@ -11,11 +11,26 @@ function getQuery(name, fallback) {
     return u.searchParams.get(name) || fallback;
 }
 
+// Major cryptos: skip the search API entirely and pin them to Binance spot so
+// the user always gets a real-time TradingView feed (with working timeframes)
+// rather than a delayed CoinGecko fallback.
+const MAJOR_CRYPTOS = new Set([
+    'BTC','ETH','SOL','BNB','XRP','DOGE','ADA','AVAX','MATIC','DOT','LINK','LTC',
+    'TRX','TON','SHIB','BCH','UNI','ATOM','XLM','ETC','NEAR','APT','ARB','OP',
+    'FIL','ICP','HBAR','VET','INJ','SUI','SEI','TIA','RNDR','IMX','AAVE','PEPE',
+]);
+
 // Ask TradingView's public symbol-search API which venues actually carry this
 // symbol. Returns { tvSymbol, exchange, description } or null if no real match.
 async function resolveSymbol(raw) {
     const text = String(raw || '').toUpperCase().trim();
     if (!text) return null;
+
+    // Fast path: pin known majors directly to BINANCE spot.
+    const bare = text.replace(/USDT$|USD$/, '');
+    if (MAJOR_CRYPTOS.has(bare)) {
+        return { tvSymbol: `BINANCE:${bare}USDT`, exchange: 'BINANCE', description: `${bare} / Tether` };
+    }
 
     const candidates = [text];
     // For bare tickers also try common crypto quote pairings.
@@ -176,7 +191,7 @@ export default function Charts() {
                 )}
 
                 {resolveState === 'missing' && (
-                    <FallbackChart symbol={symbol} />
+                    <FallbackChart symbol={symbol} interval={interval} />
                 )}
 
                 {resolveState === 'ok' && (

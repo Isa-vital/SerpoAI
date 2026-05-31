@@ -4293,7 +4293,11 @@ class CommandHandler
         $prompt .= "Be specific, actionable, and risk-aware. Format with emojis for clarity.";
 
         try {
-            $aiResponse = $this->openai->generateCompletion($prompt, 500);
+            $aiResponse = $this->openai->generateCompletion(
+                $prompt,
+                500,
+                ['temperature' => 0.25, 'cache_ttl' => 300]
+            );
             return $aiResponse ?? $this->generateFallbackTradingInsights($marketData);
         } catch (\Exception $e) {
             Log::error('AI trading insights error', ['error' => $e->getMessage()]);
@@ -6241,7 +6245,15 @@ class CommandHandler
             $prompt .= "5. Why this matters (not just what)\n\n";
             $prompt .= "Keep it concise, actionable, and explain like a pro trader would.";
 
-            $response = $this->openai->generateCompletion($prompt, 800);
+            $response = $this->openai->generateCompletion(
+                $prompt,
+                800,
+                [
+                    'temperature' => 0.3,
+                    'cache_ttl' => 300,
+                    'system' => 'You are an elite trading desk analyst inside SerpoAI. Use ONLY the numeric data supplied in the user message. Never invent prices, percentages, or historical events. If a number is missing, write "data unavailable". Be specific, actionable, and avoid generic disclaimers. Output plain text (no Markdown asterisks or underscores).',
+                ]
+            );
 
             if (!$response) {
                 Log::error('DeepSearch: AI returned null response', ['query' => $query]);
@@ -6339,7 +6351,15 @@ class CommandHandler
             $prompt .= "IMPORTANT: Use ONLY the date range {$startDate} to {$currentDate}. Be realistic and conservative.\n";
             $prompt .= "Format as a concise professional backtest report (max 500 words).";
 
-            $response = $this->openai->generateCompletion($prompt, 800);
+            $response = $this->openai->generateCompletion(
+                $prompt,
+                800,
+                [
+                    'temperature' => 0.2,
+                    'cache_ttl' => 600,
+                    'system' => 'You are a quantitative analyst producing a CLEARLY-LABELED estimated simulation, NOT a real backtest. Use only the symbol, timeframe, and current market context supplied. Never claim specific dated trades or fabricated equity curves. Stay within the conservative win-rate range the user specifies (35-55%). Output plain text only — no Markdown asterisks or underscores.',
+                ]
+            );
 
             if (!$response) {
                 Log::error('Backtest: AI returned null response', ['strategy' => $strategy]);

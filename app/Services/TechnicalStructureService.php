@@ -1147,10 +1147,14 @@ class TechnicalStructureService
         $prompt .= "Current Price: \${$currentPrice}\n";
         $prompt .= "Support: " . implode(', ', array_map(fn($l) => "\${$l}", $levels['support'])) . "\n";
         $prompt .= "Resistance: " . implode(', ', array_map(fn($l) => "\${$l}", $levels['resistance'])) . "\n";
-        $prompt .= "Provide a 2-sentence trading insight about level strength and positioning.";
+        $prompt .= "Using ONLY these numbers, give a 2-sentence trading insight on level strength and where price is positioned (near support, near resistance, mid-range). Do not invent levels.";
 
         try {
-            return $this->openai->generateCompletion($prompt, 100) ?? 'Strong technical levels identified.';
+            return $this->openai->generateCompletion(
+                $prompt,
+                120,
+                ['temperature' => 0.2, 'cache_ttl' => 600]
+            ) ?? 'Strong technical levels identified.';
         } catch (\Exception $e) {
             return 'Multiple timeframe levels confirmed.';
         }

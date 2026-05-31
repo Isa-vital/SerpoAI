@@ -144,7 +144,7 @@ class MarketIntelligenceService
             foreach ($symbols as $s) {
                 try {
                     $alerts = $this->whales->getWhaleAlerts($s);
-                    foreach (($alerts['large_orders']['bids'] ?? []) as $bid) {
+                    foreach (($alerts['large_orders']['large_bids'] ?? $alerts['large_orders']['bids'] ?? []) as $bid) {
                         $feed[] = [
                             'symbol' => $alerts['symbol'] ?? $s,
                             'side' => 'bid',
@@ -155,7 +155,7 @@ class MarketIntelligenceService
                             'detected_at' => $alerts['timestamp'] ?? now()->toIso8601String(),
                         ];
                     }
-                    foreach (($alerts['large_orders']['asks'] ?? []) as $ask) {
+                    foreach (($alerts['large_orders']['large_asks'] ?? $alerts['large_orders']['asks'] ?? []) as $ask) {
                         $feed[] = [
                             'symbol' => $alerts['symbol'] ?? $s,
                             'side' => 'ask',
@@ -452,7 +452,7 @@ class MarketIntelligenceService
     {
         $items = [];
 
-        // CryptoPanic
+        // CryptoPanic (if a key is configured) — gives nice cross-source aggregation.
         try {
             $key = config('services.cryptopanic.key') ?? env('CRYPTOPANIC_API_KEY');
             if ($key) {
@@ -476,47 +476,141 @@ class MarketIntelligenceService
         } catch (\Throwable $e) {
         }
 
-        // CoinGecko status updates (public, no key)
-        try {
-            $r = Http::timeout(8)->get('https://api.coingecko.com/api/v3/news');
-            foreach ($r->json()['data'] ?? [] as $p) {
-                $items[] = [
-                    'id' => 'cg_' . ($p['id'] ?? md5(($p['url'] ?? '') . ($p['title'] ?? ''))),
-                    'title' => $p['title'] ?? '',
-                    'url' => $p['url'] ?? '',
-                    'source' => $p['author'] ?? 'CoinGecko',
-                    'published' => isset($p['updated_at']) ? date('c', (int)$p['updated_at']) : null,
-                    'sentiment' => 'neutral',
-                    'tags' => [],
-                    'description' => $p['description'] ?? null,
-                ];
-            }
-        } catch (\Throwable $e) {
-        }
+        // Diversified RSS basket — no API keys, all CORS-free server-side.
+        // Order matters only for tie-breaks; results are sorted by published time later.
+        $feeds = [
+            'CoinDesk'         => 'https://www.coindesk.com/arc/outboundfeeds/rss/',
+            'Cointelegraph'    => 'https://cointelegraph.com/rss',
+            'Decrypt'          => 'https://decrypt.co/feed',
+            'The Block'        => 'https://www.theblock.co/rss.xml',
+            'CryptoSlate'      => 'https://cryptoslate.com/feed/',
+            'Bitcoin Magazine' => 'https://bitcoinmagazine.com/.rss/full/',
+            'Bitcoinist'       => 'https://bitcoinist.com/feed/',
+            'NewsBTC'          => 'https://www.newsbtc.com/feed/',
+            'BeInCrypto'       => 'https://beincrypto.com/feed/',
+            'Crypto Briefing'  => 'https://cryptobriefing.com/feed/',
+            'CoinJournal'      => 'https://coinjournal.net/news/feed/',
+            'AMBCrypto'        => 'https://ambcrypto.com/feed/',
+            'U.Today'          => 'https://u.today/rss',
+        ];
 
-        // RSS fallback (CoinDesk)
-        if (count($items) < 5) {
+        foreach ($feeds as $source => $url) {
             try {
-                $rss = @simplexml_load_file('https://www.coindesk.com/arc/outboundfeeds/rss/');
-                if ($rss) {
-                    foreach ($rss->channel->item as $it) {
-                        $items[] = [
-                            'id' => 'rss_' . md5((string)$it->link),
-                            'title' => (string)$it->title,
-                            'url' => (string)$it->link,
-                            'source' => 'CoinDesk',
-                            'published' => date('c', strtotime((string)$it->pubDate)),
-                            'sentiment' => 'neutral',
-                            'tags' => [],
+                $cacheKey = 'mi:rss:' . md5($url);
+                $rssItems = Cache::remember($cacheKey, 300, function () use ($url) {
+                    // libxml: suppress warnings, fetch via Http so we honor timeouts.
+                    $body = @Http::timeout(6)->withHeaders(['User-Agent' => 'SerpoAI/1.0'])->get($url)->body();
+                    if (!$body) return [];
+                    libxml_use_internal_errors(true);
+                    $xml = simplexml_load_string($body);
+                    libxml_clear_errors();
+                    if (!$xml) return [];
+                    $out = [];
+                    foreach ($xml->channel->item ?? [] as $it) {
+                        $out[] = [
+                            'title' => trim((string)$it->title),
+                            'link' => trim((string)$it->link),
+                            'pubDate' => (string)$it->pubDate,
+                            'description' => trim(strip_tags((string)$it->description)),
                         ];
-                        if (count($items) >= $limit + 20) break;
+                        if (count($out) >= 30) break;
                     }
+                    return $out;
+                });
+
+                foreach ($rssItems as $it) {
+                    if (!$it['title'] || !$it['link']) continue;
+                    $ts = $it['pubDate'] ? strtotime($it['pubDate']) : 0;
+                    $items[] = [
+                        'id' => 'rss_' . md5($it['link']),
+                        'title' => $it['title'],
+                        'url' => $it['link'],
+                        'source' => $source,
+                        'published' => $ts ? date('c', $ts) : null,
+                        'sentiment' => $this->guessSentiment($it['title'] . ' ' . ($it['description'] ?? '')),
+                        'tags' => $this->extractSymbolTags($it['title'] . ' ' . ($it['description'] ?? '')),
+                        'description' => $it['description'] ?? null,
+                    ];
                 }
             } catch (\Throwable $e) {
+                continue;
             }
         }
 
-        return $items;
+        // Deduplicate by URL, then by normalised title (different sources often syndicate the same wire).
+        $seenUrls = [];
+        $seenTitles = [];
+        $deduped = [];
+        foreach ($items as $it) {
+            $u = strtolower($it['url']);
+            $t = strtolower(preg_replace('/[^a-z0-9 ]/i', '', $it['title']));
+            $t = preg_replace('/\s+/', ' ', $t);
+            if (isset($seenUrls[$u]) || isset($seenTitles[$t])) continue;
+            $seenUrls[$u] = true;
+            $seenTitles[$t] = true;
+            $deduped[] = $it;
+        }
+
+        return $deduped;
+    }
+
+    /**
+     * Lightweight keyword-based sentiment classifier for news headlines/summaries.
+     * Not a replacement for proper NLP — just enough signal to bucket items.
+     */
+    private function guessSentiment(string $text): string
+    {
+        $t = ' ' . strtolower($text) . ' ';
+        $bull = ['surge', 'soar', 'rally', 'gain', 'bullish', 'breakout', 'record high', 'all-time high', 'ath',
+                 'approve', 'approved', 'adopt', 'partnership', 'upgrade', 'launch', 'integrat', 'inflow',
+                 'beat', 'wins', 'milestone', 'green light', 'institutional buying', 'accumulat'];
+        $bear = ['crash', 'plunge', 'plummet', 'tumble', 'drop', 'bearish', 'selloff', 'sell-off', 'liquidat',
+                 'hack', 'exploit', 'breach', 'rug', 'scam', 'ban', 'lawsuit', 'sec sues', 'charged', 'fraud',
+                 'collapse', 'bankrupt', 'outflow', 'warning', 'fear', 'fud', 'delist'];
+        $bullScore = 0; $bearScore = 0;
+        foreach ($bull as $w) if (str_contains($t, $w)) $bullScore++;
+        foreach ($bear as $w) if (str_contains($t, $w)) $bearScore++;
+        if ($bullScore > $bearScore) return 'bullish';
+        if ($bearScore > $bullScore) return 'bearish';
+        return 'neutral';
+    }
+
+    /**
+     * Extract recognisable crypto tickers from a news string so the UI can filter by symbol.
+     */
+    private function extractSymbolTags(string $text): array
+    {
+        $map = [
+            'BTC' => ['bitcoin', 'btc'],
+            'ETH' => ['ethereum', 'eth', 'ether '],
+            'SOL' => ['solana', 'sol '],
+            'BNB' => ['bnb', 'binance coin'],
+            'XRP' => ['xrp', 'ripple'],
+            'DOGE' => ['dogecoin', 'doge'],
+            'ADA' => ['cardano', 'ada '],
+            'AVAX' => ['avalanche', 'avax'],
+            'MATIC' => ['polygon', 'matic'],
+            'DOT' => ['polkadot', 'dot '],
+            'LINK' => ['chainlink', 'link '],
+            'LTC' => ['litecoin', 'ltc'],
+            'TON' => ['toncoin', 'ton '],
+            'SHIB' => ['shiba inu', 'shib '],
+            'TRX' => ['tron', 'trx'],
+            'NEAR' => ['near protocol', 'near '],
+            'ARB' => ['arbitrum', 'arb '],
+            'OP' => ['optimism', ' op '],
+            'SUI' => ['sui '],
+            'APT' => ['aptos', 'apt '],
+            'PEPE' => ['pepe'],
+        ];
+        $t = ' ' . strtolower($text) . ' ';
+        $tags = [];
+        foreach ($map as $sym => $keys) {
+            foreach ($keys as $k) {
+                if (str_contains($t, $k)) { $tags[] = $sym; break; }
+            }
+        }
+        return array_values(array_unique($tags));
     }
 
     private function mapPanicVotes(array $votes): string
