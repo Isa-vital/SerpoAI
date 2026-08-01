@@ -29,6 +29,13 @@ class TelegramWebhookController extends Controller
      */
     public function webhook(Request $request)
     {
+        // Reject requests that don't carry the secret set via setWebhook
+        $secret = config('serpoai.telegram.webhook_secret');
+        if ($secret && !hash_equals($secret, (string) $request->header('X-Telegram-Bot-Api-Secret-Token'))) {
+            Log::warning('Webhook rejected: invalid secret token', ['ip' => $request->ip()]);
+            return response()->json(['ok' => false], 403);
+        }
+
         // Increase execution time for slow API calls
         set_time_limit(120);
 
